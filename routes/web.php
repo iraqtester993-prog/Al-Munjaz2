@@ -10,6 +10,7 @@ use App\Http\Controllers\App\ChatController;
 use App\Http\Controllers\App\DashboardController;
 use App\Http\Controllers\App\NotificationController;
 use App\Http\Controllers\Auth\AuthController;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -17,7 +18,11 @@ use Illuminate\Support\Facades\Route;
 | Guest routes
 |--------------------------------------------------------------------------
 */
-Route::get('/', fn () => redirect()->route('login'));
+Route::get('/', function (Request $request) {
+    return str_starts_with($request->getHost(), 'dashboard.')
+        ? redirect()->route('admin.login')
+        : redirect()->route('login');
+});
 
 Route::middleware('guest')->group(function () {
     Route::get('/login', [AuthController::class, 'loginForm'])->name('login');

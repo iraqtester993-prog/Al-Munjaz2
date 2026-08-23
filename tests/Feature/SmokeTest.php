@@ -27,6 +27,10 @@ class SmokeTest extends TestCase
     public function test_guest_login_page(): void
     {
         $this->get('/login')->assertOk();
+        $this->get('/dashboard/login')->assertOk();
+
+        $this->get('/', ['Host' => 'dashboard.our-qiq.com'])
+            ->assertRedirect(route('admin.login'));
     }
 
     public function test_merchant_flow(): void
