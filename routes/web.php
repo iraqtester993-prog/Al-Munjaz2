@@ -20,8 +20,8 @@ use Illuminate\Support\Facades\Route;
 */
 Route::get('/', function (Request $request) {
     return str_starts_with($request->getHost(), 'dashboard.')
-        ? redirect()->route('admin.login')
-        : redirect()->route('login');
+        ? redirect('/dashboard/login')
+        : redirect('/login');
 });
 
 Route::middleware('guest')->group(function () {

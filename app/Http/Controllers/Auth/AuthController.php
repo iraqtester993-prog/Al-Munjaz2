@@ -77,7 +77,7 @@ class AuthController extends Controller
         Auth::login($user, true);
         $request->session()->regenerate();
 
-        return redirect()->intended(route('admin.dashboard'));
+        return redirect()->intended('/dashboard');
     }
 
     public function registerForm(string $role)
@@ -167,10 +167,10 @@ class AuthController extends Controller
 
     public function logout(Request $request)
     {
-        $redirect = route('login');
+        $redirect = '/login';
 
         if ($user = $request->user()) {
-            $redirect = $user->role === 'admin' ? route('admin.login') : $redirect;
+            $redirect = $user->role === 'admin' ? '/dashboard/login' : $redirect;
             $user->forceFill(['is_online' => false])->saveQuietly();
         }
 
@@ -185,9 +185,9 @@ class AuthController extends Controller
     protected function homeFor(User $user): string
     {
         return match ($user->role) {
-            'admin' => route('admin.dashboard'),
-            'merchant', 'courier' => route('app'),
-            default => route('login'),
+            'admin' => '/dashboard',
+            'merchant', 'courier' => '/app',
+            default => '/login',
         };
     }
 }
