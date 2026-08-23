@@ -82,31 +82,31 @@ class SmokeTest extends TestCase
         $admin = User::where('role', 'admin')->first();
         $this->assertNotNull($admin);
 
-        $this->actingAs($admin)->get('/admin')
+        $this->actingAs($admin)->get('/dashboard')
             ->assertOk()
             ->assertInertia(fn (Assert $p) => $p->component('Admin/Dashboard'));
 
-        $this->actingAs($admin)->get('/admin/orders')
+        $this->actingAs($admin)->get('/dashboard/orders')
             ->assertOk()
             ->assertInertia(fn (Assert $p) => $p->component('Admin/Orders'));
 
-        $this->actingAs($admin)->get('/admin/merchants')
+        $this->actingAs($admin)->get('/dashboard/merchants')
             ->assertOk()
             ->assertInertia(fn (Assert $p) => $p->component('Admin/Roster'));
 
-        $this->actingAs($admin)->get('/admin/couriers')
+        $this->actingAs($admin)->get('/dashboard/couriers')
             ->assertOk()
             ->assertInertia(fn (Assert $p) => $p->component('Admin/Roster'));
 
-        $this->actingAs($admin)->get('/admin/finance')
+        $this->actingAs($admin)->get('/dashboard/finance')
             ->assertOk()
             ->assertInertia(fn (Assert $p) => $p->component('Admin/Finance'));
 
-        $this->actingAs($admin)->get('/admin/notifications')
+        $this->actingAs($admin)->get('/dashboard/notifications')
             ->assertOk()
             ->assertInertia(fn (Assert $p) => $p->component('Admin/Notifications'));
 
-        $this->actingAs($admin)->get('/admin/chat')
+        $this->actingAs($admin)->get('/dashboard/chat')
             ->assertOk()
             ->assertInertia(fn (Assert $p) => $p->component('Admin/Chat'));
     }
@@ -146,7 +146,7 @@ class SmokeTest extends TestCase
         $admin = User::where('role', 'admin')->first();
         $merchant = User::where('username', 'تاجر')->first();
 
-        $this->actingAs($admin)->post("/admin/users/{$merchant->id}/status", ['status' => 'suspended'])
+        $this->actingAs($admin)->post("/dashboard/users/{$merchant->id}/status", ['status' => 'suspended'])
             ->assertRedirect();
 
         $this->assertDatabaseHas('users', ['id' => $merchant->id, 'status' => 'suspended']);
