@@ -24,7 +24,7 @@ class AuthController extends Controller
         $credentials = $request->validate([
             'username' => ['required', 'string'],
             'password' => ['required', 'string'],
-            'role' => ['required', 'in:merchant,courier,admin'],
+            'role' => ['required', 'in:merchant,courier'],
         ]);
 
         $user = User::where('username', $credentials['username'])->first();
@@ -50,6 +50,34 @@ class AuthController extends Controller
         $request->session()->regenerate();
 
         return redirect()->intended($this->homeFor($user));
+    }
+
+    public function adminLoginForm()
+    {
+        return Inertia::render('Auth/AdminLogin');
+    }
+
+    public function adminLogin(Request $request)
+    {
+        $credentials = $request->validate([
+            'username' => ['required', 'string'],
+            'password' => ['required', 'string'],
+        ]);
+
+        $user = User::where('username', $credentials['username'])->first();
+
+        if (! $user || $user->role !== 'admin' || ! Hash::check($credentials['password'], $user->password)) {
+            return back()->withErrors(['username' => __('auth.failed')]);
+        }
+
+        if ($user->status !== 'active') {
+            return back()->withErrors(['username' => __('auth.pending_review')]);
+        }
+
+        Auth::login($user, true);
+        $request->session()->regenerate();
+
+        return redirect()->intended(route('admin.dashboard'));
     }
 
     public function registerForm(string $role)
@@ -139,7 +167,10 @@ class AuthController extends Controller
 
     public function logout(Request $request)
     {
+        $redirect = route('login');
+
         if ($user = $request->user()) {
+            $redirect = $user->role === 'admin' ? route('admin.login') : $redirect;
             $user->forceFill(['is_online' => false])->saveQuietly();
         }
 
@@ -148,7 +179,7 @@ class AuthController extends Controller
         $request->session()->invalidate();
         $request->session()->regenerateToken();
 
-        return redirect()->route('login');
+        return redirect()->to($redirect);
     }
 
     protected function homeFor(User $user): string

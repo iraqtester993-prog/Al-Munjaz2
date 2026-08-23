@@ -22,6 +22,8 @@ Route::get('/', fn () => redirect()->route('login'));
 Route::middleware('guest')->group(function () {
     Route::get('/login', [AuthController::class, 'loginForm'])->name('login');
     Route::post('/login', [AuthController::class, 'login']);
+    Route::get('/dashboard/login', [AuthController::class, 'adminLoginForm'])->name('admin.login');
+    Route::post('/dashboard/login', [AuthController::class, 'adminLogin']);
     Route::get('/register/{role}', [AuthController::class, 'registerForm'])
         ->whereIn('role', ['merchant', 'courier'])->name('register');
     Route::post('/register', [AuthController::class, 'register']);
@@ -71,7 +73,7 @@ Route::middleware(['auth', 'active'])->group(function () {
 | Admin dashboard
 |--------------------------------------------------------------------------
 */
-Route::prefix('admin')->middleware(['auth', 'active', 'role:admin'])->group(function () {
+Route::prefix('dashboard')->middleware(['auth', 'active', 'role:admin'])->group(function () {
     Route::get('/', [AdminDashboardController::class, 'index'])->name('admin.dashboard');
     Route::get('orders', [AdminOrderController::class, 'index'])->name('admin.orders');
     Route::post('orders/{order}/status', [AdminOrderController::class, 'status'])->name('admin.orders.status');
@@ -86,3 +88,5 @@ Route::prefix('admin')->middleware(['auth', 'active', 'role:admin'])->group(func
     Route::get('chat/{chat}', [ChatController::class, 'adminShow'])->name('admin.chat.show');
     Route::post('chat/{chat}/send', [ChatController::class, 'adminSend'])->name('admin.chat.send');
 });
+
+Route::get('/admin', fn () => redirect()->route('admin.dashboard'))->middleware(['auth', 'active', 'role:admin']);

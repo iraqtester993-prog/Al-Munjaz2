@@ -9,7 +9,6 @@ const errors = computed(() => page.props.errors || {})
 const roles = [
     { key: 'merchant', label: t('Merchant App'), icon: 'shop', desc: t('My orders, statement, wallet') },
     { key: 'courier', label: t('Courier App'), icon: 'bike', desc: t('My deliveries, collections, wallet') },
-    { key: 'admin', label: t('Admin Dashboard'), icon: 'shield', desc: t('Platform management') },
 ]
 
 const form = useForm({ username: '', password: '', role: 'merchant' })
@@ -24,7 +23,7 @@ function icon(name) {
 }
 
 function demo() {
-    form.username = form.role === 'admin' ? 'admin' : form.role
+    form.username = form.role
     form.password = '123456'
 }
 
@@ -95,7 +94,7 @@ function submit() {
 <style scoped>
 .role-tabs {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
     gap: 8px;
 }
 .role-tab {
