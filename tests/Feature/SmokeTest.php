@@ -29,7 +29,7 @@ class SmokeTest extends TestCase
         $this->get('/login')->assertOk();
         $this->get('/dashboard/login')->assertOk();
 
-        $this->get('/', ['Host' => 'dashboard.our-qiq.com'])
+        $this->withServerVariables(['HTTP_HOST' => 'dashboard.our-qiq.com'])->get('/')
             ->assertRedirect(route('admin.login'));
     }
 
