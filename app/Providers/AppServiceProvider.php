@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Session\Middleware\StartSession;
@@ -33,6 +34,9 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // Keep indexed string columns compatible with the hosting MySQL version.
+        Schema::defaultStringLength(191);
+
         View::composer('app', function ($view) {
             $view->with('translations', app('translations'));
         });
