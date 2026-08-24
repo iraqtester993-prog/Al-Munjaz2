@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\OrderStatusLog;
 use App\Models\User;
 use App\Models\Wallet;
+use App\Models\Setting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -48,6 +49,17 @@ class AdminController extends Controller
             OrderStatusLog::create(['tenant_id' => $order->tenant_id, 'order_id' => $order->id, 'from_status' => $from, 'to_status' => 'courier', 'user_id' => $request->user()->id, 'note' => 'تم تعيين مندوب']);
         });
         return response()->json(['data' => ['id' => $order->id, 'courier_id' => $order->courier_id, 'status' => $order->status]]);
+    }
+
+    public function settings(Request $request): JsonResponse
+    {
+        $this->authorizeAdmin($request);
+        if ($request->isMethod('get')) {
+            return response()->json(['data' => ['currency' => Setting::get('currency', 'IQD'), 'delivery_fee' => Setting::get('delivery_fee', 0), 'support_phone' => Setting::get('support_phone', '')]]);
+        }
+        $data = $request->validate(['currency' => ['sometimes', 'string', 'max:10'], 'delivery_fee' => ['sometimes', 'integer', 'min:0'], 'support_phone' => ['sometimes', 'nullable', 'string', 'max:30']]);
+        foreach ($data as $key => $value) Setting::set($key, $value);
+        return response()->json(['data' => $data]);
     }
 
     private function authorizeAdmin(Request $request): void

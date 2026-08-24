@@ -4,8 +4,10 @@ use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\AdminController;
 use App\Http\Controllers\Api\V1\ChatController;
 use App\Http\Controllers\Api\V1\DashboardController;
+use App\Http\Controllers\Api\V1\DocumentController;
 use App\Http\Controllers\Api\V1\NotificationController;
 use App\Http\Controllers\Api\V1\OrderController;
+use App\Http\Controllers\Api\V1\ReportController;
 use App\Http\Controllers\Api\V1\WalletController;
 use Illuminate\Support\Facades\Route;
 
@@ -17,6 +19,8 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/auth/logout', [AuthController::class, 'logout']);
         Route::get('/dashboard', [DashboardController::class, 'show']);
         Route::get('/wallet', [WalletController::class, 'show']);
+        Route::get('/documents', [DocumentController::class, 'index']);
+        Route::post('/documents', [DocumentController::class, 'store']);
         Route::get('/chats', [ChatController::class, 'index']);
         Route::get('/chats/{chat}', [ChatController::class, 'show']);
         Route::post('/chats', [ChatController::class, 'store']);
@@ -31,5 +35,7 @@ Route::prefix('v1')->group(function (): void {
         Route::patch('/admin/users/{user}', [AdminController::class, 'updateUser']);
         Route::get('/admin/couriers', [AdminController::class, 'couriers']);
         Route::patch('/admin/orders/{order}/courier', [AdminController::class, 'assignCourier']);
+        Route::match(['get', 'put'], '/admin/settings', [AdminController::class, 'settings']);
+        Route::get('/admin/reports/finance', [ReportController::class, 'finance']);
     });
 });
