@@ -28,3 +28,12 @@ npm run dev
 راجع `docs/architecture.md` و`docs/deployment.md` قبل النشر.
 
 للنشر التجريبي ببيانات حقيقية منسوخة بشكل آمن، راجع `docs/staging.md`.
+
+## فحص التحديثات
+
+كل رفع إلى GitHub يُفحص آلياً عبر GitHub Actions. محلياً يمكن استخدام:
+
+```bash
+make test
+make build
+```

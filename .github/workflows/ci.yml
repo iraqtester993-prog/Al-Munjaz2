@@ -1,0 +1,62 @@
+name: فحص المنجز
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  backend:
+    name: Laravel API
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, pdo_sqlite
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: composer install --no-interaction --prefer-dist --optimize-autoloader
+      - run: npm ci
+      - run: php artisan test
+      - run: npm run build
+
+  app-pwa:
+    name: App PWA
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontends/app-pwa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontends/app-pwa/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  dashboard-pwa:
+    name: Dashboard PWA
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontends/dashboard-pwa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontends/dashboard-pwa/package-lock.json
+      - run: npm ci
+      - run: npm run build
