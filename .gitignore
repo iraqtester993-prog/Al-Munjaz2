@@ -20,6 +20,10 @@
 /storage/*.key
 /storage/pail
 /vendor
+**/vendor
+backend/storage/**
+!backend/storage/**/
+!backend/storage/**/.gitignore
 Homestead.json
 Homestead.yaml
 Thumbs.db
