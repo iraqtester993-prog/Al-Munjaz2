@@ -1,0 +1,23 @@
+<script setup>
+import { computed, onMounted, ref } from 'vue'
+import { api } from './services/api'
+const token = ref(localStorage.getItem('almunjaz_dashboard_token') || '')
+const user = ref(JSON.parse(localStorage.getItem('almunjaz_dashboard_user') || 'null'))
+const login = ref({ username: '', password: '' }); const error = ref(''); const loading = ref(false)
+const view = ref('overview'); const summary = ref({}); const orders = ref([])
+const title = computed(() => ({ overview: 'نظرة عامة', orders: 'إدارة الطلبات', finance: 'المالية', team: 'المستخدمون', settings: 'الإعدادات' })[view.value])
+const money = value => new Intl.NumberFormat('ar-IQ').format(value || 0) + ' د.ع'
+async function load() { if (!token.value) return; loading.value = true; error.value = ''; try { const [me, dash, list] = await Promise.all([api('/me',{token:token.value}),api('/dashboard',{token:token.value}),api('/orders?per_page=50',{token:token.value})]); user.value=me.data; summary.value=dash.data; orders.value=list.data || []; localStorage.setItem('almunjaz_dashboard_user',JSON.stringify(user.value)) } catch(e) { error.value=e.message } finally { loading.value=false } }
+async function signIn() { loading.value=true;error.value='';try { const result=await api('/auth/login',{method:'POST',body:{...login.value,device_name:'dashboard-pwa'}}); if (!['admin','support'].includes(result.user.role)) throw new Error('هذا الحساب لا يملك صلاحية لوحة الإدارة'); token.value=result.token;user.value=result.user;localStorage.setItem('almunjaz_dashboard_token',token.value);await load() } catch(e) { error.value=e.message } finally { loading.value=false } }
+async function logout(){try{await api('/auth/logout',{method:'POST',token:token.value})}catch(_){}token.value='';user.value=null;localStorage.removeItem('almunjaz_dashboard_token');localStorage.removeItem('almunjaz_dashboard_user')}
+onMounted(load)
+</script>
+<template>
+  <div v-if="!token" class="login"><section><div class="logo">م</div><h1>لوحة المنجز</h1><p>إدارة تشغيل التوصيل بوضوح وأمان</p><form @submit.prevent="signIn"><label>اسم المستخدم<input v-model="login.username" required></label><label>كلمة المرور<input v-model="login.password" type="password" required></label><p v-if="error" class="error">{{ error }}</p><button :disabled="loading">{{loading?'جارِ الدخول…':'دخول لوحة التحكم'}}</button></form></section></div>
+  <div v-else class="layout"><aside><div class="brand"><i>م</i><span>المنجز</span></div><button v-for="item in [['overview','▦','نظرة عامة'],['orders','▤','الطلبات'],['finance','◉','المالية'],['team','♙','المستخدمون'],['settings','⚙','الإعدادات']]" :key="item[0]" :class="{active:view===item[0]}" @click="view=item[0]"><b>{{item[1]}}</b>{{item[2]}}</button><button class="logout" @click="logout">تسجيل الخروج</button></aside><main><header><div><small>لوحة الإدارة</small><h1>{{ title }}</h1></div><div class="admin">{{ user?.name }} <button @click="load">↻</button></div></header><p v-if="error" class="error">{{error}}</p>
+    <template v-if="view==='overview'"><div class="metrics"><article><span>إجمالي الطلبات</span><b>{{summary.orders_count||0}}</b></article><article><span>طلبات قيد الانتظار</span><b>{{summary.statuses?.pending||0}}</b></article><article><span>تم التسليم</span><b>{{summary.statuses?.delivered||0}}</b></article><article><span>قيمة المسلّم</span><b>{{money(summary.delivered_value)}}</b></article></div><section class="panel"><h2>آخر الطلبات</h2><table><thead><tr><th>رقم التتبع</th><th>العميل</th><th>الحالة</th><th>القيمة</th></tr></thead><tbody><tr v-for="o in orders.slice(0,6)" :key="o.id"><td>{{o.track_no}}</td><td>{{o.customer_name}}</td><td><em :class="o.status">{{o.status}}</em></td><td>{{money(o.price)}}</td></tr></tbody></table></section></template>
+    <section v-else-if="view==='orders'" class="panel"><h2>كل الطلبات</h2><table><thead><tr><th>التتبع</th><th>العميل</th><th>العنوان</th><th>الحالة</th><th>القيمة</th></tr></thead><tbody><tr v-for="o in orders" :key="o.id"><td>{{o.track_no}}</td><td>{{o.customer_name}}<small>{{o.phone}}</small></td><td>{{o.address}}</td><td><em :class="o.status">{{o.status}}</em></td><td>{{money(o.price)}}</td></tr></tbody></table></section>
+    <section v-else-if="view==='finance'" class="panel"><h2>المالية</h2><p>إجمالي محفظة الإدارة: <b>{{money(summary.wallet_balance)}}</b></p><p>رسم المنصة اليوم: <b>{{money(summary.admin_fee)}}</b></p></section>
+    <section v-else class="panel"><h2>{{title}}</h2><p>هذه الوحدة جاهزة للربط مع نقاط API الخاصة بها في المرحلة التالية.</p></section>
+  </main></div>
+</template>
