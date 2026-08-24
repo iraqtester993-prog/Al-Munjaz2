@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { usePage } from '@inertiajs/vue3'
+import { route } from 'ziggy-js'
 import Flash from './Flash.vue'
 
 defineProps({

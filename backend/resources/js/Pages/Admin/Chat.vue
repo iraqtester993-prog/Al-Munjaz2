@@ -1,6 +1,7 @@
 <script setup>
 import { ref, nextTick } from 'vue'
 import axios from 'axios'
+import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
 
 const props = defineProps({

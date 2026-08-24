@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
+import { route } from 'ziggy-js'
 import AppShell from '../../Components/AppShell.vue'
 import StatusBadge from '../../Components/StatusBadge.vue'
 import SheetModal from '../../Components/SheetModal.vue'

@@ -1,6 +1,7 @@
 <script setup>
 import { reactive, ref, watch } from 'vue'
 import { useForm } from '@inertiajs/vue3'
+import { route } from 'ziggy-js'
 import SheetModal from './SheetModal.vue'
 
 const props = defineProps({

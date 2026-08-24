@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { router } from '@inertiajs/vue3'
+import { route } from 'ziggy-js'
 import AppShell from '../../Components/AppShell.vue'
 import SheetModal from '../../Components/SheetModal.vue'
 
