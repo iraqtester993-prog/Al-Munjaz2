@@ -10,6 +10,9 @@ const error = ref('')
 const login = ref({ username: '', password: '' })
 const dashboard = ref({})
 const orders = ref([])
+const wallet = ref({ balance: 0, budget: 0, transactions: [] })
+const chats = ref([])
+const notifications = ref([])
 
 const isMerchant = computed(() => me.value?.role === 'merchant')
 const title = computed(() => ({ home: 'الرئيسية', orders: 'طلباتي', wallet: 'المحفظة', chats: 'الدردشة', profile: 'حسابي' })[page.value])
@@ -19,8 +22,8 @@ async function refresh() {
   if (!token.value) return
   loading.value = true; error.value = ''
   try {
-    const [user, summary, orderList] = await Promise.all([api('/me', { token: token.value }), api('/dashboard', { token: token.value }), api('/orders?per_page=20', { token: token.value })])
-    me.value = user.data; dashboard.value = summary.data; orders.value = orderList.data || []
+    const [user, summary, orderList, walletData, chatList, notificationList] = await Promise.all([api('/me', { token: token.value }), api('/dashboard', { token: token.value }), api('/orders?per_page=20', { token: token.value }), api('/wallet', { token: token.value }), api('/chats', { token: token.value }), api('/notifications', { token: token.value })])
+    me.value = user.data; dashboard.value = summary.data; orders.value = orderList.data || []; wallet.value = walletData.data; chats.value = chatList.data || []; notifications.value = notificationList.data || []
     localStorage.setItem('almunjaz_user', JSON.stringify(me.value))
   } catch (e) { error.value = e.message }
   finally { loading.value = false }
@@ -59,8 +62,8 @@ onMounted(refresh)
         <h3>{{ isMerchant ? 'أحدث الطلبات' : 'طلبات التوصيل' }}</h3><div v-for="order in orders.slice(0, 4)" :key="order.id" class="card order"><b>{{ order.track_no }}</b><span :class="'status '+order.status">{{ order.status }}</span><p>{{ order.customer_name }} — {{ order.address }}</p><strong>{{ money(order.price) }}</strong></div>
       </section>
       <section v-else-if="page === 'orders'"><h2>الطلبات</h2><div v-for="order in orders" :key="order.id" class="card order"><div><b>{{ order.track_no }}</b><span :class="'status '+order.status">{{ order.status }}</span></div><p>{{ order.customer_name }} · {{ order.phone }}</p><p>{{ order.address }}</p><strong>{{ money(order.price) }}</strong></div><p v-if="!orders.length" class="muted">لا توجد طلبات حالياً.</p></section>
-      <section v-else-if="page === 'wallet'"><h2>المحفظة</h2><div class="hero"><span>الرصيد المتاح</span><strong>{{ money(dashboard.wallet_balance) }}</strong><small>الميزانية: {{ money(dashboard.budget) }}</small></div><div class="card"><b>ملخص اليوم</b><p>قيمة الطلبات المسلّمة: {{ money(dashboard.delivered_value) }}</p></div></section>
-      <section v-else-if="page === 'chats'"><h2>الدردشة</h2><div class="card"><b>دعم المنجز</b><p>قريباً: محادثات فورية مرتبطة بالطلب.</p></div></section>
+      <section v-else-if="page === 'wallet'"><h2>المحفظة</h2><div class="hero"><span>الرصيد المتاح</span><strong>{{ money(wallet.balance) }}</strong><small>الميزانية: {{ money(wallet.budget) }}</small></div><div v-for="transaction in wallet.transactions" :key="transaction.id" class="card"><b>{{ transaction.note || transaction.type }}</b><strong :class="transaction.direction > 0 ? 'credit' : 'debit'">{{ transaction.direction > 0 ? '+' : '-' }}{{ money(transaction.amount) }}</strong></div><p v-if="!wallet.transactions?.length" class="muted">لا توجد حركات مالية بعد.</p></section>
+      <section v-else-if="page === 'chats'"><h2>الدردشة</h2><div v-for="chat in chats" :key="chat.id" class="card"><b>{{ chat.title }}</b><span v-if="chat.unread" class="badge">{{ chat.unread }}</span><p>{{ chat.last_message || 'لا توجد رسائل بعد.' }}</p></div><div v-for="notice in notifications.filter(item => !item.read_at).slice(0,3)" :key="'n'+notice.id" class="card"><b>{{ notice.title }}</b><p>{{ notice.body }}</p></div><p v-if="!chats.length" class="muted">لا توجد محادثات بعد.</p></section>
       <section v-else><h2>الحساب</h2><div class="card"><b>{{ me?.name }}</b><p>{{ me?.phone || me?.username }}</p><p>الدور: {{ me?.role }}</p></div><button class="danger" @click="logout">تسجيل الخروج</button></section>
       <nav><button v-for="item in [['home','⌂','الرئيسية'],['orders','▤','طلباتي'],['wallet','◉','المحفظة'],['chats','◌','الدردشة'],['profile','◠','حسابي']]" :key="item[0]" :class="{ active: page === item[0] }" @click="page = item[0]"><b>{{ item[1] }}</b><small>{{ item[2] }}</small></button></nav>
     </template>
