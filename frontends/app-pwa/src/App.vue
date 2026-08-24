@@ -2,8 +2,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { api } from './services/api'
 
-const token = ref(localStorage.getItem('almunjaz_token') || '')
-const me = ref(JSON.parse(localStorage.getItem('almunjaz_user') || 'null'))
+const previewReset = new URLSearchParams(location.search).has('reset')
+const token = ref(previewReset ? '' : (localStorage.getItem('almunjaz_token') || ''))
+const me = ref(previewReset ? null : JSON.parse(localStorage.getItem('almunjaz_user') || 'null'))
 const page = ref('home'), authView = ref('start'), loading = ref(false), error = ref('')
 const login = ref({ username: '', password: '', role: 'merchant' })
 const dashboard = ref({}), orders = ref([]), wallet = ref({ balance: 0, budget: 0, transactions: [] }), chats = ref([]), notifications = ref([]), slide = ref(0)
