@@ -1,9 +1,10 @@
 const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
 const demoMode = import.meta.env.VITE_DEMO_MODE === 'true'
 const demoOrders = [
-  { id: 1, track_no: 'ALM-1000', customer_name: 'أحمد كريم', phone: '07711234567', address: 'الكرادة - بغداد', price: 25000, fee: 3000, status: 'pending' },
-  { id: 2, track_no: 'ALM-1001', customer_name: 'سارة علي', phone: '07722334455', address: 'أربيل - عنكاوا', price: 45000, fee: 5000, status: 'courier' },
-  { id: 3, track_no: 'ALM-1002', customer_name: 'زينب جاسم', phone: '07733445566', address: 'البصرة - العشار', price: 62000, fee: 8000, status: 'delivered' },
+  { id: 1, track_no: 'IQ-204921', customer_name: 'بلال مهدي', phone: '07711234567', address: 'بغداد - الجادرية', price: 52000, fee: 3000, status: 'pending' },
+  { id: 2, track_no: 'IQ-204871', customer_name: 'زينب صالح', phone: '07722334455', address: 'بغداد - الكرادة', price: 42000, fee: 5000, status: 'pending' },
+  { id: 3, track_no: 'IQ-204842', customer_name: 'ثامر نوفل', phone: '07733445566', address: 'بغداد - المنصور', price: 38000, fee: 4000, status: 'pending' },
+  { id: 4, track_no: 'IQ-204800', customer_name: 'أحمد كريم', phone: '07744556677', address: 'بغداد - زيونة', price: 62000, fee: 8000, status: 'delivered' },
 ]
 
 function demo(path, body) {
