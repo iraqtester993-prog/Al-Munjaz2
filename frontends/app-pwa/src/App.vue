@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { api } from './services/api'
 import StartScreen from './components/StartScreen.vue'
+import LoginScreen from './components/LoginScreen.vue'
 
 const previewReset = new URLSearchParams(location.search).has('reset')
 const token = ref(previewReset ? '' : (localStorage.getItem('almunjaz_token') || ''))
@@ -35,7 +36,7 @@ onMounted(refresh)
   <section v-if="!token" class="auth-shell">
     <StartScreen v-if="authView==='start'" :dark="darkMode" @toggle-theme="toggleTheme" @select-role="role => { login.role=role; authView='login' }" />
     <div v-else-if="authView==='account'" class="account-screen"><button class="back-link" @click="authView='start'">← رجوع</button><img class="brand-mark" src="/icons/almunjaz.png" alt="شعار المنجز"><h1>كيف ستستخدم المنجز؟</h1><p>اختر نوع الحساب المناسب لك</p><button class="role-card" @click="login.role='merchant';authView='login'"><span>🏪</span><div><b>تطبيق التاجر</b><small>أنشئ طلباتك، تابع الشحنات وأدر محفظتك.</small></div><i>‹</i></button><button class="role-card" @click="login.role='courier';authView='login'"><span>🏍️</span><div><b>تطبيق المندوب</b><small>استلم التوصيلات، حدّث الحالات وتابع تحصيلاتك.</small></div><i>‹</i></button><p class="account-note">إنشاء حساب جديد متاح بعد اختيار نوع الحساب.</p></div>
-    <div v-else class="login-screen"><button class="back-link" @click="authView='account'">← رجوع</button><img class="brand-mark" src="/icons/almunjaz.png" alt="شعار المنجز"><div class="auth-role-title"><span>{{login.role==='merchant'?'🏪':'🏍️'}}</span><div><h1>{{login.role==='merchant'?'تطبيق التاجر':'تطبيق المندوب'}}</h1><p>سجّل دخولك للمتابعة</p></div></div><form @submit.prevent="submitLogin" class="login-card"><label>اسم المستخدم<input v-model="login.username" required autocomplete="username" placeholder="أدخل اسم المستخدم"></label><label>كلمة المرور<input v-model="login.password" required type="password" autocomplete="current-password" placeholder="أدخل كلمة المرور"></label><p v-if="error" class="error">{{error}}</p><button class="primary" :disabled="loading">{{loading?'جارِ الدخول…':'تسجيل الدخول'}}</button><button type="button" class="text-button" @click="authView='account'">تغيير نوع الحساب</button><p class="hint">نسخة المعاينة: اكتب أي بيانات للدخول</p></form></div>
+    <LoginScreen v-else :role="login.role" :loading="loading" :error="error" @back="authView='start'" @toggle-theme="toggleTheme" @register="authView='account'" @submit="credentials => { login.username=credentials.username; login.password=credentials.password; submitLogin() }" />
   </section>
   <template v-else>
     <header class="top"><div><h1>{{isMerchant?'أهلاً بك، '+me?.name:'مساء الله بالخير'}}</h1><small>{{isMerchant?'حساب التاجر':'مندوب تجريبي'}}</small></div><div><button class="bell" @click="toggleTheme">{{darkMode?'☾':'☼'}}</button><button class="bell" @click="page='chats'">♧<i v-if="notifications.filter(n=>!n.read_at).length"></i></button></div></header>

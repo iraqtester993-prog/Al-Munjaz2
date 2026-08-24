@@ -1,0 +1,18 @@
+<script setup>
+import { reactive } from 'vue'
+const props = defineProps({ role: { type: String, default: 'merchant' }, loading: Boolean, error: String })
+const emit = defineEmits(['back', 'submit', 'register', 'toggle-theme'])
+const form = reactive({ username: '', password: '' })
+const submit = () => emit('submit', { ...form })
+</script>
+
+<template>
+  <section class="auth-screen-vue">
+    <header class="auth-header-vue"><button @click="emit('back')">←</button><div class="auth-brand-vue"><span><img src="/assets/logo.png" alt="شعار المنجز"></span><b>المنجز السريع</b></div><button @click="emit('toggle-theme')">☼</button></header>
+    <main class="auth-body-vue"><div class="auth-hero-vue"><div class="hero-role-icon">{{role==='merchant'?'⌂':'♧'}}</div><span class="role-chip-vue">{{role==='merchant'?'تطبيق التاجر':'تطبيق المندوب'}}</span><h1>تسجيل الدخول</h1><p>أدخل بياناتك للدخول إلى حسابك</p></div><form class="auth-card-vue" @submit.prevent="submit"><label>اسم المستخدم<input v-model="form.username" autocomplete="username" placeholder="أدخل اسم المستخدم" required></label><label>كلمة المرور<div class="password-wrap"><input v-model="form.password" type="password" autocomplete="current-password" placeholder="أدخل كلمة المرور" required><span>◉</span></div></label><p v-if="error" class="auth-error">{{error}}</p><button :disabled="loading">{{loading?'جارِ الدخول…':'تسجيل الدخول'}}</button></form><p class="auth-footer-vue">ليس لديك حساب؟ <a @click="emit('register')">إنشاء حساب جديد</a></p></main>
+  </section>
+</template>
+
+<style scoped>
+.auth-screen-vue{min-height:100vh;color:#fff;background:linear-gradient(175deg,#075450,#0b6e68 60%,#de8a2e);font-family:Cairo,Arial,sans-serif}.auth-header-vue{display:grid;grid-template-columns:40px 1fr 40px;align-items:center;padding:24px 22px}.auth-header-vue>button{width:34px;height:34px;border:1px solid #ffffff45;border-radius:10px;background:#ffffff18;color:#fff;font-size:20px}.auth-brand-vue{justify-self:center;display:flex;align-items:center;gap:8px;font-size:14px}.auth-brand-vue span{width:35px;height:35px;background:#fff;border-radius:11px;overflow:hidden}.auth-brand-vue img{width:100%;height:100%;object-fit:contain}.auth-body-vue{padding:24px 22px}.auth-hero-vue{text-align:center;margin:16px 0 25px}.hero-role-icon{margin:auto;width:60px;height:60px;display:grid;place-items:center;border-radius:20px;background:#ffffff1d;border:1px solid #ffffff35;font-size:30px}.role-chip-vue{display:inline-block;border-radius:20px;background:#ffffff1d;padding:5px 11px;margin-top:12px;font-size:10px;font-weight:800}.auth-hero-vue h1{font-size:23px;margin:12px 0 3px}.auth-hero-vue p{font-size:11px;opacity:.82;margin:0}.auth-card-vue{padding:20px 16px;border:1px solid #ffffff45;border-radius:18px;background:#ffffff1c;backdrop-filter:blur(8px)}.auth-card-vue label{display:block;font-size:11px;font-weight:800;margin:0 0 14px}.auth-card-vue input{width:100%;padding:12px 13px;border:1.5px solid #ffffff30;border-radius:11px;background:#ffffff18;color:#fff;font:inherit;margin-top:6px;outline:none}.auth-card-vue input::placeholder{color:#ffffff9e}.password-wrap{position:relative}.password-wrap span{position:absolute;left:12px;bottom:10px;color:#fff9;font-size:13px}.auth-card-vue>button{width:100%;border:0;border-radius:12px;background:#fff;color:#075450;padding:13px;font:inherit;font-weight:900;box-shadow:0 8px 20px -6px #0005}.auth-error{font-size:10px;background:#c4432e;color:#fff;border-radius:8px;padding:7px;margin:0 0 12px}.auth-footer-vue{text-align:center;font-size:11px;margin:20px 0}.auth-footer-vue a{font-weight:900;text-decoration:underline;cursor:pointer}
+</style>
