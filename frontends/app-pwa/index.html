@@ -656,6 +656,7 @@ svg{display:block; flex-shrink:0;}
 .acct-action-btn span{font-size:11px; color:var(--ink-faint); font-weight:600;}
 .acct-action-btn svg:last-child{margin-inline-start:auto; color:var(--ink-faint);}
 </style>
+<script src="config.js"></script>
 </head>
 <body>
 
@@ -1998,16 +1999,31 @@ document.getElementById('acctLoginPwdToggle').addEventListener('click', ()=>{
   inp.type = inp.type==='password' ? 'text' : 'password';
 });
 
-function handleAcctLogin(){
+async function handleAcctLogin(){
   const username = document.getElementById('acctLoginUser').value.trim();
   const password = document.getElementById('acctLoginPass').value.trim();
   clearAuthErrors('screenAccountType');
-  if(username && password){
+  if(!username || !password){
+    setAuthToast(t('loginUserError'));
+    return;
+  }
+  const apiBase = window.__ALMUNJAZ_API_URL || '';
+  if(apiBase){
+    try{
+      const response = await fetch(apiBase.replace(/\/$/,'') + '/auth/login', {
+        method:'POST', headers:{'Accept':'application/json','Content-Type':'application/json'},
+        body:JSON.stringify({username,password,device_name:'almunjaz-pwa'})
+      });
+      const result = await response.json().catch(()=>({}));
+      if(!response.ok) throw new Error(result.message || t('loginPassWrong'));
+      currentUser = result.user;
+      if(currentUser.role !== ROLE) throw new Error('نوع الحساب لا يطابق بيانات الدخول');
+      localStorage.setItem('masar_api_token', result.token);
+    }catch(error){ setAuthToast(error.message); return; }
+  } else if(username && password){
     const user = registeredUsers.find(u=> u.username===username && u.password===password && u.role===ROLE);
     if(!user){ setAuthToast(t('loginPassWrong')); return; }
     currentUser = user;
-  } else {
-    currentUser = {username:username||'user', password:password||'', role:ROLE, name:ROLE==='merchant'?'تاجر تجريبي':'مندوب تجريبي', phone:'07700000000'};
   }
   AUTH_STATE = 'logged_in';
   localStorage.setItem('masar_auth', JSON.stringify({ROLE, currentUser, AUTH_STATE}));
