@@ -26,3 +26,5 @@ npm run dev
 كل واجهة PWA مستقلة ويمكن تشغيلها من داخل مجلدها عبر `npm install` ثم `npm run dev`.
 
 راجع `docs/architecture.md` و`docs/deployment.md` قبل النشر.
+
+للنشر التجريبي ببيانات حقيقية منسوخة بشكل آمن، راجع `docs/staging.md`.

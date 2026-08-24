@@ -31,3 +31,7 @@ VITE_API_URL=https://api.our-qiq.com/api/v1
 كرر نفس الخطوة من `frontends/dashboard-pwa` وارفع محتويات `dist` إلى document root الخاص بـ `dashboard.our-qiq.com`.
 
 لا ترفع `.env` أو `node_modules` أو كامل كود Laravel داخل `public_html`.
+
+## 4. التجريبي
+
+استخدم النطاقات `staging-app` و`staging-dashboard` و`staging-api` مع قاعدة بيانات مستقلة، ولا تربطها بقاعدة الإنتاج مباشرة. التفاصيل الكاملة في `docs/staging.md`.
