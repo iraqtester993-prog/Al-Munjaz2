@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\AdminController;
 use App\Http\Controllers\Api\V1\ChatController;
 use App\Http\Controllers\Api\V1\DashboardController;
 use App\Http\Controllers\Api\V1\NotificationController;
@@ -26,5 +27,9 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/orders', [OrderController::class, 'store']);
         Route::get('/orders/{order}', [OrderController::class, 'show']);
         Route::patch('/orders/{order}/status', [OrderController::class, 'updateStatus']);
+        Route::get('/admin/users', [AdminController::class, 'users']);
+        Route::patch('/admin/users/{user}', [AdminController::class, 'updateUser']);
+        Route::get('/admin/couriers', [AdminController::class, 'couriers']);
+        Route::patch('/admin/orders/{order}/courier', [AdminController::class, 'assignCourier']);
     });
 });
