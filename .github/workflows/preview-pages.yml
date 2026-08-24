@@ -1,0 +1,55 @@
+name: نشر معاينة التصميم
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontends/app-pwa/package-lock.json
+            frontends/dashboard-pwa/package-lock.json
+      - run: npm ci
+        working-directory: frontends/app-pwa
+      - run: npm ci
+        working-directory: frontends/dashboard-pwa
+      - run: npm run build
+        working-directory: frontends/app-pwa
+        env:
+          VITE_DEMO_MODE: 'true'
+          VITE_PUBLIC_BASE: /Al-Munjaz2/app/
+      - run: npm run build
+        working-directory: frontends/dashboard-pwa
+        env:
+          VITE_DEMO_MODE: 'true'
+          VITE_PUBLIC_BASE: /Al-Munjaz2/dashboard/
+      - run: |
+          mkdir -p site/app site/dashboard
+          cp preview/index.html site/index.html
+          cp -R frontends/app-pwa/dist/. site/app/
+          cp -R frontends/dashboard-pwa/dist/. site/dashboard/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
