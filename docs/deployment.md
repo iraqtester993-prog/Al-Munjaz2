@@ -2,14 +2,14 @@
 
 ## 1. API
 
-ينشر Laravel في خادم لا تكون واجهته العامة إلا مجلد `public`، ويربط النطاق `api.our-qiq.com` بهذا المجلد. في ملف البيئة على الخادم:
+ينشر محتوى `backend/` في خادم لا تكون واجهته العامة إلا مجلد `backend/public`، ويربط النطاق `api.our-qiq.com` بهذا المجلد. في ملف البيئة على الخادم:
 
 ```dotenv
 APP_URL=https://api.our-qiq.com
 SANCTUM_STATEFUL_DOMAINS=app.our-qiq.com,dashboard.our-qiq.com
 ```
 
-ثم تنفذ على الخادم بعد `composer install --no-dev --optimize-autoloader`:
+ثم من داخل مجلد `backend/` تنفذ على الخادم بعد `composer install --no-dev --optimize-autoloader`:
 
 ```bash
 php artisan migrate --force
