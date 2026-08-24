@@ -46,7 +46,7 @@ onMounted(refresh)
 <template>
   <main class="shell">
     <section v-if="!token" class="login-screen">
-      <div class="brand-mark">م</div><h1>المنجز</h1><p>منصة التوصيل وإدارة الطلبات</p>
+      <img class="brand-mark" src="/icons/almunjaz.png" alt="شعار المنجز" /><h1>المنجز</h1><p>منصة التوصيل وإدارة الطلبات</p>
       <form @submit.prevent="submitLogin" class="card form">
         <label>اسم المستخدم<input v-model="login.username" required autocomplete="username" /></label>
         <label>كلمة المرور<input v-model="login.password" required type="password" autocomplete="current-password" /></label>
