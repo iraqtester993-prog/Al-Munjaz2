@@ -40,6 +40,7 @@ class OrderController extends Controller
             'price' => ['required', 'integer', 'min:1'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'order_type' => ['nullable', 'string', 'max:60'],
+            'province_id' => ['required', 'integer', 'exists:provinces,id'],
         ]);
 
         $user = $request->user();
@@ -93,6 +94,6 @@ class OrderController extends Controller
 
     private function orderData(Order $order): array
     {
-        return ['id' => $order->id, 'track_no' => $order->track_no, 'customer_name' => $order->customer_name_ar, 'phone' => $order->phone, 'address' => $order->address_ar, 'price' => $order->price, 'fee' => $order->fee, 'status' => $order->status, 'notes' => $order->notes, 'date' => $order->date?->toDateString(), 'courier' => $order->courier ? ['id' => $order->courier->id, 'name' => $order->courier->name, 'phone' => $order->courier->phone] : null];
+        return ['id' => $order->id, 'track_no' => $order->track_no, 'customer_name' => $order->customer_name_ar, 'phone' => $order->phone, 'address' => $order->address_ar, 'price' => $order->price, 'fee' => $order->fee, 'status' => $order->status, 'notes' => $order->notes, 'province_id' => $order->province_id, 'date' => $order->date?->toDateString(), 'courier' => $order->courier ? ['id' => $order->courier->id, 'name' => $order->courier->name, 'phone' => $order->courier->phone] : null];
     }
 }

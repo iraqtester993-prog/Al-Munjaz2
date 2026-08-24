@@ -38,7 +38,7 @@ class AuthController extends Controller
 
     public function me(Request $request): JsonResponse
     {
-        return response()->json(['data' => $this->userData($request->user()->loadMissing('tenant.plan', 'wallet'))]);
+        return response()->json(['data' => $this->userData($request->user()->loadMissing('tenant.plan', 'wallet', 'provinces'))]);
     }
 
     public function logout(Request $request): JsonResponse
@@ -61,6 +61,7 @@ class AuthController extends Controller
             'theme' => $user->theme,
             'wallet' => $user->wallet ? ['balance' => $user->wallet->balance, 'budget' => $user->wallet->budget] : null,
             'tenant' => $user->tenant ? ['id' => $user->tenant->id, 'name' => $user->tenant->name, 'plan' => $user->tenant->plan?->slug] : null,
+            'provinces' => $user->provinces->map(fn ($province) => ['id' => $province->id, 'name' => $province->name_ar, 'is_primary' => (bool) $province->pivot->is_primary])->values(),
         ];
     }
 }

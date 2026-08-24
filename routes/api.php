@@ -7,11 +7,13 @@ use App\Http\Controllers\Api\V1\DashboardController;
 use App\Http\Controllers\Api\V1\DocumentController;
 use App\Http\Controllers\Api\V1\NotificationController;
 use App\Http\Controllers\Api\V1\OrderController;
+use App\Http\Controllers\Api\V1\ProvinceController;
 use App\Http\Controllers\Api\V1\ReportController;
 use App\Http\Controllers\Api\V1\WalletController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function (): void {
+    Route::get('/provinces', [ProvinceController::class, 'index']);
     Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
     Route::middleware('auth:sanctum')->group(function (): void {

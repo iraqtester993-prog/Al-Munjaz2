@@ -7,6 +7,7 @@ use App\Models\Document;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Models\Wallet;
+use App\Models\Province;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -84,6 +85,7 @@ class AuthController extends Controller
     {
         return Inertia::render('Auth/Register', [
             'role' => $role,
+            'provinces' => Province::query()->whereNull('tenant_id')->orderBy('sort_order')->get(['id', 'name_ar', 'name_en', 'name_ku']),
             'vehicles' => [
                 'bike' => ['ar' => 'دراجة نارية', 'en' => 'Motorcycle', 'ku' => 'ماتۆڕسکلێت'],
                 'sedan' => ['ar' => 'سيارة', 'en' => 'Car', 'ku' => 'ئوتومۆبیل'],
@@ -104,6 +106,7 @@ class AuthController extends Controller
             'shop' => ['nullable', 'string', 'max:120'],
             'address' => ['nullable', 'string', 'max:255'],
             'vehicle' => ['nullable', 'string', 'in:bike,sedan,pickup'],
+            'province_id' => ['required', 'integer', 'exists:provinces,id'],
         ]);
 
         session()->put('registration', $data);
@@ -152,6 +155,7 @@ class AuthController extends Controller
         ]);
 
         Wallet::create(['user_id' => $user->id, 'balance' => 0, 'budget' => 0]);
+        $user->provinces()->attach($data['province_id'], ['is_primary' => true]);
 
         session()->forget('otp');
 

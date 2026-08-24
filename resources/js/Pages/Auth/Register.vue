@@ -7,6 +7,7 @@ import Flash from '../../Components/Flash.vue'
 const props = defineProps({
     role: { type: String, required: true },
     vehicles: { type: Object, required: true },
+    provinces: { type: Array, required: true },
 })
 
 const page = usePage()
@@ -26,6 +27,7 @@ const form = useForm({
     shop: '',
     address: '',
     vehicle: 'bike',
+    province_id: '',
     password: '',
 })
 
@@ -133,6 +135,14 @@ function onBack(i) {
                     <select v-model="form.vehicle">
                         <option v-for="v in vehicleList" :key="v.key" :value="v.key">{{ v.label }}</option>
                     </select>
+                </div>
+                <div class="field" :class="{ 'has-error': form.errors.province_id }">
+                    <label>المحافظة</label>
+                    <select v-model="form.province_id" required>
+                        <option disabled value="">اختر المحافظة</option>
+                        <option v-for="province in props.provinces" :key="province.id" :value="province.id">{{ province.name_ar }}</option>
+                    </select>
+                    <span v-if="form.errors.province_id" class="field-error">{{ form.errors.province_id }}</span>
                 </div>
                 <div class="field" :class="{ 'has-error': form.errors.password }">
                     <label>{{ t('Password') }}</label>
