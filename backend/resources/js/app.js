@@ -34,6 +34,8 @@ const ziggyRoutes = {
     'app.notifications.read-all': { uri: 'app/notifications/read-all', methods: ['POST'] },
     'admin.dashboard': { uri: 'dashboard', methods: ['GET', 'HEAD'] },
     'admin.orders': { uri: 'dashboard/orders', methods: ['GET', 'HEAD'] },
+    'admin.branches': { uri: 'dashboard/branches', methods: ['GET', 'HEAD'] },
+    'admin.branches.store': { uri: 'dashboard/branches', methods: ['POST'] },
     'admin.orders.status': { uri: 'dashboard/orders/{order}/status', methods: ['POST'] },
     'admin.orders.courier': { uri: 'dashboard/orders/{order}/courier', methods: ['POST'] },
     'admin.merchants': { uri: 'dashboard/merchants', methods: ['GET', 'HEAD'] },

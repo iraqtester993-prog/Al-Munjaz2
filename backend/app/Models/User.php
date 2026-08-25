@@ -16,12 +16,12 @@ class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable, SoftDeletes;
 
-    public const ROLES = ['admin', 'merchant', 'courier', 'support'];
+    public const ROLES = ['admin', 'owner', 'branch_manager', 'merchant', 'courier', 'pickup_courier', 'delivery_courier', 'transporter', 'support'];
 
     public const STATUSES = ['pending', 'active', 'suspended', 'rejected'];
 
     protected $fillable = [
-        'tenant_id', 'name', 'username', 'email', 'phone', 'password',
+        'tenant_id', 'branch_id', 'name', 'username', 'email', 'phone', 'password',
         'role', 'status', 'vehicle', 'theme', 'locale',
         'is_online', 'last_active_at',
     ];
@@ -44,6 +44,11 @@ class User extends Authenticatable
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
+    }
+
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class);
     }
 
     public function wallet(): HasOne

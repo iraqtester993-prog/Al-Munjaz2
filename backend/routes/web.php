@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminOrderController;
 use App\Http\Controllers\Admin\AdminUserController;
+use App\Http\Controllers\Admin\BranchController;
 use App\Http\Controllers\App\AppOrderController;
 use App\Http\Controllers\App\AppProfileController;
 use App\Http\Controllers\App\AppWalletController;
@@ -81,6 +82,8 @@ Route::middleware(['auth', 'active'])->group(function () {
 Route::prefix('dashboard')->middleware(['auth', 'active', 'role:admin'])->group(function () {
     Route::get('/', [AdminDashboardController::class, 'index'])->name('admin.dashboard');
     Route::get('orders', [AdminOrderController::class, 'index'])->name('admin.orders');
+    Route::get('branches', [BranchController::class, 'index'])->name('admin.branches');
+    Route::post('branches', [BranchController::class, 'store'])->name('admin.branches.store');
     Route::post('orders/{order}/status', [AdminOrderController::class, 'status'])->name('admin.orders.status');
     Route::post('orders/{order}/courier', [AdminOrderController::class, 'assignCourier'])->name('admin.orders.courier');
     Route::get('merchants', [AdminUserController::class, 'merchants'])->name('admin.merchants');

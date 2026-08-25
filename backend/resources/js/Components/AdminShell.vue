@@ -15,6 +15,7 @@ const nav = computed(() => {
     const base = [
         { label: t('Dashboard'), icon: 'grid', route: 'admin.dashboard' },
         { label: t('Orders'), icon: 'box', route: 'admin.orders' },
+        { label: 'الفروع', icon: 'building', route: 'admin.branches' },
         { label: t('Merchants'), icon: 'shop', route: 'admin.merchants' },
         { label: t('Couriers'), icon: 'bike', route: 'admin.couriers' },
         { label: t('Finance'), icon: 'card', route: 'admin.finance' },
@@ -35,6 +36,7 @@ function icon(name) {
     const paths = {
         grid: 'M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z',
         box: 'M21 8 12 3 3 8v8l9 5 9-5V8Z M3 8l9 5 9-5 M12 13v8',
+        building: 'M4 21V4a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v17 M8 7h.01 M12 7h.01 M16 7h.01 M8 11h.01 M12 11h.01 M16 11h.01 M10 21v-5h4v5',
         shop: 'M4 10v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V10 M2 7l1-3h18l1 3a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0Z',
         bike: 'M5 18a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm14-8a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z M5 10h14 M12 10l-2-4h5',
         card: 'M3 6h18v12H3z M3 10h18 M7 15h4',
