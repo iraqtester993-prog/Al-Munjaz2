@@ -1,6 +1,7 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { usePage } from '@inertiajs/vue3'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { router, usePage } from '@inertiajs/vue3'
+import { route } from 'ziggy-js'
 import AppShell from '../../Components/AppShell.vue'
 import HeroSlider from '../../Components/HeroSlider.vue'
 import StatusBadge from '../../Components/StatusBadge.vue'
@@ -17,6 +18,8 @@ const page = usePage()
 const user = computed(() => page.props.auth?.user)
 const tenant = computed(() => page.props.auth?.tenant)
 const showOrderForm = ref(false)
+const now = ref(Date.now())
+let ticker
 
 const deliveryRate = computed(() => props.stats.total ? Math.round((props.stats.delivered / props.stats.total) * 100) : 0)
 const statusItems = computed(() => [
@@ -29,16 +32,41 @@ const statusItems = computed(() => [
 
 const greeting = computed(() => {
     const h = new Date().getHours()
-    if (h < 12) return t('Good to see you')
-    return t('Good to see you')
+    return h < 12 ? 'صباح الخير' : 'مساء الله بالخير'
 })
+
+function openComplaint(order) {
+    router.post(route('app.chats.open'), { order_id: order.id }, { preserveScroll: true })
+}
+
+function pickupRemaining(order) {
+    if (!order.pickup_deadline_at) return null
+
+    return Math.max(0, new Date(order.pickup_deadline_at).getTime() - now.value)
+}
+
+function pickupRemainingText(order) {
+    const remaining = pickupRemaining(order)
+    if (remaining === null) return null
+
+    const seconds = Math.floor(remaining / 1000)
+    const minutes = Math.floor(seconds / 60)
+
+    return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')} د`
+}
+
+onMounted(() => {
+    ticker = window.setInterval(() => { now.value = Date.now() }, 1000)
+})
+
+onUnmounted(() => window.clearInterval(ticker))
 </script>
 
 <template>
     <AppShell :title="greeting" :subtitle="user?.name">
         <template #title>
             {{ greeting }}
-            <span class="tb-sub">{{ user?.name }} · {{ tenant?.name }}</span>
+            <span class="tb-sub">{{ tenant?.name || user?.name || 'حساب التاجر' }}</span>
         </template>
 
         <HeroSlider :slides="heroSlides" />
@@ -49,10 +77,11 @@ const greeting = computed(() => {
         </button>
 
         <div class="hero-card">
-            <div class="hc-label">{{ t('My Orders Today') }}</div>
+            <div class="hc-label">طلباتي اليوم</div>
             <div class="hc-value mono">{{ stats.today }}</div>
             <div class="hc-row">
                 <span class="hc-chip">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
                     نسبة التسليم: {{ deliveryRate }}%
                 </span>
             </div>
@@ -64,24 +93,35 @@ const greeting = computed(() => {
         </div>
 
         <div class="section-title">
-            <h3>{{ t('Recent Orders') }}</h3>
-            <a @click="$inertia.visit(route('app.orders'))">{{ t('See all') }}</a>
+            <h3>أحدث الطلبات</h3>
+            <a @click="$inertia.visit(route('app.orders'))">عرض الكل</a>
         </div>
 
         <div v-if="recentOrders.length" class="list-card">
-            <div v-for="o in recentOrders" :key="o.id" class="order-row" @click="$inertia.visit(route('app.orders'))">
-                <div class="order-ic">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 8 12 3 3 8v8l9 5 9-5V8Z M3 8l9 5 9-5 M12 13v8" />
-                    </svg>
+            <div v-for="o in recentOrders" :key="o.id" class="merchant-home-order" @click="$inertia.visit(route('app.orders'))">
+                <div class="merchant-order-top">
+                    <div class="order-ic">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 8 12 3 3 8v8l9 5 9-5V8Z M3 8l9 5 9-5 M12 13v8" />
+                        </svg>
+                    </div>
+                    <div class="order-mid">
+                        <b>{{ o.customer_name_ar }}</b>
+                        <span class="mono">{{ o.track_no }}</span>
+                    </div>
+                    <div class="order-end">
+                        <span class="order-date">{{ o.date }}</span>
+                        <b class="mono">{{ fmt(o.price) }}</b>
+                        <StatusBadge :status="o.status" />
+                    </div>
                 </div>
-                <div class="order-mid">
-                    <b>{{ o.customer_name_ar }}</b>
-                    <span class="mono">{{ o.track_no }}</span>
-                </div>
-                <div class="order-end">
-                    <b class="mono">{{ fmt(o.price) }}</b>
-                    <StatusBadge :status="o.status" style="margin-top: 5px" />
+                <p v-if="o.notes" class="merchant-order-note"><b>ملاحظة الطلب:</b> {{ o.notes }}</p>
+                <div v-if="o.status === 'approved' || o.status === 'courier'" class="merchant-order-tools">
+                    <span v-if="o.status === 'approved' && pickupRemainingText(o)" class="merchant-pickup-timer">
+                        <i></i> الوقت المتاح للاستلام: <b class="mono">{{ pickupRemainingText(o) }}</b>
+                    </span>
+                    <span v-else>الطلب قيد التوصيل</span>
+                    <button type="button" @click.stop="openComplaint(o)">شكوى / تأخر</button>
                 </div>
             </div>
         </div>
@@ -98,4 +138,15 @@ const greeting = computed(() => {
     font-size: 14px; font-weight: 800; margin-bottom: 16px; border: 0; cursor: pointer;
     box-shadow: 0 8px 24px -6px color-mix(in srgb, var(--primary) 55%, transparent);
 }
+.merchant-home-order { padding:12px 14px; border-bottom:1px solid var(--border); cursor:pointer; }
+.merchant-home-order:last-child { border-bottom:0; }
+.merchant-order-top { display:flex; align-items:center; gap:11px; }
+.merchant-order-top .order-end :deep(.badge) { margin-top:4px; }
+.order-date { display:block; color:var(--ink-faint); font-size:9px; font-weight:700; }
+.merchant-order-note { margin:8px 0 0; padding:6px 8px; border-radius:8px; background:var(--surface-2); color:var(--ink-soft); font-size:10px; font-weight:700; }
+.merchant-order-note b { color:var(--primary-strong); }
+.merchant-order-tools { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:8px; color:var(--ink-faint); font-size:9.5px; font-weight:700; }
+.merchant-pickup-timer { display:inline-flex; align-items:center; gap:4px; color:var(--success); }
+.merchant-pickup-timer i { width:7px; height:7px; border-radius:50%; background:var(--success); box-shadow:0 0 7px color-mix(in srgb, var(--success) 75%, transparent); }
+.merchant-order-tools button { padding:5px 8px; border:1px solid color-mix(in srgb, var(--danger) 20%, transparent); border-radius:8px; background:color-mix(in srgb, var(--danger-tint) 80%, transparent); color:var(--danger); font:inherit; font-size:9.5px; font-weight:800; }
 </style>

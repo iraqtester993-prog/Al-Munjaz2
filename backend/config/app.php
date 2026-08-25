@@ -56,6 +56,36 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | PWA release version
+    |--------------------------------------------------------------------------
+    |
+    | Used by both the HTML registration URL and the dynamic service worker.
+    | Change this only for a complete, atomic release of public/build and the
+    | Laravel application files.
+    |
+    */
+
+    'pwa_version' => env('PWA_VERSION', 'v13'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Canonical product domain
+    |--------------------------------------------------------------------------
+    |
+    | Both web products are served by this Laravel release.  Keep the domain
+    | in trusted configuration instead of deriving external redirects from a
+    | request Host header.
+    |
+    */
+
+    'product_domain' => env('PRODUCT_DOMAIN', 'our-qiq.com'),
+
+    'product_mobile_host' => env('PRODUCT_MOBILE_HOST', 'mobile.'.env('PRODUCT_DOMAIN', 'our-qiq.com')),
+
+    'product_admin_host' => env('PRODUCT_ADMIN_HOST', 'admin.'.env('PRODUCT_DOMAIN', 'our-qiq.com')),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

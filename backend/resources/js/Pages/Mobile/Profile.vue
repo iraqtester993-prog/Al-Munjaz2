@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useForm, usePage, router } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AppShell from '../../Components/AppShell.vue'
@@ -40,7 +40,14 @@ function setTheme(theme) {
 }
 
 function setLocale(l) {
-    router.post(route('profile.locale'), { locale: l }, { preserveScroll: true })
+    if (l === locale.value) {
+        showLang.value = false
+        return
+    }
+    router.post(route('profile.locale'), { locale: l }, {
+        preserveScroll: true,
+        onSuccess: () => window.location.reload(),
+    })
 }
 
 function logout() {

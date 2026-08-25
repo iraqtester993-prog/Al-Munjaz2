@@ -6,11 +6,14 @@ use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\BranchController;
 use App\Http\Controllers\App\AppOrderController;
 use App\Http\Controllers\App\AppProfileController;
+use App\Http\Controllers\App\AppReportController;
 use App\Http\Controllers\App\AppWalletController;
 use App\Http\Controllers\App\ChatController;
 use App\Http\Controllers\App\DashboardController;
 use App\Http\Controllers\App\NotificationController;
 use App\Http\Controllers\Auth\AuthController;
+use App\Models\Order;
+use App\Models\Scopes\TenantScope;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -23,19 +26,32 @@ use Illuminate\Support\Facades\Route;
 | .json files. Serving these two control files through Laravel guarantees
 | that every installed client receives the current worker and manifest.
 */
-Route::get('/pwa/manifest', fn () => response()->file(
+$pwaManifest = fn () => response()->file(
     resource_path('pwa/manifest.json'),
     ['Content-Type' => 'application/manifest+json; charset=utf-8', 'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0']
-));
+);
 
-Route::get('/pwa/worker', fn () => response()->file(
-    resource_path('pwa/worker.js'),
-    [
+$pwaWorker = function () {
+    // The Blade page and this dynamic worker obtain their version from the
+    // same config value. This prevents an installed PWA from receiving a
+    // page that points at one release while the worker advertises another.
+    $worker = str_replace(
+        '__PWA_VERSION__',
+        (string) config('app.pwa_version'),
+        file_get_contents(resource_path('pwa/worker.js')),
+    );
+
+    return response($worker, 200, [
         'Content-Type' => 'application/javascript; charset=utf-8',
         'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
         'Service-Worker-Allowed' => '/',
-    ]
-));
+    ]);
+};
+
+Route::get('/pwa/manifest', $pwaManifest);
+Route::get('/manifest.json', $pwaManifest); // Compatibility alias for the old installed PWA.
+Route::get('/pwa/worker', $pwaWorker);
+Route::get('/sw.js', $pwaWorker); // Compatibility alias for the old installed PWA.
 
 /*
 |--------------------------------------------------------------------------
@@ -47,6 +63,13 @@ Route::get('/', function (Request $request) {
         ? redirect('/dashboard/login')
         : redirect('/login');
 });
+
+/*
+ * A courier operates on orders owned by a merchant tenant.  Binding an order
+ * through the default tenant scope would turn an authorised courier request
+ * into a false 404 before the controller can run its access check.
+ */
+Route::bind('order', fn (string $value) => Order::withoutGlobalScope(TenantScope::class)->findOrFail($value));
 
 Route::middleware('guest')->group(function () {
     Route::get('/login', [AuthController::class, 'loginForm'])->name('login');
@@ -83,9 +106,11 @@ Route::middleware(['auth', 'active'])->group(function () {
     Route::prefix('app')->middleware('role:merchant,courier')->group(function () {
         Route::post('duty', [DashboardController::class, 'duty'])->name('app.duty');
         Route::get('orders', [AppOrderController::class, 'index'])->name('app.orders');
+        Route::get('reports', [AppReportController::class, 'index'])->name('app.reports')->middleware('role:merchant');
         Route::post('orders', [AppOrderController::class, 'store'])->name('app.orders.store');
         Route::post('orders/{order}/update', [AppOrderController::class, 'update'])->name('app.orders.update');
         Route::post('orders/{order}/status', [AppOrderController::class, 'status'])->name('app.orders.status');
+        Route::post('orders/{order}/claim', [AppOrderController::class, 'claim'])->name('app.orders.claim');
         Route::get('wallet', [AppWalletController::class, 'index'])->name('app.wallet');
         Route::post('wallet/withdraw', [AppWalletController::class, 'withdraw'])->name('app.wallet.withdraw');
         Route::post('wallet/budget', [AppWalletController::class, 'budget'])->name('app.wallet.budget');
@@ -110,6 +135,7 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     Route::post('branches', [BranchController::class, 'store'])->name('admin.branches.store');
     Route::post('orders/{order}/status', [AdminOrderController::class, 'status'])->name('admin.orders.status');
     Route::post('orders/{order}/courier', [AdminOrderController::class, 'assignCourier'])->name('admin.orders.courier');
+    Route::post('orders/{order}/branches', [AdminOrderController::class, 'assignBranches'])->name('admin.orders.branches');
     Route::get('merchants', [AdminUserController::class, 'merchants'])->name('admin.merchants');
     Route::get('couriers', [AdminUserController::class, 'couriers'])->name('admin.couriers');
     Route::post('users/{user}/status', [AdminUserController::class, 'status'])->name('admin.users.status');

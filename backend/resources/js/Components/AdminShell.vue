@@ -20,7 +20,9 @@ const nav = computed(() => [
     { label: 'المحادثات', icon: 'chat', route: 'admin.chat' },
     { label: 'الإشعارات', icon: 'bell', route: 'admin.notifications' },
 ].map((item) => ({ ...item, url: route(item.route) })))
-function active(item) { return currentPath.value === item.url.replace(/\/$/, '') }
+function active(item) {
+    return currentPath.value === new URL(item.url, window.location.origin).pathname.replace(/\/$/, '')
+}
 function navigate(url) { isMenuOpen.value = false; window.location.href = url }
 function icon(name) {
     const paths = {

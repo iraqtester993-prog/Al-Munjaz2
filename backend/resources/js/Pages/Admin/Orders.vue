@@ -12,6 +12,7 @@ const props = defineProps({
     filter: { type: String, default: 'all' },
     q: { type: String, default: '' },
     couriers: { type: Array, default: () => [] },
+    branches: { type: Array, default: () => [] },
 })
 
 const page = usePage()
@@ -19,7 +20,22 @@ const query = ref(props.q)
 const active = ref(props.filter)
 const assignFor = ref(null)
 const assignCourier = ref('')
+const branchFor = ref(null)
+const originBranch = ref('')
+const destinationBranch = ref('')
 const busyId = ref(null)
+
+const eligibleCouriers = computed(() => {
+    if (!assignFor.value?.province_id) return []
+    return props.couriers.filter((courier) =>
+        (courier.provinces || []).some((province) => Number(province.id) === Number(assignFor.value.province_id))
+    )
+})
+
+const eligibleBranches = computed(() => {
+    if (!branchFor.value) return []
+    return props.branches.filter((branch) => Number(branch.tenant_id) === Number(branchFor.value.tenant_id))
+})
 
 const filters = computed(() => {
     const list = [{ key: 'all', label: t('All') }]
@@ -70,6 +86,25 @@ function doAssign() {
     )
 }
 
+function openBranches(order) {
+    branchFor.value = order
+    originBranch.value = order.origin_branch_id || ''
+    destinationBranch.value = order.destination_branch_id || ''
+}
+
+function saveBranches() {
+    if (!branchFor.value || (!originBranch.value && !destinationBranch.value)) return
+    busyId.value = branchFor.value.id
+    router.post(route('admin.orders.branches', branchFor.value.id), {
+        origin_branch_id: originBranch.value || null,
+        destination_branch_id: destinationBranch.value || null,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => (branchFor.value = null),
+        onFinish: () => (busyId.value = null),
+    })
+}
+
 const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned']
 </script>
 
@@ -105,6 +140,9 @@ const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned'
                                     <div>
                                         <b>{{ o.customer_name_ar }}</b>
                                         <div class="text-muted mono" style="font-size: 10px">{{ o.phone }}</div>
+                                        <div v-if="o.origin_branch || o.destination_branch" class="text-muted" style="font-size: 10px; margin-top: 3px">
+                                            {{ o.origin_branch?.name || '—' }} ← {{ o.destination_branch?.name || '—' }}
+                                        </div>
                                     </div>
                                 </div>
                             </td>
@@ -126,6 +164,7 @@ const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned'
                                         <option v-for="s in statusOptions" :key="s" :value="s">{{ tStatus(s) }}</option>
                                     </select>
                                     <button v-if="o.status === 'pending'" class="fbtn mini" @click="openAssign(o)">{{ t('Assign') }}</button>
+                                    <button class="fbtn mini" @click="openBranches(o)">الفروع</button>
                                 </div>
                             </td>
                         </tr>
@@ -146,12 +185,34 @@ const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned'
                 <label>{{ t('Courier') }}</label>
                 <select v-model="assignCourier">
                     <option value="" disabled>{{ t('Select courier') }}</option>
-                    <option v-for="c in couriers" :key="c.id" :value="c.id">{{ c.name }} — {{ c.phone }}</option>
+                    <option v-for="c in eligibleCouriers" :key="c.id" :value="c.id">{{ c.name }} — {{ c.phone }}</option>
                 </select>
+                <p v-if="!assignFor?.province_id" class="field-error">لا يمكن التعيين قبل تحديد محافظة الطلب.</p>
+                <p v-else-if="!eligibleCouriers.length" class="field-error">لا يوجد مندوب نشط في محافظة هذا الطلب.</p>
             </div>
             <button class="btn btn-primary" style="width: 100%" :disabled="!assignCourier || busyId" @click="doAssign">
                 {{ t('Confirm') }}
             </button>
+        </SheetModal>
+
+        <SheetModal :open="!!branchFor" title="مسار الفروع" :subtitle="branchFor?.track_no" @close="branchFor = null">
+            <p class="text-muted" style="margin: 0 0 14px; font-size: 11px; line-height: 1.8">حدّد فرع استلام الطلب والفرع الذي سيتولى التسليم. تظهر الفروع الخاصة بحساب التاجر فقط.</p>
+            <div class="field">
+                <label>فرع المصدر / الاستلام</label>
+                <select v-model="originBranch">
+                    <option value="">غير محدد</option>
+                    <option v-for="branch in eligibleBranches" :key="branch.id" :value="branch.id">{{ branch.name }} — {{ branch.city }}</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>فرع الوجهة / التسليم</label>
+                <select v-model="destinationBranch">
+                    <option value="">غير محدد</option>
+                    <option v-for="branch in eligibleBranches" :key="branch.id" :value="branch.id">{{ branch.name }} — {{ branch.city }}</option>
+                </select>
+            </div>
+            <p v-if="!eligibleBranches.length" class="field-error">لا توجد فروع نشطة لهذا التاجر بعد.</p>
+            <button class="btn btn-primary" style="width: 100%" :disabled="(!originBranch && !destinationBranch) || busyId" @click="saveBranches">حفظ مسار الفروع</button>
         </SheetModal>
     </AdminShell>
 </template>

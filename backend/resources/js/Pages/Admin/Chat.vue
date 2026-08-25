@@ -1,6 +1,7 @@
 <script setup>
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, onMounted, watch } from 'vue'
 import axios from 'axios'
+import { router } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
 
@@ -12,11 +13,19 @@ const props = defineProps({
 
 const text = ref('')
 const sending = ref(false)
+const sendError = ref('')
 const msgs = ref([...(props.messages || [])])
 const threadEl = ref(null)
 
+watch(() => props.messages, (messages) => {
+    msgs.value = [...(messages || [])]
+    scrollDown()
+})
+
+onMounted(scrollDown)
+
 function openChat(c) {
-    $inertia.visit(route('admin.chat.show', c.id))
+    router.visit(route('admin.chat.show', c.id))
 }
 
 function initials(name) {
@@ -32,7 +41,7 @@ async function send() {
         msgs.value.push({ ...data, sender_id: null })
         text.value = ''
     } catch (e) {
-        // retry on next attempt
+        sendError.value = 'تعذر إرسال الرسالة. حاول مرة أخرى.'
     } finally {
         sending.value = false
         scrollDown()
@@ -95,6 +104,7 @@ function onEnter(e) {
                         </svg>
                     </button>
                 </div>
+                <p v-if="sendError" class="chat-send-error">{{ sendError }}</p>
             </div>
             <div v-else class="chat-thread chat-empty">{{ t('Select a conversation') }}</div>
         </div>

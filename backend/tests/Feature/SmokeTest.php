@@ -3,9 +3,9 @@
 namespace Tests\Feature;
 
 use App\Models\Chat;
+use App\Models\Branch;
 use App\Models\Document;
 use App\Models\Order;
-use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -28,7 +28,67 @@ class SmokeTest extends TestCase
     {
         $this->get('/login')->assertOk();
         $this->get('/dashboard/login')->assertOk();
+        $this->get('/pwa/manifest')
+            ->assertOk()
+            ->assertHeader('content-type', 'application/manifest+json; charset=utf-8');
+        $this->get('/manifest.json')
+            ->assertOk()
+            ->assertHeader('content-type', 'application/manifest+json; charset=utf-8');
+        $this->get('/pwa/worker')
+            ->assertOk()
+            ->assertHeader('content-type', 'application/javascript; charset=utf-8')
+            ->assertSee('almunjaz-shell-v13');
+        $this->get('/sw.js')
+            ->assertOk()
+            ->assertHeader('content-type', 'application/javascript; charset=utf-8')
+            ->assertSee('almunjaz-shell-v13');
+    }
 
+    public function test_deployed_hosts_are_canonical_without_proxy_redirect_loops(): void
+    {
+        $original = [
+            'env' => app()->environment(),
+            'domain' => config('app.product_domain'),
+            'mobile' => config('app.product_mobile_host'),
+            'admin' => config('app.product_admin_host'),
+        ];
+
+        try {
+            config([
+                'app.product_domain' => 'our-qiq.com',
+                'app.product_mobile_host' => 'mobile.our-qiq.com',
+                'app.product_admin_host' => 'admin.our-qiq.com',
+            ]);
+            app()->instance('env', 'production');
+
+            // PHP can receive an internal HTTP request after the HTTPS proxy.
+            // The application must render it instead of looping on a redirect.
+            $this->withServerVariables([
+                'HTTPS' => 'off',
+                'HTTP_X_FORWARDED_PROTO' => 'https',
+            ])->get('http://mobile.our-qiq.com/login')->assertOk();
+
+            $this->get('http://app.our-qiq.com/login')
+                ->assertRedirect('https://mobile.our-qiq.com/login');
+
+            $this->get('http://dashboard.our-qiq.com/dashboard/login')
+                ->assertRedirect('https://admin.our-qiq.com/dashboard/login');
+
+            $this->get('http://admin.our-qiq.com/app')
+                ->assertRedirect('https://mobile.our-qiq.com/login');
+
+            // The trusted-host allowlist rejects a forged Host before any
+            // redirect can be constructed from it.
+            $this->get('http://admin.evil.test/app')->assertStatus(400);
+        } finally {
+            config([
+                'app.product_domain' => $original['domain'],
+                'app.product_mobile_host' => $original['mobile'],
+                'app.product_admin_host' => $original['admin'],
+            ]);
+            app()->instance('env', $original['env']);
+            \Symfony\Component\HttpFoundation\Request::setTrustedHosts([]);
+        }
     }
 
     public function test_merchant_flow(): void
@@ -43,6 +103,10 @@ class SmokeTest extends TestCase
         $this->actingAs($merchant)->get('/app/orders')
             ->assertOk()
             ->assertInertia(fn (Assert $p) => $p->component('Mobile/Orders'));
+
+        $this->actingAs($merchant)->get('/app/reports')
+            ->assertOk()
+            ->assertInertia(fn (Assert $p) => $p->component('Mobile/Reports'));
 
         $this->actingAs($merchant)->get('/app/wallet')
             ->assertOk()
@@ -115,13 +179,95 @@ class SmokeTest extends TestCase
 
     public function test_order_status_transition(): void
     {
-        $merchant = User::where('username', 'تاجر')->first();
-        $order = Order::first();
+        $courier = User::where('username', 'مندوب')->firstOrFail();
+        $order = Order::where('status', 'pending')->whereNull('courier_id')->firstOrFail();
+        $startingBudget = $courier->wallet->budget;
 
-        $this->actingAs($merchant)->post("/app/orders/{$order->id}/status", ['status' => 'approved'])
+        $this->actingAs($courier)->post("/app/orders/{$order->id}/claim")
             ->assertRedirect();
 
-        $this->assertDatabaseHas('orders', ['id' => $order->id, 'status' => 'approved']);
+        $this->assertDatabaseHas('orders', ['id' => $order->id, 'status' => 'approved', 'courier_id' => $courier->id]);
+        $this->assertDatabaseHas('transactions', [
+            'order_id' => $order->id,
+            'user_id' => $courier->id,
+            'type' => 'paid_order',
+            'direction' => -1,
+        ]);
+        $this->assertSame($startingBudget - $order->price, $courier->wallet->fresh()->budget);
+
+        $this->actingAs($courier)->post("/app/orders/{$order->id}/status", ['status' => 'courier'])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('orders', ['id' => $order->id, 'status' => 'courier', 'courier_id' => $courier->id]);
+    }
+
+    public function test_courier_must_be_on_duty_to_claim_an_order(): void
+    {
+        $courier = User::where('username', 'مندوب')->firstOrFail();
+        $courier->update(['is_online' => false]);
+        $order = Order::where('status', 'pending')->whereNull('courier_id')->firstOrFail();
+
+        $this->actingAs($courier)->post("/app/orders/{$order->id}/claim")
+            ->assertRedirect()
+            ->assertSessionHasErrors('order');
+
+        $this->assertDatabaseHas('orders', [
+            'id' => $order->id,
+            'status' => 'pending',
+            'courier_id' => null,
+        ]);
+        $this->assertDatabaseMissing('transactions', [
+            'order_id' => $order->id,
+            'type' => 'paid_order',
+        ]);
+    }
+
+    public function test_courier_can_switch_off_duty_without_a_heartbeat_reenabling_it(): void
+    {
+        $courier = User::where('username', 'مندوب')->firstOrFail();
+
+        $this->actingAs($courier)->post('/app/duty', ['is_online' => false])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('users', [
+            'id' => $courier->id,
+            'is_online' => false,
+        ]);
+
+        // A regular authenticated application request runs ActiveUserMiddleware.
+        // It must refresh only the heartbeat, not silently put the courier back
+        // on duty and make restricted orders claimable again.
+        $this->actingAs($courier)->get('/app')->assertOk();
+
+        $this->assertDatabaseHas('users', [
+            'id' => $courier->id,
+            'is_online' => false,
+        ]);
+    }
+
+    public function test_admin_assignment_reserves_the_same_courier_budget(): void
+    {
+        $admin = User::where('role', 'admin')->firstOrFail();
+        $courier = User::where('username', 'مندوب')->firstOrFail();
+        $order = Order::where('status', 'pending')->whereNull('courier_id')->firstOrFail();
+        $startingBudget = $courier->wallet->budget;
+
+        $this->actingAs($admin)->post("/dashboard/orders/{$order->id}/courier", [
+            'courier_id' => $courier->id,
+        ])->assertRedirect();
+
+        $this->assertDatabaseHas('orders', [
+            'id' => $order->id,
+            'status' => 'approved',
+            'courier_id' => $courier->id,
+        ]);
+        $this->assertDatabaseHas('transactions', [
+            'order_id' => $order->id,
+            'user_id' => $courier->id,
+            'type' => 'paid_order',
+            'direction' => -1,
+        ]);
+        $this->assertSame($startingBudget - $order->price, $courier->wallet->fresh()->budget);
     }
 
     public function test_wallet_withdraw_and_chat_send(): void
@@ -141,6 +287,48 @@ class SmokeTest extends TestCase
         $this->actingAs($merchant)->get("/app/chats/{$chat->id}")
             ->assertOk()
             ->assertInertia(fn (Assert $p) => $p->component('Mobile/ChatThread'));
+    }
+
+    public function test_order_complaint_and_pending_order_protection(): void
+    {
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+        $approved = Order::where('status', 'approved')->firstOrFail();
+        $delivered = Order::where('status', 'delivered')->firstOrFail();
+
+        $this->actingAs($merchant)->post('/app/chats/open', ['order_id' => $approved->id])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('chats', [
+            'order_id' => $approved->id,
+            'user_id' => $merchant->id,
+            'counterparty_type' => 'order_support',
+        ]);
+
+        $this->actingAs($merchant)->post("/app/orders/{$delivered->id}/update", [])
+            ->assertStatus(422);
+
+        $this->actingAs($merchant)->post("/app/orders/{$approved->id}/status", ['status' => 'courier'])
+            ->assertForbidden();
+    }
+
+    public function test_admin_can_set_an_order_branch_route(): void
+    {
+        $admin = User::where('role', 'admin')->firstOrFail();
+        $order = Order::where('status', 'pending')->firstOrFail();
+        $branch = Branch::withoutGlobalScopes()->where('tenant_id', $order->tenant_id)->firstOrFail();
+
+        $this->actingAs($admin)->post("/dashboard/orders/{$order->id}/branches", [
+            'origin_branch_id' => $branch->id,
+            'destination_branch_id' => $branch->id,
+        ])->assertRedirect();
+
+        $this->assertDatabaseHas('orders', [
+            'id' => $order->id,
+            'origin_branch_id' => $branch->id,
+            'destination_branch_id' => $branch->id,
+            'branch_id' => $branch->id,
+            'workflow_stage' => 'at_origin_branch',
+        ]);
     }
 
     public function test_admin_user_status_change(): void

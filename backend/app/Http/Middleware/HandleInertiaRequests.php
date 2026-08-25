@@ -12,6 +12,11 @@ class HandleInertiaRequests extends Middleware
 
     public function share(Request $request): array
     {
+        $userLocale = $request->user()?->locale;
+        if (in_array($userLocale, array_keys(config('app.locales')), true)) {
+            App::setLocale($userLocale);
+        }
+
         return [
             ...parent::share($request),
             'name' => config('app.name'),
@@ -39,6 +44,14 @@ class HandleInertiaRequests extends Middleware
                     'plan' => $request->user()->tenant?->plan?->slug,
                     'trial_ends_at' => $request->user()->tenant?->trial_ends_at?->toDateString(),
                 ] : null,
+                'provinces' => $request->user()
+                    ? $request->user()->provinces()->orderBy('sort_order')->get(['provinces.id', 'name_ar', 'name_en', 'name_ku'])->map(fn ($province) => [
+                        'id' => $province->id,
+                        'name_ar' => $province->name_ar,
+                        'name_en' => $province->name_en,
+                        'name_ku' => $province->name_ku,
+                    ])->all()
+                    : [],
             ],
             'translations' => app()->bound('translations') ? app('translations') : [],
         ];

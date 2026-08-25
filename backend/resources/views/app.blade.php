@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="{{ app()->getLocale() }}" dir="{{ app()->getLocale() === 'ar' || app()->getLocale() === 'ku' ? 'rtl' : 'ltr' }}">
 @php($isDashboard = preg_match('/^(?:dashboard|admin)\./', request()->getHost()))
+@php($pwaVersion = config('app.pwa_version'))
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -13,7 +14,7 @@
     <meta name="application-name" content="{{ config('app.name') }}">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     @if (! $isDashboard)
-        <link rel="manifest" href="{{ url('/pwa/manifest?v=11') }}">
+        <link rel="manifest" href="{{ url('/pwa/manifest?v='.$pwaVersion) }}">
         <link rel="apple-touch-icon" href="{{ asset('assets/icon-180.png') }}">
         <link rel="icon" type="image/png" sizes="192x192" href="{{ asset('assets/icon-192.png') }}">
         <link rel="icon" type="image/png" sizes="512x512" href="{{ asset('assets/icon-512.png') }}">
@@ -30,7 +31,7 @@
     @if (! $isDashboard)
         <script>
             if ('serviceWorker' in navigator) {
-                window.addEventListener('load', () => navigator.serviceWorker.register('/pwa/worker?v=11', { scope: '/' }));
+                window.addEventListener('load', () => navigator.serviceWorker.register('/pwa/worker?v={{ $pwaVersion }}', { scope: '/' }));
             }
         </script>
     @endif

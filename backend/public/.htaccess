@@ -17,6 +17,12 @@
     RewriteCond %{HTTP:X-Forwarded-Proto} !https [NC]
     RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=302,L]
 
+    # The two legacy PWA URLs must always reach Laravel. Older installed
+    # copies registered /sw.js and /manifest.json; routing them to the same
+    # versioned response migrates those installations instead of leaving them
+    # on an obsolete cache.
+    RewriteRule ^(?:pwa/manifest|pwa/worker|manifest\.json|sw\.js)$ index.php [L]
+
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]

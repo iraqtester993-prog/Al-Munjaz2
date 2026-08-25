@@ -1,6 +1,6 @@
 <script setup>
-import { reactive, ref, watch } from 'vue'
-import { useForm } from '@inertiajs/vue3'
+import { computed, reactive, ref, watch } from 'vue'
+import { useForm, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import SheetModal from './SheetModal.vue'
 
@@ -12,6 +12,8 @@ const props = defineProps({
 const emit = defineEmits(['close', 'saved'])
 
 const submitting = ref(false)
+const page = usePage()
+const provinces = computed(() => page.props.auth?.provinces || [])
 
 const form = useForm({
     customer_name_ar: '',
@@ -23,6 +25,7 @@ const form = useForm({
     order_type: '',
     delivery_vehicle: 'normal',
     vehicle_note: '',
+    province_id: '',
     price: '',
     notes: '',
     date: '',
@@ -44,12 +47,14 @@ watch(
                 order_type: props.order.order_type || '',
                 delivery_vehicle: props.order.delivery_vehicle || 'normal',
                 vehicle_note: props.order.vehicle_note || '',
+                province_id: props.order.province_id || provinces.value[0]?.id || '',
                 price: props.order.price || '',
                 notes: props.order.notes || '',
                 date: props.order.date || '',
             })
         } else {
             form.reset()
+            form.province_id = provinces.value[0]?.id || ''
         }
     }
 )
@@ -77,6 +82,7 @@ function submit() {
         vehicle_note: form.vehicle_note,
         price: form.price,
         notes: form.notes,
+        province_id: form.province_id,
     }
     if (props.order) {
         form
@@ -130,6 +136,14 @@ function submit() {
                 <textarea v-model="form.address_ar" :placeholder="t('Address')"></textarea>
                 <span v-if="form.errors.address_ar" class="field-error">{{ form.errors.address_ar }}</span>
             </div>
+            <div class="field" :class="{ 'has-error': form.errors.province_id }">
+                <label>محافظة التسليم</label>
+                <select v-model="form.province_id" required>
+                    <option disabled value="">اختر المحافظة</option>
+                    <option v-for="province in provinces" :key="province.id" :value="province.id">{{ province.name_ar }}</option>
+                </select>
+                <span v-if="form.errors.province_id" class="field-error">{{ form.errors.province_id }}</span>
+            </div>
             <div class="field" :class="{ 'has-error': form.errors.price }">
                 <label>{{ t('Price') }}</label>
                 <input v-model="form.price" type="number" min="1" :placeholder="t('Price')" />
@@ -143,12 +157,15 @@ function submit() {
                 <label>مركبة التوصيل</label>
                 <select v-model="form.delivery_vehicle">
                     <option value="normal">توصيل عادي</option>
-                    <option value="suv">سيارة SUV / حمولة أكبر</option>
+                    <option value="bike">دراجة نارية</option>
+                    <option value="sedan">سيارة صالون</option>
+                    <option value="suv">سيارة كبيرة</option>
+                    <option value="truck">سيارة نقل</option>
                 </select>
             </div>
-            <div v-if="form.delivery_vehicle === 'suv'" class="field">
+            <div v-if="form.delivery_vehicle !== 'normal'" class="field">
                 <label>ملاحظة المركبة</label>
-                <input v-model="form.vehicle_note" placeholder="مثال: يحتاج سيارة كبيرة" />
+                <input v-model="form.vehicle_note" placeholder="مثال: يحتاج صندوقاً أو حمولة أكبر" />
             </div>
             <div class="field">
                 <label>{{ t('Notes') }}</label>

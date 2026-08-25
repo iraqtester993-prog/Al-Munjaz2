@@ -1,4 +1,6 @@
-const CACHE_NAME = 'almunjaz-shell-v10';
+// Laravel replaces __PWA_VERSION__ at the dynamic /pwa/worker route. Keeping
+// the source as a placeholder guarantees its cache name matches app.blade.php.
+const CACHE_NAME = 'almunjaz-shell-__PWA_VERSION__';
 const APP_SHELL = ['/pwa/manifest', '/assets/icon-192.png', '/assets/icon-512.png'];
 
 self.addEventListener('install', (event) => {

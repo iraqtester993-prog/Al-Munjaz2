@@ -31,7 +31,9 @@ class AuthController extends Controller
 
         $user->tokens()->where('name', $data['device_name'])->delete();
         $token = $user->createToken($data['device_name'], ['platform:read', 'platform:write'])->plainTextToken;
-        $user->forceFill(['last_active_at' => now(), 'is_online' => true])->save();
+        // Availability is controlled explicitly through the courier duty
+        // action. Logging in must not silently make a courier available.
+        $user->forceFill(['last_active_at' => now()])->save();
 
         return response()->json(['data' => ['token' => $token, 'user' => $this->userData($user)]]);
     }

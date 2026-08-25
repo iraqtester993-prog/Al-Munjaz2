@@ -5,7 +5,6 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use App\Http\Middleware\ActiveUserMiddleware;
 use App\Http\Middleware\EnsureDashboardHost;
-use App\Http\Middleware\ForceHttps;
 use App\Http\Middleware\HandleInertiaRequests;
 use App\Http\Middleware\RoleMiddleware;
 use App\Http\Middleware\SetTenantContext;
@@ -18,6 +17,21 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->trustHosts(at: function (): array {
+            $domain = preg_quote((string) config('app.product_domain'), '/');
+            $mobileHost = preg_quote((string) config('app.product_mobile_host'), '/');
+            $adminHost = preg_quote((string) config('app.product_admin_host'), '/');
+
+            return [
+                '^'.$domain.'$',
+                '^www\\.'.$domain.'$',
+                '^'.$mobileHost.'$',
+                '^'.$adminHost.'$',
+                '^(?:app|dashboard)\\.'.$domain.'$',
+                '^www\\.(?:mobile|admin)\\.'.$domain.'$',
+            ];
+        }, subdomains: false);
+
         $middleware->redirectUsersTo(fn ($request) => $request->user()?->role === 'admin'
             ? '/dashboard'
             : '/app');
@@ -27,7 +41,6 @@ return Application::configure(basePath: dirname(__DIR__))
             : '/login');
 
         $middleware->web(prepend: [
-            ForceHttps::class,
             EnsureDashboardHost::class,
         ]);
 

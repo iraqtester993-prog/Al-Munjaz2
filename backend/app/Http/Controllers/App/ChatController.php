@@ -5,6 +5,8 @@ namespace App\Http\Controllers\App;
 use App\Http\Controllers\Controller;
 use App\Models\Chat;
 use App\Models\ChatMessage;
+use App\Models\Order;
+use App\Models\Scopes\TenantScope;
 use App\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -85,6 +87,39 @@ class ChatController extends Controller
     {
         $user = $request->user();
         $tenant = TenantContext::tenant();
+
+        $data = $request->validate([
+            'order_id' => ['nullable', 'integer', 'exists:orders,id'],
+        ]);
+
+        if (! empty($data['order_id'])) {
+            $order = Order::withoutGlobalScope(TenantScope::class)->findOrFail($data['order_id']);
+
+            if ($user->role === 'merchant') {
+                abort_unless($order->tenant_id === $user->tenant_id, 403);
+            } elseif ($user->role === 'courier') {
+                abort_unless($order->courier_id === $user->id, 403);
+            } else {
+                abort(403);
+            }
+
+            $chat = Chat::withoutGlobalScope(TenantScope::class)->firstOrCreate(
+                [
+                    'tenant_id' => $order->tenant_id,
+                    'user_id' => $user->id,
+                    'counterparty_type' => 'order_support',
+                    'order_id' => $order->id,
+                ],
+                [
+                    'title_ar' => 'شكوى / تأخر — '.$order->track_no,
+                    'title_en' => 'Order support — '.$order->track_no,
+                    'last_message' => '',
+                    'last_at' => now(),
+                ]
+            );
+
+            return redirect()->route('app.chats.show', $chat);
+        }
 
         $chat = Chat::firstOrCreate(
             ['tenant_id' => $tenant->id, 'user_id' => $user->id, 'counterparty_type' => 'support'],

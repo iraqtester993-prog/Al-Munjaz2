@@ -14,7 +14,11 @@ class ActiveUserMiddleware
         $user = Auth::user();
 
         if ($user && $user->status === 'active') {
-            $user->forceFill(['last_active_at' => now(), 'is_online' => true])->saveQuietly();
+            // `is_online` is the courier's explicit duty/availability flag,
+            // not an authentication heartbeat. Updating it on every request
+            // made the "غير متاح" toggle ineffective and let an offline
+            // courier claim a new order merely by opening a page.
+            $user->forceFill(['last_active_at' => now()])->saveQuietly();
 
             return $next($request);
         }

@@ -1,38 +1,64 @@
 # بنية المنجز السريع
 
-## النطاقات
+## المنتج والنطاقات
 
-- `app.our-qiq.com`: Vue PWA للتاجر والمندوب.
-- `dashboard.our-qiq.com`: Vue PWA للإدارة.
-- `api.our-qiq.com/v1`: Laravel JSON API.
+| المنتج | النطاق | نقطة الدخول | المستخدمون |
+| --- | --- | --- | --- |
+| تطبيق الهاتف | https://mobile.our-qiq.com | /login ثم /app | التاجر والمندوب |
+| لوحة الإدارة | https://admin.our-qiq.com | /dashboard/login ثم /dashboard | الإدارة فقط |
 
-## قواعد الفصل
+لا يوجد في البنية الحالية تطبيق إنتاجي مستقل على app.our-qiq.com أو dashboard.our-qiq.com أو api.our-qiq.com. لا تعتمد عليها في DNS أو ملفات البيئة أو التوثيق.
 
-الـAPI لا يعرض واجهات المستخدم. لكل واجهة مشروع Vue مستقل، وتشارك الواجهتان حزمة مكونات اختيارية فقط. المصادقة تتم عبر Laravel Sanctum tokens ولا تُخزن كلمات المرور في الواجهة.
+## إصدار واحد ومصدرا واجهة
 
-## المجلدات
+المصدر التشغيلي هو backend/. Laravel يعرض صفحة Inertia واحدة، ثم تحمل Vue الصفحة الصحيحة:
 
-- `backend/`: مشروع Laravel بالكامل، بما فيه الـAPI وmigrations وملفات بيئة الخادم.
-- `frontends/app-pwa/`: تطبيق التاجر والمندوب.
-- `frontends/dashboard-pwa/`: لوحة الإدارة.
-- `docs/`: معمارية ونشر المشروع.
+    mobile.our-qiq.com
+      /login و/register/{role}          الدخول والتسجيل
+      /app و/app/*                     تطبيق التاجر أو المندوب
 
-## المحافظات
+    admin.our-qiq.com
+      /dashboard/login                 دخول الإدارة
+      /dashboard و/dashboard/*         لوحة الإدارة
 
-تُخزن محافظات العراق في `provinces`. يختار الحساب محافظة أساسية عند التسجيل، ويمكن ربطه بأكثر من محافظة عبر `province_user`. كل طلب يحمل `province_id`، ولا يسمح الداشبورد بتعيين مندوب خارج نطاق محافظة الطلب.
+كلا النطاقين يجب أن يشيرا إلى نسخة الإصدار نفسها في backend/public. طبقة EnsureDashboardHost تمنع ظهور واجهة التطبيق العامة تحت نطاق الإدارة، والـmiddleware الخاص بالأدوار يمنع دخول التاجر أو المندوب إلى لوحة الإدارة.
 
-## دورة الطلب
+## طبقات المشروع
 
-`pending` → `approved` → `courier` → `delivered` أو `returned`.
+- backend/app: وحدات Laravel، المصادقة، الصلاحيات، سير الطلب، الدردشة، المحافظ والمحافظ المالية.
+- backend/routes/web.php: مسارات الويب الخاصة بالتطبيق والإدارة.
+- backend/resources/js: واجهات Vue/Inertia؛ AppShell للتاجر والمندوب وAdminShell للإدارة.
+- backend/resources/pwa: قوالب PWA فقط.
+- backend/public: نقطة دخول Apache وملفات Vite الناتجة في public/build.
+- backend/database: المخطط وseeders.
+- frontends: ملفات أو معاينات قديمة، وليست جزءا من مسار إنتاج Laravel الحالي.
 
-كل تغيير يسجل في `order_status_logs`، وتبقى الحركات المالية في `transactions` منفصلة عن رصيد المحفظة.
+## الجلسات والحماية بين النطاقين
 
-## أول API
+التطبيق يستخدم جلسات Laravel وCSRF، وليس مفاتيح Sanctum مخزنة في المتصفح. يجب أن تبقى الجلسة host-only كي لا تنتقل كوكي التاجر أو المندوب إلى admin.our-qiq.com. الإعداد الإنتاجي المقصود هو:
 
-- `POST /api/v1/auth/login`
-- `GET /api/v1/me`
-- `POST /api/v1/auth/logout`
-- `GET /api/v1/dashboard`
-- `GET|POST /api/v1/orders`
-- `GET /api/v1/orders/{order}`
-- `PATCH /api/v1/orders/{order}/status`
+    SESSION_COOKIE=almunjaz_session_v13
+    SESSION_DOMAIN=null
+    SESSION_SECURE_COOKIE=true
+    SESSION_SAME_SITE=lax
+
+عند تغيير اسم الكوكي أو إصدار كبير، يسجل المستخدمون الدخول من جديد؛ هذا مقصود وآمن. لا تضبط SESSION_DOMAIN على .our-qiq.com لأن ذلك يعيد مشكلة اختلاط جلسات التطبيق والإدارة.
+
+## PWA وكاش الإصدارات
+
+المضيف mobile فقط يضم manifest وService Worker. Laravel يخدم:
+
+    GET /pwa/manifest
+    GET /pwa/worker
+
+ويضيف قيمة PWA_VERSION نفسها إلى رابط manifest وإلى اسم كاش العامل. ترفع ملفات Vite المبنية مع الإصدار، ثم تغير PWA_VERSION لكل نشر لتجديد التطبيق المثبت بأمان. المساران القديمان /manifest.json و/sw.js موجودان فقط لترحيل التطبيقات المثبتة سابقاً إلى المسارين الديناميكيين؛ لا تستخدمهما كمصدر نشر مستقل.
+
+## البيانات والتشغيل
+
+يحمل كل طلب province_id، ويرتبط المستخدم بمحافظته أو محافظاته المسموح بها. لا يسمح بإسناد مندوب خارج نطاق محافظة الطلب. يدعم النظام فروع الشركة في لوحة الإدارة، ويبقى سجل حالات الطلب والحركات المالية منفصلا عن الرصيد الحالي للمحفظة.
+
+دورة الطلب الأساسية:
+
+    pending -> approved -> courier -> delivered أو returned
+
+كل تغيير حالة يسجل في order_status_logs. يجب تنفيذ تغييرات الطلبات عبر خدمات Laravel ومساراتها، لا بتعديل الجداول يدويا.

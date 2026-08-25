@@ -7,8 +7,9 @@ use App\Models\ActivityLog;
 use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderStatusLog;
-use App\Models\Tenant;
 use App\Models\User;
+use App\Services\CourierOrderAccess;
+use App\Services\CourierOrderAssignmentService;
 use App\Services\OrderWorkflowService;
 use App\Tenancy\TenantContext;
 use Illuminate\Http\Request;
@@ -26,9 +27,10 @@ class AppOrderController extends Controller
 
         $isCourier = $request->user()->role === 'courier';
 
-        $query = $isCourier
-            ? Order::query()->where('courier_id', $request->user()->id)
+        $baseQuery = $isCourier
+            ? app(CourierOrderAccess::class)->assigned($request->user())
             : Order::query();
+        $query = clone $baseQuery;
 
         $filter = $request->input('filter', 'all');
         $q = $request->input('q');
@@ -46,7 +48,11 @@ class AppOrderController extends Controller
             });
         }
 
-        $orders = $query->with('courier:id,name,phone')->latest('id')->get()->map(fn (Order $o) => [
+        $orders = $query->with([
+            'courier:id,name,phone',
+            'merchant:id,name,phone,address',
+            'tenant:id,name',
+        ])->latest('id')->get()->map(fn (Order $o) => [
             'id' => $o->id,
             'track_no' => $o->track_no,
             'source' => $o->source,
@@ -59,17 +65,29 @@ class AppOrderController extends Controller
             'order_type' => $o->order_type,
             'delivery_vehicle' => $o->delivery_vehicle,
             'vehicle_note' => $o->vehicle_note,
+            'province_id' => $o->province_id,
             'price' => $o->price,
             'fee' => $o->fee,
             'status' => $o->status,
             'date' => $o->date->toDateString(),
             'notes' => $o->notes,
+            'pickup_deadline_at' => $o->pickup_deadline_at?->toIso8601String(),
             'courier' => $o->courier ? ['name' => $o->courier->name, 'phone' => $o->courier->phone] : null,
+            'merchant' => $o->merchant
+                ? ['name' => $o->merchant->name, 'phone' => $o->merchant->phone, 'address' => $o->merchant->address]
+                : ($o->tenant ? ['name' => $o->tenant->name, 'phone' => null, 'address' => null] : null),
             'courier_id' => $o->courier_id,
         ]);
 
         $counts = $isCourier
-            ? ['all' => $orders->count(), 'pending' => 0, 'approved' => 0, 'courier' => 0, 'delivered' => 0, 'returned' => 0]
+            ? [
+                'all' => (clone $baseQuery)->count(),
+                'pending' => (clone $baseQuery)->where('status', 'pending')->count(),
+                'approved' => (clone $baseQuery)->where('status', 'approved')->count(),
+                'courier' => (clone $baseQuery)->where('status', 'courier')->count(),
+                'delivered' => (clone $baseQuery)->where('status', 'delivered')->count(),
+                'returned' => (clone $baseQuery)->where('status', 'returned')->count(),
+            ]
             : $this->counts();
 
         return Inertia::render('Mobile/Orders', [
@@ -90,14 +108,21 @@ class AppOrderController extends Controller
             'phone2' => ['nullable', 'string', 'max:30'],
             'address_ar' => ['required', 'string', 'max:255'],
             'order_type' => ['nullable', 'string', 'max:60'],
-            'delivery_vehicle' => ['required', Rule::in(['normal', 'suv'])],
+            'delivery_vehicle' => ['required', Rule::in(['normal', 'bike', 'sedan', 'suv', 'truck'])],
             'vehicle_note' => ['nullable', 'string', 'max:255'],
+            'province_id' => ['required', 'integer', 'exists:provinces,id'],
             'price' => ['required', 'integer', 'min:1'],
             'notes' => ['nullable', 'string', 'max:255'],
         ]);
 
         $tenant = TenantContext::tenant();
         $user = $request->user();
+
+        abort_unless(
+            $user->provinces()->whereKey($data['province_id'])->exists(),
+            422,
+            'المحافظة المختارة غير مفعلة لحسابك.'
+        );
 
         $order = new Order($data);
         $order->tenant_id = $tenant->id;
@@ -108,6 +133,8 @@ class AppOrderController extends Controller
         $order->date = $request->input('date') ?: today();
         $order->status = 'pending';
         $order->workflow_stage = 'created';
+        $order->province_id = $data['province_id'];
+        $order->pickup_deadline_at = now()->addMinutes(30);
         $order->merchant_id = $user->id;
         $order->created_by = $user->id;
         $order->save();
@@ -136,6 +163,7 @@ class AppOrderController extends Controller
     public function update(Request $request, Order $order)
     {
         $this->authorizeOrder($order, $request);
+        abort_unless($order->status === 'pending', 422, 'يمكن تعديل الطلبات قيد الانتظار فقط.');
 
         $data = $request->validate([
             'customer_name_ar' => ['required', 'string', 'max:120'],
@@ -143,11 +171,18 @@ class AppOrderController extends Controller
             'phone2' => ['nullable', 'string', 'max:30'],
             'address_ar' => ['required', 'string', 'max:255'],
             'order_type' => ['nullable', 'string', 'max:60'],
-            'delivery_vehicle' => ['required', Rule::in(['normal', 'suv'])],
+            'delivery_vehicle' => ['required', Rule::in(['normal', 'bike', 'sedan', 'suv', 'truck'])],
             'vehicle_note' => ['nullable', 'string', 'max:255'],
+            'province_id' => ['required', 'integer', 'exists:provinces,id'],
             'price' => ['required', 'integer', 'min:1'],
             'notes' => ['nullable', 'string', 'max:255'],
         ]);
+
+        abort_unless(
+            $request->user()->provinces()->whereKey($data['province_id'])->exists(),
+            422,
+            'المحافظة المختارة غير مفعلة لحسابك.'
+        );
 
         $order->update([
             ...$data,
@@ -167,13 +202,41 @@ class AppOrderController extends Controller
             'note' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $from = $order->status;
         $to = $request->input('status');
         $user = $request->user();
+
+        abort_if($user->role === 'merchant', 403, 'لا يمكن للتاجر تغيير مرحلة التوصيل.');
+
+        if ($user->role === 'courier') {
+            $allowed = match ($order->status) {
+                'approved' => ['courier'],
+                'courier' => ['delivered', 'returned'],
+                default => [],
+            };
+
+            abort_unless(in_array($to, $allowed, true), 422, 'انتقال حالة الطلب غير مسموح.');
+        }
 
         app(OrderWorkflowService::class)->changeStatus($order, $to, $user, $request->input('note'));
 
         return back()->with('success', __('orders.status_changed'));
+    }
+
+    public function claim(Request $request, Order $order)
+    {
+        $courier = $request->user();
+
+        abort_unless($courier->role === 'courier', 403);
+
+        app(CourierOrderAssignmentService::class)->assign(
+            $order,
+            $courier,
+            $courier,
+            'تم قبول الطلب من المندوب.',
+            requireOnDuty: true,
+        );
+
+        return back()->with('success', 'تم قبول الطلب وخصم قيمته من ميزانية المندوب.');
     }
 
     protected function authorizeOrder(Order $order, Request $request): void

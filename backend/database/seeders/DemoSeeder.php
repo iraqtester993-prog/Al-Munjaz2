@@ -11,6 +11,7 @@ use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderStatusLog;
 use App\Models\Plan;
+use App\Models\Province;
 use App\Models\Setting;
 use App\Models\Tenant;
 use App\Models\Transaction;
@@ -83,7 +84,8 @@ class DemoSeeder extends Seeder
                 'password' => '123456',
                 'role' => 'courier',
                 'status' => 'active',
-                'vehicle' => 'motorcycle',
+                'vehicle' => 'bike',
+                'is_online' => true,
             ]
         );
 
@@ -91,6 +93,13 @@ class DemoSeeder extends Seeder
             'balance' => 150000,
             'budget' => 500000,
         ]);
+
+        // Demo accounts use Baghdad so the real courier visibility policy can
+        // be exercised without bypassing province checks.
+        if ($baghdad = Province::query()->where('name_ar', 'بغداد')->value('id')) {
+            $merchant->provinces()->syncWithoutDetaching([$baghdad => ['is_primary' => true]]);
+            $courier->provinces()->syncWithoutDetaching([$baghdad => ['is_primary' => true]]);
+        }
 
         Branch::updateOrCreate(
             ['tenant_id' => $merchantTenant->id, 'name_ar' => 'الفرع الرئيسي'],
@@ -125,6 +134,7 @@ class DemoSeeder extends Seeder
 
         $date = today()->subDays(3);
         $statuses = ['pending' => 0, 'approved' => 1, 'courier' => 2, 'delivered' => 3, 'returned' => 4];
+        $provinceIds = Province::query()->pluck('id', 'name_ar');
 
         foreach ($demo as $i => [$customer, $phone, $address, $city, $status, $price, $fee]) {
             $track = 'ALM-'.strtoupper(str_pad((string) (1000 + $i), 4, '0', STR_PAD_LEFT));
@@ -139,10 +149,12 @@ class DemoSeeder extends Seeder
                 'address_ar' => $address,
                 'address_en' => $address,
                 'order_type' => $i % 2 === 0 ? 'منتج' : 'مستند',
+                'delivery_vehicle' => $i % 2 === 0 ? 'normal' : 'suv',
                 'price' => $price,
                 'fee' => $fee,
                 'status' => $status,
-                'courier_id' => $courierId,
+                'courier_id' => $status === 'pending' ? null : $courierId,
+                'province_id' => $provinceIds[$city] ?? null,
                 'date' => $date->copy()->addHours($i),
                 'created_by' => $merchantId,
             ]);

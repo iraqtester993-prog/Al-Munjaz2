@@ -23,19 +23,23 @@ class RoleMiddleware
         // separate hosts. A user who opens the other product must be sent to
         // its own sign-in page, never left on a generic 403 screen.
         if (Auth::user()->role === 'admin' && in_array('merchant', $roles, true)) {
-            $host = $request->getHost();
-            $baseDomain = preg_replace('/^(?:app|dashboard|mobile|admin)\./', '', $host);
-
-            return redirect()->away($request->getScheme().'://admin.'.$baseDomain.'/dashboard/login');
+            return redirect()->away($this->productScheme($request).'://'.config('app.product_admin_host').'/dashboard/login');
         }
 
         if (in_array('admin', $roles, true)) {
-            $host = $request->getHost();
-            $baseDomain = preg_replace('/^(?:app|dashboard|mobile|admin)\./', '', $host);
-
-            return redirect()->away($request->getScheme().'://mobile.'.$baseDomain.'/login');
+            return redirect()->away($this->productScheme($request).'://'.config('app.product_mobile_host').'/login');
         }
 
         abort(403, __('auth.unauthorized'));
+    }
+
+    /**
+     * The public hosts are HTTPS-only in every deployed environment.  A
+     * reverse proxy may hand PHP an internal HTTP request, so using
+     * Request::getScheme() here could send users to an insecure URL.
+     */
+    private function productScheme(Request $request): string
+    {
+        return app()->environment(['production', 'staging']) ? 'https' : $request->getScheme();
     }
 }

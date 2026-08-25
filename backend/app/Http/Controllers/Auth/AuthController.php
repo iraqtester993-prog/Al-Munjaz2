@@ -90,8 +90,9 @@ class AuthController extends Controller
             'provinces' => Province::query()->whereNull('tenant_id')->orderBy('sort_order')->get(['id', 'name_ar', 'name_en', 'name_ku']),
             'vehicles' => [
                 'bike' => ['ar' => 'دراجة نارية', 'en' => 'Motorcycle', 'ku' => 'ماتۆڕسکلێت'],
-                'sedan' => ['ar' => 'سيارة', 'en' => 'Car', 'ku' => 'ئوتومۆبیل'],
-                'pickup' => ['ar' => 'بيك أب', 'en' => 'Pickup', 'ku' => 'پیکاپ'],
+                'sedan' => ['ar' => 'سيارة صالون', 'en' => 'Sedan', 'ku' => 'ئوتومۆبیلی بچووک'],
+                'suv' => ['ar' => 'سيارة كبيرة', 'en' => 'SUV', 'ku' => 'ئوتومۆبیلی گەورە'],
+                'truck' => ['ar' => 'سيارة نقل', 'en' => 'Truck', 'ku' => 'باربەر'],
             ],
         ]);
     }
@@ -107,7 +108,7 @@ class AuthController extends Controller
             'password' => ['required', 'string', 'min:8', 'confirmed'],
             'shop' => [$isCourier ? 'nullable' : 'required', 'string', 'max:120'],
             'address' => ['required', 'string', 'max:255'],
-            'vehicle' => ['nullable', 'string', 'in:bike,sedan,pickup'],
+            'vehicle' => ['nullable', 'string', 'in:bike,sedan,suv,truck'],
             'province_id' => ['required', 'integer', 'exists:provinces,id'],
             'residence_document' => [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
             'id_front_document' => [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],

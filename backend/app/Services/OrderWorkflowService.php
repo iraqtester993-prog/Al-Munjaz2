@@ -7,7 +7,10 @@ use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderMovement;
 use App\Models\OrderStatusLog;
+use App\Models\Scopes\TenantScope;
+use App\Models\Transaction;
 use App\Models\User;
+use App\Models\Wallet;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -35,7 +38,10 @@ class OrderWorkflowService
         }
 
         DB::transaction(function () use ($order, $status, $actor, $note) {
-            $order->refresh();
+            // The courier has a different tenant from the merchant that owns
+            // the order.  Reload without the tenant visibility scope after
+            // authorisation has already happened in the calling controller.
+            $order = Order::withoutGlobalScope(TenantScope::class)->findOrFail($order->id);
             $fromStatus = $order->status;
             $fromStage = $order->workflow_stage;
 
@@ -118,6 +124,49 @@ class OrderWorkflowService
                 'body_ku' => $labels[$status],
                 'data' => ['order_id' => $order->id, 'status' => $status, 'stage' => $order->workflow_stage],
             ]);
+
+            if (in_array($status, ['delivered', 'returned'], true) && $order->courier_id) {
+                $this->releaseCourierBudgetIfHeld($order, $status);
+            }
         });
+    }
+
+    protected function releaseCourierBudgetIfHeld(Order $order, string $status): void
+    {
+        $held = Transaction::withoutGlobalScope(TenantScope::class)
+            ->where('order_id', $order->id)
+            ->where('user_id', $order->courier_id)
+            ->where('type', 'paid_order')
+            ->where('direction', -1)
+            ->exists();
+
+        $released = Transaction::withoutGlobalScope(TenantScope::class)
+            ->where('order_id', $order->id)
+            ->where('user_id', $order->courier_id)
+            ->where('type', 'budget_release')
+            ->exists();
+
+        if (! $held || $released) {
+            return;
+        }
+
+        $courier = User::withoutGlobalScopes()->find($order->courier_id);
+        $wallet = Wallet::query()->where('user_id', $order->courier_id)->lockForUpdate()->first();
+
+        if ($wallet) {
+            $wallet->increment('budget', $order->price);
+        }
+
+        Transaction::create([
+            'tenant_id' => $courier?->tenant_id,
+            'user_id' => $order->courier_id,
+            'type' => 'budget_release',
+            'amount' => $order->price,
+            'direction' => 1,
+            'ref' => $order->track_no,
+            'order_id' => $order->id,
+            'date' => today(),
+            'note' => $status === 'delivered' ? 'إعادة ميزانية بعد التسليم' : 'إعادة ميزانية بعد الإرجاع',
+        ]);
     }
 }

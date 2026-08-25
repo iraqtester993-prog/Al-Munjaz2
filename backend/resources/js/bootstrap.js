@@ -5,10 +5,10 @@ window.axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
 window.axios.defaults.withCredentials = true;
 window.axios.defaults.withXSRFToken = true;
 
-const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-if (csrfToken) {
-    window.axios.defaults.headers.common['X-CSRF-TOKEN'] = csrfToken;
-}
+// Do not pin X-CSRF-TOKEN from the first server-rendered page here. Laravel
+// gives that header precedence over the XSRF cookie; after a PWA session is
+// renewed it would be stale and turn every subsequent POST into a 419. Axios
+// now reads the current XSRF-TOKEN cookie for each state-changing request.
 
 // A deployed PWA may briefly hold an expired CSRF token. Recover once by
 // obtaining a fresh server-rendered login page rather than leaving a 419 in

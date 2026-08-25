@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { usePage } from '@inertiajs/vue3'
 
 const props = defineProps({
@@ -9,17 +9,19 @@ const props = defineProps({
 const wrap = ref(null)
 const active = ref(0)
 const page = usePage()
+let autoplay
 
 function scrollTo(i) {
     const el = wrap.value
     if (!el) return
-    el.scrollTo({ left: i * el.clientWidth, behavior: 'smooth' })
+    const direction = document.documentElement.dir === 'rtl' ? -1 : 1
+    el.scrollTo({ left: direction * i * el.clientWidth, behavior: 'smooth' })
 }
 
 function onScroll() {
     const el = wrap.value
     if (!el || el.clientWidth === 0) return
-    active.value = Math.round(el.scrollLeft / el.clientWidth)
+    active.value = Math.round(Math.abs(el.scrollLeft) / el.clientWidth)
 }
 
 function text(slide) {
@@ -30,6 +32,16 @@ function text(slide) {
         tag: slide[`tag_${l}`] || slide.tag_ar,
     }
 }
+
+onMounted(() => {
+    if (props.slides.length < 2) return
+    autoplay = window.setInterval(() => {
+        const next = (active.value + 1) % props.slides.length
+        scrollTo(next)
+    }, 2000)
+})
+
+onUnmounted(() => window.clearInterval(autoplay))
 </script>
 
 <template>
@@ -39,7 +51,7 @@ function text(slide) {
                 v-for="(s, i) in slides"
                 :key="i"
                 class="hero-slide"
-                :style="{ backgroundImage: s.image_url ? `linear-gradient(90deg, rgba(7, 35, 32, .78), rgba(7, 35, 32, .22)), url(${s.image_url})` : (s.accent ? 'linear-gradient(135deg, var(--accent), #B4661A)' : 'linear-gradient(135deg, var(--primary-strong), var(--primary))'), backgroundSize: 'cover', backgroundPosition: 'center' }"
+                :style="{ backgroundImage: s.image_url ? `linear-gradient(270deg, rgba(7, 35, 32, .78), rgba(7, 35, 32, .22)), url(${s.image_url})` : (s.accent ? 'linear-gradient(135deg, var(--accent), #B4661A)' : 'linear-gradient(135deg, var(--primary-strong), var(--primary))'), backgroundSize: 'cover', backgroundPosition: 'center' }"
             >
                 <div class="hero-slide-text">
                     <h4>{{ text(s).title }}</h4>

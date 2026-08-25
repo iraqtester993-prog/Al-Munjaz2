@@ -2,7 +2,7 @@
   "name": "المنجز السريع — تطبيق التاجر والمندوب",
   "short_name": "المنجز السريع",
   "description": "تطبيق التاجر والمندوب لإدارة الطلبات والتوصيل",
-  "start_url": "/",
+  "start_url": "/login",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
