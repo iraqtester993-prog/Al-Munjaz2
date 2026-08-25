@@ -5,6 +5,55 @@ import { createInertiaApp } from '@inertiajs/vue3';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import { ZiggyVue } from 'ziggy-js';
 
+// The project intentionally keeps the web client independent of a Ziggy PHP
+// package.  Provide the named Laravel routes used by the Vue application here
+// so both the app and the separate dashboard can generate URLs on their own
+// current host.  Without this configuration `route()` crashes after login.
+const ziggyRoutes = {
+    login: { uri: 'login', methods: ['GET', 'HEAD'] },
+    'admin.login': { uri: 'dashboard/login', methods: ['GET', 'HEAD'] },
+    register: { uri: 'register/{role}', methods: ['GET', 'HEAD'] },
+    logout: { uri: 'logout', methods: ['POST'] },
+    app: { uri: 'app', methods: ['GET', 'HEAD'] },
+    'app.profile': { uri: 'app/profile', methods: ['GET', 'HEAD'] },
+    'profile.update': { uri: 'profile/update', methods: ['POST'] },
+    'profile.theme': { uri: 'profile/theme', methods: ['POST'] },
+    'profile.locale': { uri: 'profile/locale', methods: ['POST'] },
+    'app.orders': { uri: 'app/orders', methods: ['GET', 'HEAD'] },
+    'app.orders.store': { uri: 'app/orders', methods: ['POST'] },
+    'app.orders.update': { uri: 'app/orders/{order}/update', methods: ['POST'] },
+    'app.orders.status': { uri: 'app/orders/{order}/status', methods: ['POST'] },
+    'app.wallet': { uri: 'app/wallet', methods: ['GET', 'HEAD'] },
+    'app.wallet.withdraw': { uri: 'app/wallet/withdraw', methods: ['POST'] },
+    'app.wallet.budget': { uri: 'app/wallet/budget', methods: ['POST'] },
+    'app.chats': { uri: 'app/chats', methods: ['GET', 'HEAD'] },
+    'app.chats.show': { uri: 'app/chats/{chat}', methods: ['GET', 'HEAD'] },
+    'app.chats.send': { uri: 'app/chats/{chat}/send', methods: ['POST'] },
+    'app.chats.open': { uri: 'app/chats/open', methods: ['POST'] },
+    'app.notifications': { uri: 'app/notifications', methods: ['GET', 'HEAD'] },
+    'app.notifications.read-all': { uri: 'app/notifications/read-all', methods: ['POST'] },
+    'admin.dashboard': { uri: 'dashboard', methods: ['GET', 'HEAD'] },
+    'admin.orders': { uri: 'dashboard/orders', methods: ['GET', 'HEAD'] },
+    'admin.orders.status': { uri: 'dashboard/orders/{order}/status', methods: ['POST'] },
+    'admin.orders.courier': { uri: 'dashboard/orders/{order}/courier', methods: ['POST'] },
+    'admin.merchants': { uri: 'dashboard/merchants', methods: ['GET', 'HEAD'] },
+    'admin.couriers': { uri: 'dashboard/couriers', methods: ['GET', 'HEAD'] },
+    'admin.users.status': { uri: 'dashboard/users/{user}/status', methods: ['POST'] },
+    'admin.users.documents.review': { uri: 'dashboard/users/{user}/documents/{document}/review', methods: ['POST'] },
+    'admin.finance': { uri: 'dashboard/finance', methods: ['GET', 'HEAD'] },
+    'admin.notifications': { uri: 'dashboard/notifications', methods: ['GET', 'HEAD'] },
+    'admin.chat': { uri: 'dashboard/chat', methods: ['GET', 'HEAD'] },
+    'admin.chat.show': { uri: 'dashboard/chat/{chat}', methods: ['GET', 'HEAD'] },
+    'admin.chat.send': { uri: 'dashboard/chat/{chat}/send', methods: ['POST'] },
+};
+
+window.Ziggy = {
+    url: window.location.origin,
+    port: null,
+    defaults: {},
+    routes: ziggyRoutes,
+};
+
 let translations = window.__translations || {};
 
 window.t = (key, params = {}) => {
@@ -31,7 +80,7 @@ createInertiaApp({
 
         const app = createApp({ render: () => h(App, props) })
             .use(plugin)
-            .use(ZiggyVue);
+            .use(ZiggyVue, window.Ziggy);
 
         // Vue templates access helpers through the component instance.
         app.config.globalProperties.t = window.t;

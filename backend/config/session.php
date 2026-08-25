@@ -156,7 +156,10 @@ return [
     |
     */
 
-    'domain' => env('SESSION_DOMAIN'),
+    // App and dashboard are two independent login surfaces.  A shared
+    // `.our-qiq.com` session cookie makes a merchant session reach the admin
+    // host and produces a 403.  Host-only cookies prevent that collision.
+    'domain' => null,
 
     /*
     |--------------------------------------------------------------------------
