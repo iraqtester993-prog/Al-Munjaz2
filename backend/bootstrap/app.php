@@ -17,6 +17,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->redirectUsersTo(fn ($request) => $request->user()?->role === 'admin'
+            ? '/dashboard'
+            : '/app');
+
         $middleware->redirectGuestsTo(fn ($request) => $request->is('dashboard*')
             ? '/dashboard/login'
             : '/login');

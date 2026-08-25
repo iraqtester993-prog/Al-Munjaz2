@@ -5,6 +5,18 @@
 
     RewriteEngine On
 
+    # Keep one canonical origin for each installed PWA. The reverse proxy
+    # forwards HTTPS as X-Forwarded-Proto, so both checks are required.
+    RewriteCond %{HTTP_HOST} ^www\.mobile\.our-qiq\.com$ [NC]
+    RewriteRule ^ https://mobile.our-qiq.com%{REQUEST_URI} [R=302,L]
+
+    RewriteCond %{HTTP_HOST} ^www\.admin\.our-qiq\.com$ [NC]
+    RewriteRule ^ https://admin.our-qiq.com%{REQUEST_URI} [R=302,L]
+
+    RewriteCond %{HTTPS} !=on
+    RewriteCond %{HTTP:X-Forwarded-Proto} !https [NC]
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=302,L]
+
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]

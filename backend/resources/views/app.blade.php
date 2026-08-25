@@ -13,8 +13,7 @@
     <meta name="application-name" content="{{ config('app.name') }}">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     @if (! $isDashboard)
-        {{-- Versioned URLs bypass the long static-file cache imposed by the host. --}}
-        <link rel="manifest" href="{{ url('/manifest.json?v=9') }}">
+        <link rel="manifest" href="{{ url('/pwa/manifest.json?v=10') }}">
         <link rel="apple-touch-icon" href="{{ asset('assets/icon-180.png') }}">
         <link rel="icon" type="image/png" sizes="192x192" href="{{ asset('assets/icon-192.png') }}">
         <link rel="icon" type="image/png" sizes="512x512" href="{{ asset('assets/icon-512.png') }}">
@@ -31,7 +30,7 @@
     @if (! $isDashboard)
         <script>
             if ('serviceWorker' in navigator) {
-                window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js?v=9'));
+                window.addEventListener('load', () => navigator.serviceWorker.register('/pwa/worker.js?v=10', { scope: '/' }));
             }
         </script>
     @endif

@@ -6,6 +6,7 @@ import Flash from '../../Components/Flash.vue'
 const page = usePage()
 const errors = computed(() => page.props.errors || {})
 const form = useForm({ username: '', password: '' })
+const appLoginUrl = `${window.location.protocol}//${window.location.hostname.replace(/^(?:admin|dashboard)\./, 'mobile.')}/login`
 
 function submit() {
     form.post('/dashboard/login', { preserveScroll: true })
@@ -38,7 +39,7 @@ function submit() {
             </form>
 
             <p class="text-muted" style="text-align:center; padding-bottom: 28px">
-                <a class="link" href="/login">{{ t('Merchant App') }} / {{ t('Courier App') }}</a>
+                <a class="link" :href="appLoginUrl">{{ t('Merchant App') }} / {{ t('Courier App') }}</a>
             </p>
         </div>
     </div>
