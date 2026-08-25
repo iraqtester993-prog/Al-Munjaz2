@@ -23,12 +23,12 @@ use Illuminate\Support\Facades\Route;
 | .json files. Serving these two control files through Laravel guarantees
 | that every installed client receives the current worker and manifest.
 */
-Route::get('/pwa/manifest.json', fn () => response()->file(
+Route::get('/pwa/manifest', fn () => response()->file(
     resource_path('pwa/manifest.json'),
     ['Content-Type' => 'application/manifest+json; charset=utf-8', 'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0']
 ));
 
-Route::get('/pwa/worker.js', fn () => response()->file(
+Route::get('/pwa/worker', fn () => response()->file(
     resource_path('pwa/worker.js'),
     [
         'Content-Type' => 'application/javascript; charset=utf-8',

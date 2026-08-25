@@ -5,6 +5,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use App\Http\Middleware\ActiveUserMiddleware;
 use App\Http\Middleware\EnsureDashboardHost;
+use App\Http\Middleware\ForceHttps;
 use App\Http\Middleware\HandleInertiaRequests;
 use App\Http\Middleware\RoleMiddleware;
 use App\Http\Middleware\SetTenantContext;
@@ -26,6 +27,7 @@ return Application::configure(basePath: dirname(__DIR__))
             : '/login');
 
         $middleware->web(prepend: [
+            ForceHttps::class,
             EnsureDashboardHost::class,
         ]);
 

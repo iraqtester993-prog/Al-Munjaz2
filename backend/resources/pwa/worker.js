@@ -1,5 +1,5 @@
 const CACHE_NAME = 'almunjaz-shell-v10';
-const APP_SHELL = ['/pwa/manifest.json', '/assets/icon-192.png', '/assets/icon-512.png'];
+const APP_SHELL = ['/pwa/manifest', '/assets/icon-192.png', '/assets/icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));

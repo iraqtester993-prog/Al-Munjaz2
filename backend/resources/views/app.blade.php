@@ -13,7 +13,7 @@
     <meta name="application-name" content="{{ config('app.name') }}">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     @if (! $isDashboard)
-        <link rel="manifest" href="{{ url('/pwa/manifest.json?v=10') }}">
+        <link rel="manifest" href="{{ url('/pwa/manifest?v=11') }}">
         <link rel="apple-touch-icon" href="{{ asset('assets/icon-180.png') }}">
         <link rel="icon" type="image/png" sizes="192x192" href="{{ asset('assets/icon-192.png') }}">
         <link rel="icon" type="image/png" sizes="512x512" href="{{ asset('assets/icon-512.png') }}">
@@ -30,7 +30,7 @@
     @if (! $isDashboard)
         <script>
             if ('serviceWorker' in navigator) {
-                window.addEventListener('load', () => navigator.serviceWorker.register('/pwa/worker.js?v=10', { scope: '/' }));
+                window.addEventListener('load', () => navigator.serviceWorker.register('/pwa/worker?v=11', { scope: '/' }));
             }
         </script>
     @endif
