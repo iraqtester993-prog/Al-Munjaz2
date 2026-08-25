@@ -19,6 +19,23 @@ class RoleMiddleware
             return $next($request);
         }
 
+        // The public PWA and the administration panel deliberately use
+        // separate hosts. A user who opens the other product must be sent to
+        // its own sign-in page, never left on a generic 403 screen.
+        if (Auth::user()->role === 'admin' && in_array('merchant', $roles, true)) {
+            $host = $request->getHost();
+            $baseDomain = preg_replace('/^(?:app|dashboard)\./', '', $host);
+
+            return redirect()->away($request->getScheme().'://dashboard.'.$baseDomain.'/dashboard/login');
+        }
+
+        if (in_array('admin', $roles, true)) {
+            $host = $request->getHost();
+            $baseDomain = preg_replace('/^(?:app|dashboard)\./', '', $host);
+
+            return redirect()->away($request->getScheme().'://app.'.$baseDomain.'/login');
+        }
+
         abort(403, __('auth.unauthorized'));
     }
 }

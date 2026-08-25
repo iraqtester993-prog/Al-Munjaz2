@@ -1,4 +1,7 @@
-const CACHE_NAME = 'almunjaz-shell-v7';
+// Bump this whenever deployment changes the application shell. It forces
+// installed copies to discard old asset responses instead of reopening an
+// obsolete page that could result in a 403 after routing changes.
+const CACHE_NAME = 'almunjaz-shell-v8';
 const APP_SHELL = ['/manifest.json', '/assets/icon-192.png', '/assets/icon-512.png'];
 
 self.addEventListener('install', (event) => {
