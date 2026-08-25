@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="{{ app()->getLocale() }}" dir="{{ app()->getLocale() === 'ar' || app()->getLocale() === 'ku' ? 'rtl' : 'ltr' }}">
-@php($isDashboard = str_starts_with(request()->getHost(), 'dashboard.'))
+@php($isDashboard = preg_match('/^(?:dashboard|admin)\./', request()->getHost()))
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">

@@ -16,7 +16,7 @@ class EnsureDashboardHost
     {
         $isDashboardPath = $request->is('dashboard') || $request->is('dashboard/*') || $request->is('admin');
 
-        if ($isDashboardPath && ! app()->environment(['local', 'testing']) && ! str_starts_with($request->getHost(), 'dashboard.')) {
+        if ($isDashboardPath && ! app()->environment(['local', 'testing']) && ! preg_match('/^(?:dashboard|admin)\./', $request->getHost())) {
             return redirect('/login');
         }
 

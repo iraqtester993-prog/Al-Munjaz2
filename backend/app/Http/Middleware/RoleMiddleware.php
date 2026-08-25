@@ -24,16 +24,16 @@ class RoleMiddleware
         // its own sign-in page, never left on a generic 403 screen.
         if (Auth::user()->role === 'admin' && in_array('merchant', $roles, true)) {
             $host = $request->getHost();
-            $baseDomain = preg_replace('/^(?:app|dashboard)\./', '', $host);
+            $baseDomain = preg_replace('/^(?:app|dashboard|mobile|admin)\./', '', $host);
 
-            return redirect()->away($request->getScheme().'://dashboard.'.$baseDomain.'/dashboard/login');
+            return redirect()->away($request->getScheme().'://admin.'.$baseDomain.'/dashboard/login');
         }
 
         if (in_array('admin', $roles, true)) {
             $host = $request->getHost();
-            $baseDomain = preg_replace('/^(?:app|dashboard)\./', '', $host);
+            $baseDomain = preg_replace('/^(?:app|dashboard|mobile|admin)\./', '', $host);
 
-            return redirect()->away($request->getScheme().'://app.'.$baseDomain.'/login');
+            return redirect()->away($request->getScheme().'://mobile.'.$baseDomain.'/login');
         }
 
         abort(403, __('auth.unauthorized'));

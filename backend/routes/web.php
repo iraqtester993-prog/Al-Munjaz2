@@ -20,7 +20,7 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 Route::get('/', function (Request $request) {
-    return str_starts_with($request->getHost(), 'dashboard.')
+    return preg_match('/^(?:dashboard|admin)\./', $request->getHost())
         ? redirect('/dashboard/login')
         : redirect('/login');
 });
