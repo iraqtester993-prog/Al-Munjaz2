@@ -11,10 +11,12 @@
     <meta name="apple-mobile-web-app-title" content="{{ config('app.name') }}">
     <meta name="application-name" content="{{ config('app.name') }}">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <link rel="manifest" href="{{ url('/manifest.json') }}">
-    <link rel="apple-touch-icon" href="{{ asset('assets/icon-180.png') }}">
-    <link rel="icon" type="image/png" sizes="192x192" href="{{ asset('assets/icon-192.png') }}">
-    <link rel="icon" type="image/png" sizes="512x512" href="{{ asset('assets/icon-512.png') }}">
+    @if (! str_starts_with(request()->getHost(), 'dashboard.'))
+        <link rel="manifest" href="{{ url('/manifest.json') }}">
+        <link rel="apple-touch-icon" href="{{ asset('assets/icon-180.png') }}">
+        <link rel="icon" type="image/png" sizes="192x192" href="{{ asset('assets/icon-192.png') }}">
+        <link rel="icon" type="image/png" sizes="512x512" href="{{ asset('assets/icon-512.png') }}">
+    @endif
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     @inertiaHead
 </head>
@@ -24,10 +26,12 @@
         window.__translations = @json($translations);
         window.__locale = @json(app()->getLocale());
     </script>
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
-        }
-    </script>
+    @if (! str_starts_with(request()->getHost(), 'dashboard.'))
+        <script>
+            if ('serviceWorker' in navigator) {
+                window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
+            }
+        </script>
+    @endif
 </body>
 </html>
