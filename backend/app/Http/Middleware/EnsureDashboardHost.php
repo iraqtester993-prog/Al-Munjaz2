@@ -14,7 +14,9 @@ class EnsureDashboardHost
      */
     public function handle(Request $request, Closure $next): Response
     {
-        if (! app()->environment(['local', 'testing']) && ! str_starts_with($request->getHost(), 'dashboard.')) {
+        $isDashboardPath = $request->is('dashboard') || $request->is('dashboard/*') || $request->is('admin');
+
+        if ($isDashboardPath && ! app()->environment(['local', 'testing']) && ! str_starts_with($request->getHost(), 'dashboard.')) {
             return redirect('/login');
         }
 

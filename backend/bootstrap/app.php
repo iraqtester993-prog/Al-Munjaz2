@@ -21,6 +21,10 @@ return Application::configure(basePath: dirname(__DIR__))
             ? '/dashboard/login'
             : '/login');
 
+        $middleware->web(prepend: [
+            EnsureDashboardHost::class,
+        ]);
+
         $middleware->web(append: [
             HandleInertiaRequests::class,
             SetTenantContext::class,
