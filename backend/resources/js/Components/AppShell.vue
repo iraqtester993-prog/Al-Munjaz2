@@ -15,6 +15,7 @@ const props = defineProps({
 const page = usePage()
 const user = computed(() => page.props.auth?.user)
 const isCourier = computed(() => user.value?.role === 'courier')
+const locale = computed(() => page.props.locale || 'ar')
 
 const tabs = computed(() => {
     const base = [
@@ -53,7 +54,7 @@ function icon(name) {
             <Flash />
             <header class="app-topbar">
                 <button v-if="back" class="tb-icon-btn" @click="$inertia.visit(route('app'))">
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: window.__locale === 'ar' ? 'rotate(180deg)' : '' }">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: locale === 'ar' ? 'rotate(180deg)' : '' }">
                         <path d="M19 12H5m0 0 6-6m-6 6 6 6" />
                     </svg>
                 </button>

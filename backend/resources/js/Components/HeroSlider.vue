@@ -1,5 +1,6 @@
 <script setup>
 import { ref } from 'vue'
+import { usePage } from '@inertiajs/vue3'
 
 const props = defineProps({
     slides: { type: Array, required: true },
@@ -7,6 +8,7 @@ const props = defineProps({
 
 const wrap = ref(null)
 const active = ref(0)
+const page = usePage()
 
 function scrollTo(i) {
     const el = wrap.value
@@ -21,7 +23,7 @@ function onScroll() {
 }
 
 function text(slide) {
-    const l = window.__locale || 'ar'
+    const l = page.props.locale || 'ar'
     return {
         title: slide[`title_${l}`] || slide.title_ar,
         body: slide[`body_${l}`] || slide.body_ar,

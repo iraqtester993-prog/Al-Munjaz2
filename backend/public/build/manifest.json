@@ -1,40 +1,55 @@
 {
-  "_AdminShell-DTfuUY0z.js": {
-    "file": "assets/AdminShell-DTfuUY0z.js",
+  "_AdminShell-C-D-MjWr.js": {
+    "file": "assets/AdminShell-C-D-MjWr.js",
     "name": "AdminShell",
     "imports": [
       "resources/js/app.js",
-      "_Flash-CdKQmm3P.js"
+      "_Flash-BRjj9K2m.js"
     ]
   },
-  "_AppShell-F9mCuxWU.js": {
-    "file": "assets/AppShell-F9mCuxWU.js",
+  "_AppShell-YMTs1lsK.js": {
+    "file": "assets/AppShell-YMTs1lsK.js",
     "name": "AppShell",
     "imports": [
       "resources/js/app.js",
-      "_Flash-CdKQmm3P.js"
+      "_Flash-BRjj9K2m.js"
     ]
   },
-  "_Flash-CdKQmm3P.js": {
-    "file": "assets/Flash-CdKQmm3P.js",
+  "_DonutChart-p3h4Cncq.js": {
+    "file": "assets/DonutChart-p3h4Cncq.js",
+    "name": "DonutChart",
+    "imports": [
+      "resources/js/app.js"
+    ]
+  },
+  "_Flash-BRjj9K2m.js": {
+    "file": "assets/Flash-BRjj9K2m.js",
     "name": "Flash",
     "imports": [
       "resources/js/app.js"
     ]
   },
-  "_HeroSlider-D-84Hl2U.js": {
-    "file": "assets/HeroSlider-D-84Hl2U.js",
+  "_HeroSlider-D3xMaLB-.js": {
+    "file": "assets/HeroSlider-D3xMaLB-.js",
     "name": "HeroSlider",
     "imports": [
       "resources/js/app.js"
+    ]
+  },
+  "_OrderForm-Chf0MRqm.js": {
+    "file": "assets/OrderForm-Chf0MRqm.js",
+    "name": "OrderForm",
+    "imports": [
+      "resources/js/app.js",
+      "_SheetModal-D96IZ-Oo.js"
     ]
   },
   "_SheetModal-BNSAm9NI.css": {
     "file": "assets/SheetModal-BNSAm9NI.css",
     "src": "_SheetModal-BNSAm9NI.css"
   },
-  "_SheetModal-Dqm9Lcc6.js": {
-    "file": "assets/SheetModal-Dqm9Lcc6.js",
+  "_SheetModal-D96IZ-Oo.js": {
+    "file": "assets/SheetModal-D96IZ-Oo.js",
     "name": "SheetModal",
     "imports": [
       "resources/js/app.js",
@@ -44,8 +59,8 @@
       "assets/SheetModal-BNSAm9NI.css"
     ]
   },
-  "_StatusBadge-BMcfif8u.js": {
-    "file": "assets/StatusBadge-BMcfif8u.js",
+  "_StatusBadge-ljAScmcK.js": {
+    "file": "assets/StatusBadge-ljAScmcK.js",
     "name": "StatusBadge",
     "imports": [
       "resources/js/app.js"
@@ -77,15 +92,15 @@
     "src": "resources/fonts/cairo-latin.woff2"
   },
   "resources/js/Pages/Admin/Branches.vue": {
-    "file": "assets/Branches-B0BopPL4.js",
+    "file": "assets/Branches-Co3AOKmp.js",
     "name": "Branches",
     "src": "resources/js/Pages/Admin/Branches.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AdminShell-DTfuUY0z.js",
+      "_AdminShell-C-D-MjWr.js",
       "__plugin-vue_export-helper-DlAUqK2U.js",
-      "_Flash-CdKQmm3P.js"
+      "_Flash-BRjj9K2m.js"
     ],
     "css": [
       "assets/Branches-DgV4LYtD.css",
@@ -98,14 +113,14 @@
     ]
   },
   "resources/js/Pages/Admin/Chat.vue": {
-    "file": "assets/Chat-aBKVt16G.js",
+    "file": "assets/Chat-B12vMkyn.js",
     "name": "Chat",
     "src": "resources/js/Pages/Admin/Chat.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AdminShell-DTfuUY0z.js",
-      "_Flash-CdKQmm3P.js"
+      "_AdminShell-C-D-MjWr.js",
+      "_Flash-BRjj9K2m.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -117,15 +132,16 @@
     ]
   },
   "resources/js/Pages/Admin/Dashboard.vue": {
-    "file": "assets/Dashboard-Bc66dWqX.js",
+    "file": "assets/Dashboard-B2jTt2pO.js",
     "name": "Dashboard",
     "src": "resources/js/Pages/Admin/Dashboard.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AdminShell-DTfuUY0z.js",
-      "_StatusBadge-BMcfif8u.js",
-      "_Flash-CdKQmm3P.js"
+      "_AdminShell-C-D-MjWr.js",
+      "_DonutChart-p3h4Cncq.js",
+      "_StatusBadge-ljAScmcK.js",
+      "_Flash-BRjj9K2m.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -137,14 +153,14 @@
     ]
   },
   "resources/js/Pages/Admin/Finance.vue": {
-    "file": "assets/Finance-Crvc5j3L.js",
+    "file": "assets/Finance-DE1co7uW.js",
     "name": "Finance",
     "src": "resources/js/Pages/Admin/Finance.vue",
     "isDynamicEntry": true,
     "imports": [
-      "_AdminShell-DTfuUY0z.js",
+      "_AdminShell-C-D-MjWr.js",
       "resources/js/app.js",
-      "_Flash-CdKQmm3P.js"
+      "_Flash-BRjj9K2m.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -156,14 +172,14 @@
     ]
   },
   "resources/js/Pages/Admin/Notifications.vue": {
-    "file": "assets/Notifications-COZ5Q2qU.js",
+    "file": "assets/Notifications-CuThNaeW.js",
     "name": "Notifications",
     "src": "resources/js/Pages/Admin/Notifications.vue",
     "isDynamicEntry": true,
     "imports": [
-      "_AdminShell-DTfuUY0z.js",
+      "_AdminShell-C-D-MjWr.js",
       "resources/js/app.js",
-      "_Flash-CdKQmm3P.js"
+      "_Flash-BRjj9K2m.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -175,16 +191,16 @@
     ]
   },
   "resources/js/Pages/Admin/Orders.vue": {
-    "file": "assets/Orders-DgZpj42R.js",
+    "file": "assets/Orders-Dsv7ZhQE.js",
     "name": "Orders",
     "src": "resources/js/Pages/Admin/Orders.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AdminShell-DTfuUY0z.js",
-      "_StatusBadge-BMcfif8u.js",
-      "_SheetModal-Dqm9Lcc6.js",
-      "_Flash-CdKQmm3P.js",
+      "_AdminShell-C-D-MjWr.js",
+      "_StatusBadge-ljAScmcK.js",
+      "_SheetModal-D96IZ-Oo.js",
+      "_Flash-BRjj9K2m.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -197,14 +213,14 @@
     ]
   },
   "resources/js/Pages/Admin/Roster.vue": {
-    "file": "assets/Roster-C9MlHLBU.js",
+    "file": "assets/Roster-DcmmzRGC.js",
     "name": "Roster",
     "src": "resources/js/Pages/Admin/Roster.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AdminShell-DTfuUY0z.js",
-      "_Flash-CdKQmm3P.js"
+      "_AdminShell-C-D-MjWr.js",
+      "_Flash-BRjj9K2m.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -216,13 +232,13 @@
     ]
   },
   "resources/js/Pages/Auth/AdminLogin.vue": {
-    "file": "assets/AdminLogin-5-W5i1AA.js",
+    "file": "assets/AdminLogin-CDcWUKRy.js",
     "name": "AdminLogin",
     "src": "resources/js/Pages/Auth/AdminLogin.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_Flash-CdKQmm3P.js"
+      "_Flash-BRjj9K2m.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -234,13 +250,13 @@
     ]
   },
   "resources/js/Pages/Auth/Login.vue": {
-    "file": "assets/Login-C53mGep5.js",
+    "file": "assets/Login-UufAIpjF.js",
     "name": "Login",
     "src": "resources/js/Pages/Auth/Login.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_Flash-CdKQmm3P.js",
+      "_Flash-BRjj9K2m.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -254,13 +270,13 @@
     ]
   },
   "resources/js/Pages/Auth/Register.vue": {
-    "file": "assets/Register-BFsrV4Rf.js",
+    "file": "assets/Register-BLXkXBbm.js",
     "name": "Register",
     "src": "resources/js/Pages/Auth/Register.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_Flash-CdKQmm3P.js",
+      "_Flash-BRjj9K2m.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -274,7 +290,7 @@
     ]
   },
   "resources/js/Pages/Mobile/ChatThread.vue": {
-    "file": "assets/ChatThread-Dzd6IDVd.js",
+    "file": "assets/ChatThread-DU1H1ug1.js",
     "name": "ChatThread",
     "src": "resources/js/Pages/Mobile/ChatThread.vue",
     "isDynamicEntry": true,
@@ -291,14 +307,14 @@
     ]
   },
   "resources/js/Pages/Mobile/Chats.vue": {
-    "file": "assets/Chats-b78UK05P.js",
+    "file": "assets/Chats-BloN0iav.js",
     "name": "Chats",
     "src": "resources/js/Pages/Mobile/Chats.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-F9mCuxWU.js",
-      "_Flash-CdKQmm3P.js"
+      "_AppShell-YMTs1lsK.js",
+      "_Flash-BRjj9K2m.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -310,16 +326,16 @@
     ]
   },
   "resources/js/Pages/Mobile/CourierHome.vue": {
-    "file": "assets/CourierHome-Bh1xANbm.js",
+    "file": "assets/CourierHome-Bja4AB9d.js",
     "name": "CourierHome",
     "src": "resources/js/Pages/Mobile/CourierHome.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-F9mCuxWU.js",
-      "_HeroSlider-D-84Hl2U.js",
-      "_StatusBadge-BMcfif8u.js",
-      "_Flash-CdKQmm3P.js"
+      "_AppShell-YMTs1lsK.js",
+      "_HeroSlider-D3xMaLB-.js",
+      "_StatusBadge-ljAScmcK.js",
+      "_Flash-BRjj9K2m.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -331,18 +347,23 @@
     ]
   },
   "resources/js/Pages/Mobile/MerchantHome.vue": {
-    "file": "assets/MerchantHome-LADKDghs.js",
+    "file": "assets/MerchantHome-DF0oy0AT.js",
     "name": "MerchantHome",
     "src": "resources/js/Pages/Mobile/MerchantHome.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-F9mCuxWU.js",
-      "_HeroSlider-D-84Hl2U.js",
-      "_StatusBadge-BMcfif8u.js",
-      "_Flash-CdKQmm3P.js"
+      "_AppShell-YMTs1lsK.js",
+      "_HeroSlider-D3xMaLB-.js",
+      "_StatusBadge-ljAScmcK.js",
+      "_DonutChart-p3h4Cncq.js",
+      "_OrderForm-Chf0MRqm.js",
+      "__plugin-vue_export-helper-DlAUqK2U.js",
+      "_Flash-BRjj9K2m.js",
+      "_SheetModal-D96IZ-Oo.js"
     ],
     "css": [
+      "assets/MerchantHome-Do2o8x01.css",
       "assets/app-DQmOcxks.css"
     ],
     "assets": [
@@ -352,14 +373,14 @@
     ]
   },
   "resources/js/Pages/Mobile/Notifications.vue": {
-    "file": "assets/Notifications-Dp6GplOf.js",
+    "file": "assets/Notifications-BY6ATbaX.js",
     "name": "Notifications",
     "src": "resources/js/Pages/Mobile/Notifications.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-F9mCuxWU.js",
-      "_Flash-CdKQmm3P.js"
+      "_AppShell-YMTs1lsK.js",
+      "_Flash-BRjj9K2m.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -371,16 +392,17 @@
     ]
   },
   "resources/js/Pages/Mobile/Orders.vue": {
-    "file": "assets/Orders-B266QOGA.js",
+    "file": "assets/Orders-Bp43vR_m.js",
     "name": "Orders",
     "src": "resources/js/Pages/Mobile/Orders.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-F9mCuxWU.js",
-      "_StatusBadge-BMcfif8u.js",
-      "_SheetModal-Dqm9Lcc6.js",
-      "_Flash-CdKQmm3P.js",
+      "_AppShell-YMTs1lsK.js",
+      "_StatusBadge-ljAScmcK.js",
+      "_SheetModal-D96IZ-Oo.js",
+      "_OrderForm-Chf0MRqm.js",
+      "_Flash-BRjj9K2m.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -393,15 +415,15 @@
     ]
   },
   "resources/js/Pages/Mobile/Profile.vue": {
-    "file": "assets/Profile-B2lyBYkK.js",
+    "file": "assets/Profile-CDT38aze.js",
     "name": "Profile",
     "src": "resources/js/Pages/Mobile/Profile.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-F9mCuxWU.js",
-      "_SheetModal-Dqm9Lcc6.js",
-      "_Flash-CdKQmm3P.js",
+      "_AppShell-YMTs1lsK.js",
+      "_SheetModal-D96IZ-Oo.js",
+      "_Flash-BRjj9K2m.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -414,15 +436,15 @@
     ]
   },
   "resources/js/Pages/Mobile/Wallet.vue": {
-    "file": "assets/Wallet-CHOkyes8.js",
+    "file": "assets/Wallet-DhWazztG.js",
     "name": "Wallet",
     "src": "resources/js/Pages/Mobile/Wallet.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-F9mCuxWU.js",
-      "_SheetModal-Dqm9Lcc6.js",
-      "_Flash-CdKQmm3P.js",
+      "_AppShell-YMTs1lsK.js",
+      "_SheetModal-D96IZ-Oo.js",
+      "_Flash-BRjj9K2m.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -435,7 +457,7 @@
     ]
   },
   "resources/js/app.js": {
-    "file": "assets/app-DGCSbtTm.js",
+    "file": "assets/app-TxQKhjzM.js",
     "name": "app",
     "src": "resources/js/app.js",
     "isEntry": true,

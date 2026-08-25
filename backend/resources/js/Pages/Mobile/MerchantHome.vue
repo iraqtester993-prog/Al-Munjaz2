@@ -1,9 +1,11 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { usePage } from '@inertiajs/vue3'
 import AppShell from '../../Components/AppShell.vue'
 import HeroSlider from '../../Components/HeroSlider.vue'
 import StatusBadge from '../../Components/StatusBadge.vue'
+import DonutChart from '../../Components/DonutChart.vue'
+import OrderForm from '../../Components/OrderForm.vue'
 
 const props = defineProps({
     stats: { type: Object, required: true },
@@ -14,23 +16,16 @@ const props = defineProps({
 const page = usePage()
 const user = computed(() => page.props.auth?.user)
 const tenant = computed(() => page.props.auth?.tenant)
+const showOrderForm = ref(false)
 
-const statCards = computed(() => [
-    { icon: 'clipboard', label: t('My Orders Today'), value: props.stats.today, tint: 'var(--primary-tint)', color: 'var(--primary-strong)' },
-    { icon: 'check', label: t('Delivered'), value: props.stats.delivered, tint: 'var(--success-tint)', color: 'var(--success)' },
-    { icon: 'back', label: t('Returned'), value: props.stats.returned, tint: 'var(--danger-tint)', color: 'var(--danger)' },
-    { icon: 'clock', label: t('Pending'), value: props.stats.pending, tint: 'var(--st-pending-tint)', color: 'var(--st-pending)' },
+const deliveryRate = computed(() => props.stats.total ? Math.round((props.stats.delivered / props.stats.total) * 100) : 0)
+const statusItems = computed(() => [
+    { label: 'قيد الانتظار', value: props.stats.pending, color: 'var(--st-pending)' },
+    { label: 'تم قبول الطلب', value: props.stats.approved, color: 'var(--st-approved)' },
+    { label: 'بحوزة المندوب', value: props.stats.courier, color: 'var(--st-courier)' },
+    { label: 'تم التسليم', value: props.stats.delivered, color: 'var(--st-delivered)' },
+    { label: 'راجع', value: props.stats.returned, color: 'var(--st-returned)' },
 ])
-
-function statIcon(name) {
-    const paths = {
-        clipboard: 'M9 4h6v3H9z M9 4H5v17h14V4h-4 M9 11h6 M9 15h6',
-        check: 'M20 6 9 17l-5-5',
-        back: 'M9 14 4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3',
-        clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-13v5l3 2',
-    }
-    return paths[name]
-}
 
 const greeting = computed(() => {
     const h = new Date().getHours()
@@ -46,30 +41,26 @@ const greeting = computed(() => {
             <span class="tb-sub">{{ user?.name }} · {{ tenant?.name }}</span>
         </template>
 
+        <HeroSlider :slides="heroSlides" />
+
+        <button class="home-new-order" @click="showOrderForm = true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+            إضافة طلب جديد
+        </button>
+
         <div class="hero-card">
-            <div class="hc-label">{{ t('My Due Balance') }}</div>
-            <div class="hc-value mono">{{ fmt(stats.walletBalance) }} <span style="font-size: 13px; font-weight: 700">د.ع</span></div>
+            <div class="hc-label">{{ t('My Orders Today') }}</div>
+            <div class="hc-value mono">{{ stats.today }}</div>
             <div class="hc-row">
                 <span class="hc-chip">
-                    <span class="live-dot"><i></i></span>
-                    {{ t('Working now') }}
+                    نسبة التسليم: {{ deliveryRate }}%
                 </span>
-                <span class="hc-chip">{{ t('Today') }}: {{ stats.today }}</span>
             </div>
         </div>
 
-        <HeroSlider :slides="heroSlides" />
-
-        <div class="stat-grid">
-            <div v-for="s in statCards" :key="s.label" class="stat-card">
-                <div class="si" :style="{ background: s.tint, color: s.color }">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path :d="statIcon(s.icon)" />
-                    </svg>
-                </div>
-                <div class="sv">{{ s.value }}</div>
-                <div class="sl">{{ s.label }}</div>
-            </div>
+        <div class="chart-card">
+            <div class="chart-card-head"><h4>توزيع حالات الطلبات</h4></div>
+            <DonutChart :items="statusItems" />
         </div>
 
         <div class="section-title">
@@ -95,5 +86,16 @@ const greeting = computed(() => {
             </div>
         </div>
         <div v-else class="empty-hint">{{ t('No orders yet') }}</div>
+
+        <OrderForm :open="showOrderForm" @close="showOrderForm = false" />
     </AppShell>
 </template>
+
+<style scoped>
+.home-new-order {
+    width: 100%; padding: 16px; border-radius: 16px; background: var(--primary); color: #fff;
+    display: flex; align-items: center; justify-content: center; gap: 10px; font: inherit;
+    font-size: 14px; font-weight: 800; margin-bottom: 16px; border: 0; cursor: pointer;
+    box-shadow: 0 8px 24px -6px color-mix(in srgb, var(--primary) 55%, transparent);
+}
+</style>

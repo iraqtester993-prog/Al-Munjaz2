@@ -2,6 +2,7 @@
 import { ref, nextTick } from 'vue'
 import axios from 'axios'
 import { route } from 'ziggy-js'
+import { usePage } from '@inertiajs/vue3'
 import AppShell from '../../Components/AppShell.vue'
 
 const props = defineProps({
@@ -10,6 +11,8 @@ const props = defineProps({
 })
 
 const text = ref('')
+const page = usePage()
+const locale = () => page.props.locale || 'ar'
 const sending = ref(false)
 const msgs = ref([...props.messages])
 const threadEl = ref(null)
@@ -49,7 +52,7 @@ function onEnter(e) {
         <div class="app-shell">
             <header class="app-topbar">
                 <button class="tb-icon-btn" @click="$inertia.visit(route('app.chats'))">
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: window.__locale === 'ar' ? 'rotate(180deg)' : '' }">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: locale() === 'ar' ? 'rotate(180deg)' : '' }">
                         <path d="M19 12H5m0 0 6-6m-6 6 6 6" />
                     </svg>
                 </button>
@@ -72,7 +75,7 @@ function onEnter(e) {
                 <input v-model="text" :placeholder="t('Type a message')" @keydown="onEnter" />
                 <button class="send-btn" :disabled="sending || !text.trim()" @click="send">
                     <span v-if="sending" class="loader"></span>
-                    <svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: window.__locale === 'ar' ? 'scaleX(-1)' : '' }">
+                    <svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: locale() === 'ar' ? 'scaleX(-1)' : '' }">
                         <path d="m22 2-7 20-4-9-9-4Z M22 2 11 13" />
                     </svg>
                 </button>
