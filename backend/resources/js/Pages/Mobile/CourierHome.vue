@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
-import { usePage } from '@inertiajs/vue3'
+import { router, usePage } from '@inertiajs/vue3'
+import { route } from 'ziggy-js'
 import AppShell from '../../Components/AppShell.vue'
 import HeroSlider from '../../Components/HeroSlider.vue'
 import StatusBadge from '../../Components/StatusBadge.vue'
@@ -32,8 +33,7 @@ function statIcon(name) {
 }
 
 function toggleDuty() {
-    // onDuty is a static flag from the server; flip locally for UI feedback
-    props.stats.onDuty = !props.stats.onDuty
+    router.post(route('app.duty'), { is_online: !props.stats.onDuty }, { preserveScroll: true })
 }
 </script>
 

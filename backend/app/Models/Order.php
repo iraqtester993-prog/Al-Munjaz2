@@ -19,11 +19,11 @@ class Order extends Model
     protected $fillable = [
         'tenant_id', 'track_no', 'source',
         'customer_name_ar', 'customer_name_en', 'phone', 'phone2',
-        'address_ar', 'address_en', 'order_type', 'price', 'fee',
+        'address_ar', 'address_en', 'order_type', 'delivery_vehicle', 'vehicle_note', 'price', 'fee',
         'status', 'workflow_stage', 'courier_id', 'branch_id', 'origin_branch_id', 'destination_branch_id',
         'merchant_id', 'pickup_courier_id', 'delivery_courier_id', 'province_id',
         'date', 'notes', 'created_by',
-        'accepted_at', 'picked_at', 'delivered_at', 'returned_at',
+        'accepted_at', 'picked_at', 'delivered_at', 'returned_at', 'pickup_deadline_at',
     ];
 
     protected function casts(): array
@@ -34,6 +34,7 @@ class Order extends Model
             'picked_at' => 'datetime',
             'delivered_at' => 'datetime',
             'returned_at' => 'datetime',
+            'pickup_deadline_at' => 'datetime',
         ];
     }
 

@@ -60,6 +60,12 @@ class AdminUserController extends Controller
                     ] : null,
                     'docs' => Document::query()->where('user_id', $user?->id)->where('status', 'pending')->count(),
                     'pendingDocs' => Document::query()->where('user_id', $user?->id)->where('status', 'pending')->get(['id'])->pluck('id'),
+                    'documents' => Document::query()->where('user_id', $user?->id)->latest('id')->get()->map(fn (Document $document) => [
+                        'id' => $document->id,
+                        'type' => $document->type,
+                        'status' => $document->status,
+                        'url' => route('admin.users.documents.show', [$user->id, $document->id]),
+                    ]),
                     ...$stats,
                 ];
             });
@@ -109,6 +115,13 @@ class AdminUserController extends Controller
             'status' => ['required', Rule::in(['active', 'suspended', 'pending', 'rejected'])],
         ]);
 
+        if ($user->role === 'courier' && $request->input('status') === 'active') {
+            $unapprovedDocuments = $user->documents()->where('status', '!=', 'approved')->count();
+            if ($unapprovedDocuments > 0) {
+                return back()->withErrors(['status' => 'لا يمكن تفعيل المندوب قبل اعتماد جميع وثائقه.']);
+            }
+        }
+
         $user->update(['status' => $request->input('status')]);
         $user->tenant?->update(['status' => $request->input('status')]);
 
@@ -146,5 +159,13 @@ class AdminUserController extends Controller
         $document->update(['status' => $request->input('status')]);
 
         return back()->with('success', __('admin.document_reviewed'));
+    }
+
+    public function showDocument(User $user, Document $document)
+    {
+        abort_unless($document->user_id === $user->id, 404);
+        abort_unless(\Illuminate\Support\Facades\Storage::disk('public')->exists($document->path), 404);
+
+        return \Illuminate\Support\Facades\Storage::disk('public')->response($document->path, $document->type.'.'.pathinfo($document->path, PATHINFO_EXTENSION));
     }
 }

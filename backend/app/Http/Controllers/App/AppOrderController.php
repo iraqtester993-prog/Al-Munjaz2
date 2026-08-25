@@ -57,6 +57,8 @@ class AppOrderController extends Controller
             'address_ar' => $o->address_ar,
             'address_en' => $o->address_en,
             'order_type' => $o->order_type,
+            'delivery_vehicle' => $o->delivery_vehicle,
+            'vehicle_note' => $o->vehicle_note,
             'price' => $o->price,
             'fee' => $o->fee,
             'status' => $o->status,
@@ -88,6 +90,8 @@ class AppOrderController extends Controller
             'phone2' => ['nullable', 'string', 'max:30'],
             'address_ar' => ['required', 'string', 'max:255'],
             'order_type' => ['nullable', 'string', 'max:60'],
+            'delivery_vehicle' => ['required', Rule::in(['normal', 'suv'])],
+            'vehicle_note' => ['nullable', 'string', 'max:255'],
             'price' => ['required', 'integer', 'min:1'],
             'notes' => ['nullable', 'string', 'max:255'],
         ]);
@@ -103,6 +107,8 @@ class AppOrderController extends Controller
         $order->track_no = 'ALM-'.mt_rand(100000, 999999);
         $order->date = $request->input('date') ?: today();
         $order->status = 'pending';
+        $order->workflow_stage = 'created';
+        $order->merchant_id = $user->id;
         $order->created_by = $user->id;
         $order->save();
 
@@ -137,6 +143,8 @@ class AppOrderController extends Controller
             'phone2' => ['nullable', 'string', 'max:30'],
             'address_ar' => ['required', 'string', 'max:255'],
             'order_type' => ['nullable', 'string', 'max:60'],
+            'delivery_vehicle' => ['required', Rule::in(['normal', 'suv'])],
+            'vehicle_note' => ['nullable', 'string', 'max:255'],
             'price' => ['required', 'integer', 'min:1'],
             'notes' => ['nullable', 'string', 'max:255'],
         ]);

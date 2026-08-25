@@ -1,7 +1,6 @@
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
-import axios from 'axios'
-import { router, useForm, usePage } from '@inertiajs/vue3'
+import { ref, computed } from 'vue'
+import { useForm } from '@inertiajs/vue3'
 import Flash from '../../Components/Flash.vue'
 
 const props = defineProps({
@@ -10,15 +9,9 @@ const props = defineProps({
     provinces: { type: Array, required: true },
 })
 
-const page = usePage()
-const errors = computed(() => page.props.errors || {})
-
 const isCourier = props.role === 'courier'
 const step = ref('form')
-const otp = ref('')
 const sending = ref(false)
-const countdown = ref(0)
-const otpInputs = ref([])
 
 const form = useForm({
     role: props.role,
@@ -29,62 +22,30 @@ const form = useForm({
     vehicle: 'bike',
     province_id: '',
     password: '',
+    password_confirmation: '',
+    residence_document: null,
+    id_front_document: null,
+    id_back_document: null,
+    license_front_document: null,
+    license_back_document: null,
 })
 
 const vehicleList = computed(() =>
     Object.entries(props.vehicles).map(([key, v]) => ({ key, label: v[window.__locale] || v.ar }))
 )
 
-let timer = null
-function startCountdown() {
-    countdown.value = 60
-    clearInterval(timer)
-    timer = setInterval(() => {
-        countdown.value--
-        if (countdown.value <= 0) clearInterval(timer)
-    }, 1000)
-}
-
-async function submitForm() {
+function submitForm() {
     sending.value = true
-    try {
-        await axios.post('/register', form.data())
-        step.value = 'otp'
-        startCountdown()
-        await nextTick()
-        otpInputs.value[0]?.focus()
-    } catch (e) {
-        const data = e.response?.data
-        if (data?.errors) form.setError(data.errors)
-    } finally {
-        sending.value = false
-    }
-}
-
-async function resend() {
-    await axios.post('/resend-otp')
-    startCountdown()
-}
-
-function verify() {
-    if (otp.value.length !== 6) return
-    sending.value = true
-    router.post('/verify-otp', { code: otp.value }, {
+    form.post('/register', {
+        forceFormData: true,
         preserveScroll: true,
+        onSuccess: () => (step.value = 'pending'),
         onFinish: () => (sending.value = false),
     })
 }
 
-function onOtp(i, e) {
-    const val = e.target.value.replace(/\D/g, '').slice(-1)
-    const arr = otp.value.split('')
-    arr[i] = val
-    otp.value = arr.join('')
-    if (val && i < 5) otpInputs.value[i + 1]?.focus()
-}
-
-function onBack(i) {
-    if (!otp.value[i] && i > 0) otpInputs.value[i - 1]?.focus()
+function chooseFile(event, key) {
+    form[key] = event.target.files?.[0] || null
 }
 </script>
 
@@ -125,8 +86,8 @@ function onBack(i) {
                     <input v-model="form.shop" :placeholder="t('Shop Name')" />
                     <span v-if="form.errors.shop" class="field-error">{{ form.errors.shop }}</span>
                 </div>
-                <div v-if="!isCourier" class="field" :class="{ 'has-error': form.errors.address }">
-                    <label>{{ t('Shop Address') }}</label>
+                <div class="field" :class="{ 'has-error': form.errors.address }">
+                    <label>{{ isCourier ? 'العنوان' : t('Shop Address') }}</label>
                     <input v-model="form.address" :placeholder="t('Shop Address')" />
                     <span v-if="form.errors.address" class="field-error">{{ form.errors.address }}</span>
                 </div>
@@ -149,6 +110,21 @@ function onBack(i) {
                     <input v-model="form.password" type="password" :placeholder="t('Password')" autocomplete="new-password" />
                     <span v-if="form.errors.password" class="field-error">{{ form.errors.password }}</span>
                 </div>
+                <div class="field" :class="{ 'has-error': form.errors.password }">
+                    <label>تأكيد كلمة المرور</label>
+                    <input v-model="form.password_confirmation" type="password" placeholder="أعد كتابة كلمة المرور" autocomplete="new-password" />
+                </div>
+                <template v-if="isCourier">
+                    <p class="text-muted" style="font-size: 12px; font-weight: 700; margin: 20px 0 8px">وثائق المندوب المطلوبة للمراجعة</p>
+                    <div v-for="doc in [
+                        ['residence_document', 'وثيقة السكن'], ['id_front_document', 'البطاقة الوطنية — الوجه الأمامي'], ['id_back_document', 'البطاقة الوطنية — الوجه الخلفي'],
+                        ['license_front_document', 'إجازة السوق — الوجه الأمامي'], ['license_back_document', 'إجازة السوق — الوجه الخلفي']
+                    ]" :key="doc[0]" class="field" :class="{ 'has-error': form.errors[doc[0]] }">
+                        <label>{{ doc[1] }}</label>
+                        <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="chooseFile($event, doc[0])" />
+                        <span v-if="form.errors[doc[0]]" class="field-error">{{ form.errors[doc[0]] }}</span>
+                    </div>
+                </template>
                 <button type="submit" class="btn btn-primary" style="width: 100%" :disabled="sending">
                     <span v-if="sending" class="loader"></span>
                     {{ t('Continue') }}
@@ -156,30 +132,11 @@ function onBack(i) {
             </form>
 
             <div v-else style="padding: 0 22px 30px; text-align: center">
-                <p class="text-muted" style="margin-bottom: 16px">{{ t('We sent a verification code to') }} <b style="direction: ltr; display: inline-block">{{ form.phone }}</b></p>
-                <div class="otp-row">
-                    <input
-                        v-for="(d, i) in 6"
-                        :key="i"
-                        ref="otpInputs"
-                        :value="otp[i] || ''"
-                        maxlength="1"
-                        inputmode="numeric"
-                        class="otp-input"
-                        @input="onOtp(i, $event)"
-                        @keydown.backspace="onBack(i)"
-                    />
-                </div>
-                <span v-if="errors.code" class="field-error" style="display: block; text-align: center; margin-top: 8px">{{ errors.code }}</span>
-                <button class="btn btn-primary" style="width: 100%; margin-top: 18px" :disabled="otp.length !== 6 || sending" @click="verify">
-                    <span v-if="sending" class="loader"></span>
-                    {{ t('Confirm') }}
-                </button>
-                <p class="text-muted" style="margin-top: 16px">
-                    <template v-if="countdown > 0">{{ t('Resend code in') }} {{ countdown }}s</template>
-                    <a v-else class="link" style="font-weight: 800" @click="resend">{{ t('Resend code') }}</a>
-                </p>
-                <div class="dev-hint">{{ t('Dev code') }}: 123456</div>
+                <div class="role-ico-lg" style="margin: 8px auto 18px; background: var(--success-tint); color: var(--success)">✓</div>
+                <h2 style="font-size: 19px; font-weight: 900">تم استلام طلب الحساب</h2>
+                <p class="text-muted" style="margin: 12px 0 22px; line-height: 1.8">تم حفظ بياناتك على خادم المنجز السريع. ستقوم الإدارة بمراجعة الحساب{{ isCourier ? ' والوثائق' : '' }} ثم تفعيله.</p>
+                <p class="text-muted" style="font-size: 12px">اسم الدخول هو رقم الهاتف: <b dir="ltr">{{ form.phone }}</b></p>
+                <button class="btn btn-primary" style="width: 100%; margin-top: 18px" @click="$inertia.visit(route('login'))">الذهاب لتسجيل الدخول</button>
             </div>
         </div>
     </div>
@@ -195,36 +152,5 @@ function onBack(i) {
     display: flex;
     align-items: center;
     justify-content: center;
-}
-.otp-row {
-    display: flex;
-    justify-content: center;
-    gap: 8px;
-    margin-bottom: 6px;
-}
-.otp-input {
-    width: 44px;
-    height: 52px;
-    border-radius: 12px;
-    border: 1.5px solid var(--border);
-    background: var(--surface);
-    text-align: center;
-    font-size: 19px;
-    font-weight: 800;
-    color: var(--ink);
-    outline: none;
-}
-.otp-input:focus {
-    border-color: var(--primary);
-}
-.dev-hint {
-    margin-top: 14px;
-    padding: 8px 12px;
-    border-radius: 10px;
-    background: var(--accent-tint);
-    color: var(--accent);
-    font-size: 11px;
-    font-weight: 800;
-    display: inline-block;
 }
 </style>

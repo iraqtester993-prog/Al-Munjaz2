@@ -21,6 +21,8 @@ const form = useForm({
     address_ar: '',
     address_en: '',
     order_type: '',
+    delivery_vehicle: 'normal',
+    vehicle_note: '',
     price: '',
     notes: '',
     date: '',
@@ -40,6 +42,8 @@ watch(
                 address_ar: props.order.address_ar || '',
                 address_en: props.order.address_en || '',
                 order_type: props.order.order_type || '',
+                delivery_vehicle: props.order.delivery_vehicle || 'normal',
+                vehicle_note: props.order.vehicle_note || '',
                 price: props.order.price || '',
                 notes: props.order.notes || '',
                 date: props.order.date || '',
@@ -69,6 +73,8 @@ function submit() {
         address_ar: form.address_ar,
         address_en: form.address_en,
         order_type: form.order_type,
+        delivery_vehicle: form.delivery_vehicle,
+        vehicle_note: form.vehicle_note,
         price: form.price,
         notes: form.notes,
     }
@@ -132,6 +138,17 @@ function submit() {
             <div class="field">
                 <label>{{ t('Order Type') }}</label>
                 <input v-model="form.order_type" :placeholder="t('Order Type')" />
+            </div>
+            <div class="field">
+                <label>مركبة التوصيل</label>
+                <select v-model="form.delivery_vehicle">
+                    <option value="normal">توصيل عادي</option>
+                    <option value="suv">سيارة SUV / حمولة أكبر</option>
+                </select>
+            </div>
+            <div v-if="form.delivery_vehicle === 'suv'" class="field">
+                <label>ملاحظة المركبة</label>
+                <input v-model="form.vehicle_note" placeholder="مثال: يحتاج سيارة كبيرة" />
             </div>
             <div class="field">
                 <label>{{ t('Notes') }}</label>

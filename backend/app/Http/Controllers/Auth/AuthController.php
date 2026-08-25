@@ -10,7 +10,9 @@ use App\Models\Wallet;
 use App\Models\Province;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Inertia\Inertia;
 
 class AuthController extends Controller
@@ -102,71 +104,71 @@ class AuthController extends Controller
             'role' => ['required', 'in:merchant,courier'],
             'name' => ['required', 'string', 'max:120'],
             'phone' => ['required', 'string', 'max:30', 'unique:users,phone'],
-            'password' => ['required', 'string', 'min:6'],
-            'shop' => ['nullable', 'string', 'max:120'],
-            'address' => ['nullable', 'string', 'max:255'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+            'shop' => [$isCourier ? 'nullable' : 'required', 'string', 'max:120'],
+            'address' => ['required', 'string', 'max:255'],
             'vehicle' => ['nullable', 'string', 'in:bike,sedan,pickup'],
             'province_id' => ['required', 'integer', 'exists:provinces,id'],
+            'residence_document' => [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
+            'id_front_document' => [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
+            'id_back_document' => [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
+            'license_front_document' => [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
+            'license_back_document' => [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
         ]);
 
-        session()->put('registration', $data);
+        DB::transaction(function () use ($data, $isCourier, $request): void {
+            $tenant = Tenant::create([
+                'slug' => 't'.Str::lower(Str::random(12)),
+                'name' => $isCourier ? ($data['name'].' — مندوب') : $data['shop'],
+                'kind' => $isCourier ? 'courier' : 'merchant',
+                'status' => 'pending',
+                'trial_ends_at' => now()->addDays((int) \App\Models\Setting::get('trial_days', 14)),
+            ]);
 
-        $otp = '123456';
+            $user = User::create([
+                'tenant_id' => $tenant->id,
+                'name' => $data['name'],
+                'username' => $data['phone'],
+                'phone' => $data['phone'],
+                'password' => $data['password'],
+                'role' => $data['role'],
+                'status' => 'pending',
+                'vehicle' => $isCourier ? ($data['vehicle'] ?? null) : null,
+                'shop_name' => $isCourier ? null : $data['shop'],
+                'address' => $data['address'],
+            ]);
 
-        session()->put('otp', $otp);
+            Wallet::create(['user_id' => $user->id, 'balance' => 0, 'budget' => 0]);
+            $user->provinces()->attach($data['province_id'], ['is_primary' => true]);
 
-        return response()->json(['phone' => $data['phone'], 'dev_code' => $otp]);
+            if ($isCourier) {
+                foreach ([
+                    'residence_document' => 'residence',
+                    'id_front_document' => 'id_front',
+                    'id_back_document' => 'id_back',
+                    'license_front_document' => 'license_front',
+                    'license_back_document' => 'license_back',
+                ] as $input => $type) {
+                    $path = $request->file($input)->store("documents/{$user->id}", 'public');
+                    Document::create(['user_id' => $user->id, 'type' => $type, 'path' => $path, 'status' => 'pending']);
+                }
+            }
+        });
+
+        return back()->with('registration_saved', [
+            'phone' => $data['phone'],
+            'role' => $data['role'],
+        ]);
     }
 
     public function verifyOtp(Request $request)
     {
-        $code = $request->input('code');
-        $expected = session()->get('otp', '123456');
-
-        if ((string) $code !== (string) $expected) {
-            return back()->withErrors(['code' => __('auth.otp_wrong')]);
-        }
-
-        $data = session()->pull('registration');
-
-        if (! $data) {
-            return redirect()->route('login');
-        }
-
-        $isCourier = $data['role'] === 'courier';
-
-        $tenant = Tenant::create([
-            'slug' => 't'.uniqid(),
-            'name' => $isCourier ? ($data['name'].' — مندوب') : ($data['shop'] ?: $data['name'].' — تاجر'),
-            'kind' => $isCourier ? 'courier' : 'merchant',
-            'status' => 'pending',
-            'trial_ends_at' => now()->addDays((int) \App\Models\Setting::get('trial_days', 14)),
-        ]);
-
-        $user = User::create([
-            'tenant_id' => $tenant->id,
-            'name' => $data['name'],
-            'username' => $data['phone'],
-            'phone' => $data['phone'],
-            'password' => $data['password'],
-            'role' => $isCourier ? 'courier' : 'merchant',
-            'status' => 'pending',
-            'vehicle' => $isCourier ? ($data['vehicle'] ?? null) : null,
-        ]);
-
-        Wallet::create(['user_id' => $user->id, 'balance' => 0, 'budget' => 0]);
-        $user->provinces()->attach($data['province_id'], ['is_primary' => true]);
-
-        session()->forget('otp');
-
-        return redirect()->route('login')->with('success', __('auth.registered_pending'));
+        return back()->withErrors(['code' => 'التحقق برسالة SMS غير مفعّل حالياً. تم استبداله بطلب حساب محفوظ بانتظار اعتماد الإدارة.']);
     }
 
     public function resendOtp(Request $request)
     {
-        session()->put('otp', '123456');
-
-        return response()->json(['dev_code' => '123456']);
+        return response()->json(['message' => 'بوابة SMS غير مفعّلة حالياً.'], 422);
     }
 
     public function logout(Request $request)

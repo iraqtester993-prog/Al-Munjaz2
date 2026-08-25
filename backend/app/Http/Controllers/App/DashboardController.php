@@ -24,6 +24,19 @@ class DashboardController extends Controller
         ]);
     }
 
+    public function duty(Request $request)
+    {
+        abort_unless($request->user()->role === 'courier', 403);
+
+        $data = $request->validate(['is_online' => ['required', 'boolean']]);
+        $request->user()->forceFill([
+            'is_online' => $data['is_online'],
+            'last_active_at' => now(),
+        ])->save();
+
+        return back()->with('success', $data['is_online'] ? 'تم تفعيل حالة الاستلام.' : 'تم إيقاف حالة الاستلام.');
+    }
+
     protected function statsFor(User $user, bool $isCourier): array
     {
         if ($isCourier) {
@@ -35,7 +48,7 @@ class DashboardController extends Controller
             return [
                 'collectedToday' => $todayDelivered->sum('price'),
                 'deliveredToday' => $todayDelivered->count(),
-                'onDuty' => true,
+                'onDuty' => (bool) $user->is_online,
                 'available' => Order::query()->where('status', 'pending')->count(),
                 'withMe' => (clone $mine)->whereIn('status', ['approved', 'courier'])->count(),
                 'delivered' => (clone $mine)->where('status', 'delivered')->count(),

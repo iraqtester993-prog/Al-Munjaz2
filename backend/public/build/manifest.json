@@ -1,29 +1,29 @@
 {
-  "_AdminShell-DKkQgC-f.js": {
-    "file": "assets/AdminShell-DKkQgC-f.js",
+  "_AdminShell-CbLR7TQS.js": {
+    "file": "assets/AdminShell-CbLR7TQS.js",
     "name": "AdminShell",
     "imports": [
       "resources/js/app.js",
-      "_Flash-mTlRjgh8.js"
+      "_Flash-CbsYTmrY.js"
     ]
   },
-  "_AppShell-CfHbMJpZ.js": {
-    "file": "assets/AppShell-CfHbMJpZ.js",
+  "_AppShell-CRLo3X30.js": {
+    "file": "assets/AppShell-CRLo3X30.js",
     "name": "AppShell",
     "imports": [
       "resources/js/app.js",
-      "_Flash-mTlRjgh8.js"
+      "_Flash-CbsYTmrY.js"
     ]
   },
-  "_Flash-mTlRjgh8.js": {
-    "file": "assets/Flash-mTlRjgh8.js",
+  "_Flash-CbsYTmrY.js": {
+    "file": "assets/Flash-CbsYTmrY.js",
     "name": "Flash",
     "imports": [
       "resources/js/app.js"
     ]
   },
-  "_HeroSlider-BTBeaqZW.js": {
-    "file": "assets/HeroSlider-BTBeaqZW.js",
+  "_HeroSlider-DfrSVm14.js": {
+    "file": "assets/HeroSlider-DfrSVm14.js",
     "name": "HeroSlider",
     "imports": [
       "resources/js/app.js"
@@ -33,8 +33,8 @@
     "file": "assets/SheetModal-BNSAm9NI.css",
     "src": "_SheetModal-BNSAm9NI.css"
   },
-  "_SheetModal-DcTENbnx.js": {
-    "file": "assets/SheetModal-DcTENbnx.js",
+  "_SheetModal-CC3CIjYF.js": {
+    "file": "assets/SheetModal-CC3CIjYF.js",
     "name": "SheetModal",
     "imports": [
       "resources/js/app.js",
@@ -44,8 +44,8 @@
       "assets/SheetModal-BNSAm9NI.css"
     ]
   },
-  "_StatusBadge-BcII8Zt7.js": {
-    "file": "assets/StatusBadge-BcII8Zt7.js",
+  "_StatusBadge-AlCWCAYX.js": {
+    "file": "assets/StatusBadge-AlCWCAYX.js",
     "name": "StatusBadge",
     "imports": [
       "resources/js/app.js"
@@ -77,15 +77,15 @@
     "src": "resources/fonts/cairo-latin.woff2"
   },
   "resources/js/Pages/Admin/Branches.vue": {
-    "file": "assets/Branches-BnxVL5wp.js",
+    "file": "assets/Branches-CxgoXIED.js",
     "name": "Branches",
     "src": "resources/js/Pages/Admin/Branches.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AdminShell-DKkQgC-f.js",
+      "_AdminShell-CbLR7TQS.js",
       "__plugin-vue_export-helper-DlAUqK2U.js",
-      "_Flash-mTlRjgh8.js"
+      "_Flash-CbsYTmrY.js"
     ],
     "css": [
       "assets/Branches-DgV4LYtD.css",
@@ -98,14 +98,14 @@
     ]
   },
   "resources/js/Pages/Admin/Chat.vue": {
-    "file": "assets/Chat-B2go-j7x.js",
+    "file": "assets/Chat-H-G-rbhX.js",
     "name": "Chat",
     "src": "resources/js/Pages/Admin/Chat.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AdminShell-DKkQgC-f.js",
-      "_Flash-mTlRjgh8.js"
+      "_AdminShell-CbLR7TQS.js",
+      "_Flash-CbsYTmrY.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -117,15 +117,15 @@
     ]
   },
   "resources/js/Pages/Admin/Dashboard.vue": {
-    "file": "assets/Dashboard-BiGIqFsf.js",
+    "file": "assets/Dashboard-DAFDo3zc.js",
     "name": "Dashboard",
     "src": "resources/js/Pages/Admin/Dashboard.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AdminShell-DKkQgC-f.js",
-      "_StatusBadge-BcII8Zt7.js",
-      "_Flash-mTlRjgh8.js"
+      "_AdminShell-CbLR7TQS.js",
+      "_StatusBadge-AlCWCAYX.js",
+      "_Flash-CbsYTmrY.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -137,14 +137,14 @@
     ]
   },
   "resources/js/Pages/Admin/Finance.vue": {
-    "file": "assets/Finance-Bcz8jRro.js",
+    "file": "assets/Finance-ikDQ5HGa.js",
     "name": "Finance",
     "src": "resources/js/Pages/Admin/Finance.vue",
     "isDynamicEntry": true,
     "imports": [
-      "_AdminShell-DKkQgC-f.js",
+      "_AdminShell-CbLR7TQS.js",
       "resources/js/app.js",
-      "_Flash-mTlRjgh8.js"
+      "_Flash-CbsYTmrY.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -156,14 +156,14 @@
     ]
   },
   "resources/js/Pages/Admin/Notifications.vue": {
-    "file": "assets/Notifications-Cy8q6KhL.js",
+    "file": "assets/Notifications-CTyz4RdR.js",
     "name": "Notifications",
     "src": "resources/js/Pages/Admin/Notifications.vue",
     "isDynamicEntry": true,
     "imports": [
-      "_AdminShell-DKkQgC-f.js",
+      "_AdminShell-CbLR7TQS.js",
       "resources/js/app.js",
-      "_Flash-mTlRjgh8.js"
+      "_Flash-CbsYTmrY.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -175,16 +175,16 @@
     ]
   },
   "resources/js/Pages/Admin/Orders.vue": {
-    "file": "assets/Orders-9gBawML-.js",
+    "file": "assets/Orders-BOvSZ9F6.js",
     "name": "Orders",
     "src": "resources/js/Pages/Admin/Orders.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AdminShell-DKkQgC-f.js",
-      "_StatusBadge-BcII8Zt7.js",
-      "_SheetModal-DcTENbnx.js",
-      "_Flash-mTlRjgh8.js",
+      "_AdminShell-CbLR7TQS.js",
+      "_StatusBadge-AlCWCAYX.js",
+      "_SheetModal-CC3CIjYF.js",
+      "_Flash-CbsYTmrY.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -197,14 +197,14 @@
     ]
   },
   "resources/js/Pages/Admin/Roster.vue": {
-    "file": "assets/Roster-CmF4xbog.js",
+    "file": "assets/Roster-B2f2SFFU.js",
     "name": "Roster",
     "src": "resources/js/Pages/Admin/Roster.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AdminShell-DKkQgC-f.js",
-      "_Flash-mTlRjgh8.js"
+      "_AdminShell-CbLR7TQS.js",
+      "_Flash-CbsYTmrY.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -216,13 +216,13 @@
     ]
   },
   "resources/js/Pages/Auth/AdminLogin.vue": {
-    "file": "assets/AdminLogin-DjNNCXis.js",
+    "file": "assets/AdminLogin-CvuNT8zT.js",
     "name": "AdminLogin",
     "src": "resources/js/Pages/Auth/AdminLogin.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_Flash-mTlRjgh8.js"
+      "_Flash-CbsYTmrY.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -234,13 +234,13 @@
     ]
   },
   "resources/js/Pages/Auth/Login.vue": {
-    "file": "assets/Login-Cqm4NRy8.js",
+    "file": "assets/Login-DBDyU_se.js",
     "name": "Login",
     "src": "resources/js/Pages/Auth/Login.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_Flash-mTlRjgh8.js",
+      "_Flash-CbsYTmrY.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -254,17 +254,17 @@
     ]
   },
   "resources/js/Pages/Auth/Register.vue": {
-    "file": "assets/Register-ayaSCYuh.js",
+    "file": "assets/Register-BE0dWL1q.js",
     "name": "Register",
     "src": "resources/js/Pages/Auth/Register.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_Flash-mTlRjgh8.js",
+      "_Flash-CbsYTmrY.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
-      "assets/Register-C7b6p0pF.css",
+      "assets/Register-DI9OnPzL.css",
       "assets/app-DQmOcxks.css"
     ],
     "assets": [
@@ -274,7 +274,7 @@
     ]
   },
   "resources/js/Pages/Mobile/ChatThread.vue": {
-    "file": "assets/ChatThread-CdXAQ6yz.js",
+    "file": "assets/ChatThread-CPi7jqtg.js",
     "name": "ChatThread",
     "src": "resources/js/Pages/Mobile/ChatThread.vue",
     "isDynamicEntry": true,
@@ -291,14 +291,14 @@
     ]
   },
   "resources/js/Pages/Mobile/Chats.vue": {
-    "file": "assets/Chats-D6XUIce4.js",
+    "file": "assets/Chats-BzXbniYE.js",
     "name": "Chats",
     "src": "resources/js/Pages/Mobile/Chats.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-CfHbMJpZ.js",
-      "_Flash-mTlRjgh8.js"
+      "_AppShell-CRLo3X30.js",
+      "_Flash-CbsYTmrY.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -310,16 +310,16 @@
     ]
   },
   "resources/js/Pages/Mobile/CourierHome.vue": {
-    "file": "assets/CourierHome-D4d4Ui9a.js",
+    "file": "assets/CourierHome-CiJ97BFK.js",
     "name": "CourierHome",
     "src": "resources/js/Pages/Mobile/CourierHome.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-CfHbMJpZ.js",
-      "_HeroSlider-BTBeaqZW.js",
-      "_StatusBadge-BcII8Zt7.js",
-      "_Flash-mTlRjgh8.js"
+      "_AppShell-CRLo3X30.js",
+      "_HeroSlider-DfrSVm14.js",
+      "_StatusBadge-AlCWCAYX.js",
+      "_Flash-CbsYTmrY.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -331,16 +331,16 @@
     ]
   },
   "resources/js/Pages/Mobile/MerchantHome.vue": {
-    "file": "assets/MerchantHome-vPs36RdV.js",
+    "file": "assets/MerchantHome-uxFazewp.js",
     "name": "MerchantHome",
     "src": "resources/js/Pages/Mobile/MerchantHome.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-CfHbMJpZ.js",
-      "_HeroSlider-BTBeaqZW.js",
-      "_StatusBadge-BcII8Zt7.js",
-      "_Flash-mTlRjgh8.js"
+      "_AppShell-CRLo3X30.js",
+      "_HeroSlider-DfrSVm14.js",
+      "_StatusBadge-AlCWCAYX.js",
+      "_Flash-CbsYTmrY.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -352,14 +352,14 @@
     ]
   },
   "resources/js/Pages/Mobile/Notifications.vue": {
-    "file": "assets/Notifications-dh4TFaBO.js",
+    "file": "assets/Notifications-3n_5hS4e.js",
     "name": "Notifications",
     "src": "resources/js/Pages/Mobile/Notifications.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-CfHbMJpZ.js",
-      "_Flash-mTlRjgh8.js"
+      "_AppShell-CRLo3X30.js",
+      "_Flash-CbsYTmrY.js"
     ],
     "css": [
       "assets/app-DQmOcxks.css"
@@ -371,16 +371,16 @@
     ]
   },
   "resources/js/Pages/Mobile/Orders.vue": {
-    "file": "assets/Orders-BQVIFKrk.js",
+    "file": "assets/Orders-C1EpO7nz.js",
     "name": "Orders",
     "src": "resources/js/Pages/Mobile/Orders.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-CfHbMJpZ.js",
-      "_StatusBadge-BcII8Zt7.js",
-      "_SheetModal-DcTENbnx.js",
-      "_Flash-mTlRjgh8.js",
+      "_AppShell-CRLo3X30.js",
+      "_StatusBadge-AlCWCAYX.js",
+      "_SheetModal-CC3CIjYF.js",
+      "_Flash-CbsYTmrY.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -393,15 +393,15 @@
     ]
   },
   "resources/js/Pages/Mobile/Profile.vue": {
-    "file": "assets/Profile-BHU7tHzf.js",
+    "file": "assets/Profile-CYphKWkR.js",
     "name": "Profile",
     "src": "resources/js/Pages/Mobile/Profile.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-CfHbMJpZ.js",
-      "_SheetModal-DcTENbnx.js",
-      "_Flash-mTlRjgh8.js",
+      "_AppShell-CRLo3X30.js",
+      "_SheetModal-CC3CIjYF.js",
+      "_Flash-CbsYTmrY.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -414,15 +414,15 @@
     ]
   },
   "resources/js/Pages/Mobile/Wallet.vue": {
-    "file": "assets/Wallet-D4m_w79L.js",
+    "file": "assets/Wallet-aFPSKfmv.js",
     "name": "Wallet",
     "src": "resources/js/Pages/Mobile/Wallet.vue",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/app.js",
-      "_AppShell-CfHbMJpZ.js",
-      "_SheetModal-DcTENbnx.js",
-      "_Flash-mTlRjgh8.js",
+      "_AppShell-CRLo3X30.js",
+      "_SheetModal-CC3CIjYF.js",
+      "_Flash-CbsYTmrY.js",
       "__plugin-vue_export-helper-DlAUqK2U.js"
     ],
     "css": [
@@ -435,7 +435,7 @@
     ]
   },
   "resources/js/app.js": {
-    "file": "assets/app-O3-DgINq.js",
+    "file": "assets/app-DWtOI3oy.js",
     "name": "app",
     "src": "resources/js/app.js",
     "isEntry": true,

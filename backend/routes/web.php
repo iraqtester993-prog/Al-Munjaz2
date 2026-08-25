@@ -58,6 +58,7 @@ Route::middleware(['auth', 'active'])->group(function () {
     |--------------------------------------------------------------------------
     */
     Route::prefix('app')->middleware('role:merchant,courier')->group(function () {
+        Route::post('duty', [DashboardController::class, 'duty'])->name('app.duty');
         Route::get('orders', [AppOrderController::class, 'index'])->name('app.orders');
         Route::post('orders', [AppOrderController::class, 'store'])->name('app.orders.store');
         Route::post('orders/{order}/update', [AppOrderController::class, 'update'])->name('app.orders.update');
@@ -89,6 +90,7 @@ Route::prefix('dashboard')->middleware(['auth', 'active', 'role:admin'])->group(
     Route::get('merchants', [AdminUserController::class, 'merchants'])->name('admin.merchants');
     Route::get('couriers', [AdminUserController::class, 'couriers'])->name('admin.couriers');
     Route::post('users/{user}/status', [AdminUserController::class, 'status'])->name('admin.users.status');
+    Route::get('users/{user}/documents/{document}', [AdminUserController::class, 'showDocument'])->name('admin.users.documents.show');
     Route::post('users/{user}/documents/{document}/review', [AdminUserController::class, 'reviewDocument'])->name('admin.users.documents.review');
     Route::get('finance', [AdminDashboardController::class, 'finance'])->name('admin.finance');
     Route::get('notifications', [AdminDashboardController::class, 'notifications'])->name('admin.notifications');

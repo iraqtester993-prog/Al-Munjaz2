@@ -56,6 +56,10 @@ function reviewDoc(row, verdict) {
     router.post(route('admin.users.documents.review', [row.user.id, docId]), { status: verdict }, { preserveScroll: true })
 }
 
+function openDocument(doc) {
+    window.open(doc.url, '_blank', 'noopener')
+}
+
 const isCourier = computed(() => props.role === 'courier')
 </script>
 
@@ -113,7 +117,10 @@ const isCourier = computed(() => props.role === 'courier')
                     <div class="uc-stat"><b class="mono" style="font-size: 11px">{{ fmt(row.collected) }}</b><span>{{ t('Collected') }}</span></div>
                 </div>
 
-                <div v-if="row.docs > 0" style="display: flex; gap: 8px">
+                <div v-if="row.documents?.length" style="display: flex; gap: 8px; flex-wrap: wrap">
+                    <button v-for="doc in row.documents" :key="doc.id" class="fbtn mini" style="border: none" @click="openDocument(doc)">عرض {{ doc.type }}</button>
+                </div>
+                <div v-if="row.docs > 0" style="display: flex; gap: 8px; margin-top: 8px">
                     <button class="fbtn mini" style="background: var(--success-tint); color: var(--success); border: none" @click="reviewDoc(row, 'approved')">{{ t('Approve Docs') }}</button>
                     <button class="fbtn mini" style="background: var(--danger-tint); color: var(--danger); border: none" @click="reviewDoc(row, 'rejected')">{{ t('Reject Docs') }}</button>
                 </div>
