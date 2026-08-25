@@ -93,13 +93,15 @@ class DashboardController extends Controller
     {
         if ($isCourier) {
             return [
-                ['title_ar' => 'فعّل GPS لتوصيل أدق', 'title_en' => 'Enable GPS for accurate delivery', 'body_ar' => 'يساعد الفرع على تتبع رحلتك لحظياً', 'body_en' => 'Helps the branch track your trip live', 'tag_ar' => 'تطبيق المندوب', 'tag_en' => 'Courier App', 'accent' => true],
-                ['title_ar' => 'سلّم النقدية قبل الساعة 6', 'title_en' => 'Hand over cash before 6 PM', 'body_ar' => 'لضمان إقفال صندوق الفرع بالوقت المحدد', 'body_en' => 'To ensure the branch cashbox closes on time', 'tag_ar' => 'تطبيق المندوب', 'tag_en' => 'Courier App', 'accent' => true],
+                ['title_ar' => 'فعّل GPS لتوصيل أدق', 'title_en' => 'Enable GPS for accurate delivery', 'body_ar' => 'يساعد الفرع على تتبع رحلتك لحظياً', 'body_en' => 'Helps the branch track your trip live', 'tag_ar' => 'تطبيق المندوب', 'tag_en' => 'Courier App', 'accent' => true, 'image_url' => 'https://picsum.photos/seed/masar-c1/800/300'],
+                ['title_ar' => 'أعلى تحصيل لك هذا الأسبوع', 'title_en' => 'Your best collection week yet', 'body_ar' => 'تابع تحصيلاتك اليومية من المحفظة', 'body_en' => 'Track daily collections from your wallet', 'tag_ar' => 'تطبيق المندوب', 'tag_en' => 'Courier App', 'accent' => true, 'image_url' => 'https://picsum.photos/seed/masar-c2/800/300'],
+                ['title_ar' => 'سلّم النقدية قبل الساعة 6', 'title_en' => 'Hand over cash before 6 PM', 'body_ar' => 'لضمان إقفال صندوق الفرع بالوقت المحدد', 'body_en' => 'To ensure the branch cashbox closes on time', 'tag_ar' => 'تطبيق المندوب', 'tag_en' => 'Courier App', 'accent' => true, 'image_url' => 'https://picsum.photos/seed/masar-c3/800/300'],
             ];
         }
 
         return [
-            ['title_ar' => 'تتبّع كل طلب لحظة بلحظة', 'title_en' => 'Track every order in real time', 'body_ar' => 'اعرف مكان طلبك بالضبط من لوحة الطلبات', 'body_en' => 'Know exactly where your order is from the orders tab', 'tag_ar' => 'تطبيق التاجر', 'tag_en' => 'Merchant App', 'accent' => false],
-            ['title_ar' => 'عمولة أقل على الطلبات الكبيرة', 'title_en' => 'Lower fees on bulk orders', 'body_ar' => 'أضف 20 طلب أو أكثر شهرياً واحصل على خصم تلقائي', 'body_en' => 'Add 20+ orders monthly and get an automatic discount', 'tag_ar' => 'تطبيق التاجر', 'tag_en' => 'Merchant App', 'accent' => false],
+            ['title_ar' => 'تتبّع كل طلب لحظة بلحظة', 'title_en' => 'Track every order in real time', 'body_ar' => 'اعرف مكان طلبك بالضبط من لوحة الطلبات', 'body_en' => 'Know exactly where your order is from the orders tab', 'tag_ar' => 'تطبيق التاجر', 'tag_en' => 'Merchant App', 'accent' => false, 'image_url' => 'https://picsum.photos/seed/masar-t1/800/300'],
+            ['title_ar' => 'عمولة أقل على الطلبات الكبيرة', 'title_en' => 'Lower fees on bulk orders', 'body_ar' => 'أضف 20 طلب أو أكثر شهرياً واحصل على خصم تلقائي', 'body_en' => 'Add 20+ orders monthly and get an automatic discount', 'tag_ar' => 'تطبيق التاجر', 'tag_en' => 'Merchant App', 'accent' => false, 'image_url' => 'https://picsum.photos/seed/masar-t2/800/300'],
+            ['title_ar' => 'نسبة تسليمك 96% هذا الشهر', 'title_en' => 'Your delivery rate is 96% this month', 'body_ar' => 'تابع مؤشرات نشاط متجرك باستمرار', 'body_en' => 'Keep tracking your store activity metrics', 'tag_ar' => 'تطبيق التاجر', 'tag_en' => 'Merchant App', 'accent' => false, 'image_url' => 'https://picsum.photos/seed/masar-t3/800/300'],
         ];    }
 }

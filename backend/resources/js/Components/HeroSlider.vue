@@ -39,12 +39,9 @@ function text(slide) {
                 v-for="(s, i) in slides"
                 :key="i"
                 class="hero-slide"
-                :style="{ background: s.accent ? 'linear-gradient(135deg, var(--accent), #B4661A)' : 'linear-gradient(135deg, var(--primary-strong), var(--primary))' }"
+                :style="{ backgroundImage: s.image_url ? `linear-gradient(90deg, rgba(7, 35, 32, .78), rgba(7, 35, 32, .22)), url(${s.image_url})` : (s.accent ? 'linear-gradient(135deg, var(--accent), #B4661A)' : 'linear-gradient(135deg, var(--primary-strong), var(--primary))'), backgroundSize: 'cover', backgroundPosition: 'center' }"
             >
                 <div class="hero-slide-text">
-                    <span class="hc-chip" style="background: rgba(255,255,255,.16); border-radius:8px; padding:4px 9px; font-size:9.5px; font-weight:800; display:inline-block; margin-bottom:10px;">
-                        {{ text(s).tag }}
-                    </span>
                     <h4>{{ text(s).title }}</h4>
                     <p>{{ text(s).body }}</p>
                 </div>
