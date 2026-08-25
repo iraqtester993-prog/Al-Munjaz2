@@ -9,6 +9,7 @@ use App\Models\Order;
 use App\Models\OrderStatusLog;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\OrderWorkflowService;
 use App\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -162,77 +163,9 @@ class AppOrderController extends Controller
         $to = $request->input('status');
         $user = $request->user();
 
-        $this->applyStatus($order, $to, $user, $request->input('note'));
+        app(OrderWorkflowService::class)->changeStatus($order, $to, $user, $request->input('note'));
 
         return back()->with('success', __('orders.status_changed'));
-    }
-
-    protected function applyStatus(Order $order, string $to, User $user, ?string $note = null): void
-    {
-        $from = $order->status;
-        if ($from === $to) {
-            return;
-        }
-
-        $order->status = $to;
-
-        if ($to === 'approved') {
-            $order->accepted_at = now();
-        }
-        if ($to === 'courier') {
-            $order->picked_at = now();
-            $order->courier_id ??= $user->id;
-        }
-        if ($to === 'delivered') {
-            $order->delivered_at = now();
-        }
-        if ($to === 'returned') {
-            $order->returned_at = now();
-        }
-
-        $order->save();
-
-        OrderStatusLog::create([
-            'tenant_id' => $order->tenant_id,
-            'order_id' => $order->id,
-            'from_status' => $from,
-            'to_status' => $to,
-            'user_id' => $user->id,
-            'note' => $note,
-        ]);
-
-        ActivityLog::create([
-            'tenant_id' => $order->tenant_id,
-            'user_id' => $user->id,
-            'action' => 'order.status',
-            'subject_type' => 'order',
-            'subject_id' => $order->id,
-            'data' => ['from' => $from, 'to' => $to],
-            'ip' => request()->ip(),
-        ]);
-
-        $labels = [
-            'pending' => ['الطلب بانتظار الموافقة', 'Order awaiting approval'],
-            'approved' => ['تم قبول الطلب', 'Order approved'],
-            'courier' => ['الطلب مع المندوب', 'Order with courier'],
-            'delivered' => ['تم تسليم الطلب', 'Order delivered'],
-            'returned' => ['تم إرجاع الطلب', 'Order returned'],
-        ];
-
-        [$bodyAr, $bodyEn] = $labels[$to] ?? ['', ''];
-
-        Notification::create([
-            'tenant_id' => $order->tenant_id,
-            'user_id' => null,
-            'type' => 'order',
-            'title_ar' => $order->track_no,
-            'title_en' => $order->track_no,
-            'title_ku' => $order->track_no,
-            'body_ar' => $bodyAr,
-            'body_en' => $bodyEn,
-            'body_ku' => $bodyAr,
-            'data' => ['order_id' => $order->id, 'status' => $to],
-        ]);
     }
 
     protected function authorizeOrder(Order $order, Request $request): void

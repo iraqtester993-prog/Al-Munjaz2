@@ -1,0 +1,17 @@
+{
+  "name": "المنجز السريع — تطبيق التاجر والمندوب",
+  "short_name": "المنجز السريع",
+  "description": "تطبيق التاجر والمندوب لإدارة الطلبات والتوصيل",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F4F6F5",
+  "theme_color": "#0B6E68",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [
+    { "src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

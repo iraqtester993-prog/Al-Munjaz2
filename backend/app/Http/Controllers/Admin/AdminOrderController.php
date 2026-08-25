@@ -2,10 +2,10 @@
 
 namespace App\Http\Controllers\Admin;
 
-use App\Http\Controllers\App\AppOrderController;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\User;
+use App\Services\OrderWorkflowService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -72,9 +72,7 @@ class AdminOrderController extends Controller
     {
         $request->validate(['status' => ['required', Rule::in(Order::STATUSES)]]);
 
-        $controller = app(AppOrderController::class);
-
-        $this->reflectApply($controller, $order, $request);
+        app(OrderWorkflowService::class)->changeStatus($order, $request->input('status'), $request->user(), $request->input('note'));
 
         return back()->with('success', __('orders.status_changed'));
     }
@@ -94,10 +92,4 @@ class AdminOrderController extends Controller
         return back()->with('success', __('orders.courier_assigned'));
     }
 
-    protected function reflectApply(AppOrderController $controller, Order $order, Request $request): void
-    {
-        $method = new \ReflectionMethod(AppOrderController::class, 'applyStatus');
-        $method->setAccessible(true);
-        $method->invoke($controller, $order, $request->input('status'), $request->user(), $request->input('note'));
-    }
 }

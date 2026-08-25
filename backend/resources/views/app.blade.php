@@ -24,5 +24,10 @@
         window.__translations = @json($translations);
         window.__locale = @json(app()->getLocale());
     </script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
+        }
+    </script>
 </body>
 </html>
