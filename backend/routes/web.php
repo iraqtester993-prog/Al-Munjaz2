@@ -28,8 +28,8 @@ Route::get('/', function (Request $request) {
 Route::middleware('guest')->group(function () {
     Route::get('/login', [AuthController::class, 'loginForm'])->name('login');
     Route::post('/login', [AuthController::class, 'login']);
-    Route::get('/dashboard/login', [AuthController::class, 'adminLoginForm'])->name('admin.login');
-    Route::post('/dashboard/login', [AuthController::class, 'adminLogin']);
+    Route::get('/dashboard/login', [AuthController::class, 'adminLoginForm'])->middleware('dashboard.host')->name('admin.login');
+    Route::post('/dashboard/login', [AuthController::class, 'adminLogin'])->middleware('dashboard.host');
     Route::get('/register/{role}', [AuthController::class, 'registerForm'])
         ->whereIn('role', ['merchant', 'courier'])->name('register');
     Route::post('/register', [AuthController::class, 'register']);
@@ -80,7 +80,7 @@ Route::middleware(['auth', 'active'])->group(function () {
 | Admin dashboard
 |--------------------------------------------------------------------------
 */
-Route::prefix('dashboard')->middleware(['auth', 'active', 'role:admin'])->group(function () {
+Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'role:admin'])->group(function () {
     Route::get('/', [AdminDashboardController::class, 'index'])->name('admin.dashboard');
     Route::get('orders', [AdminOrderController::class, 'index'])->name('admin.orders');
     Route::get('branches', [BranchController::class, 'index'])->name('admin.branches');
@@ -99,4 +99,4 @@ Route::prefix('dashboard')->middleware(['auth', 'active', 'role:admin'])->group(
     Route::post('chat/{chat}/send', [ChatController::class, 'adminSend'])->name('admin.chat.send');
 });
 
-Route::get('/admin', fn () => redirect()->route('admin.dashboard'))->middleware(['auth', 'active', 'role:admin']);
+Route::get('/admin', fn () => redirect()->route('admin.dashboard'))->middleware(['dashboard.host', 'auth', 'active', 'role:admin']);

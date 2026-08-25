@@ -1,4 +1,4 @@
-const CACHE_NAME = 'almunjaz-shell-v6';
+const CACHE_NAME = 'almunjaz-shell-v7';
 const APP_SHELL = ['/manifest.json', '/assets/icon-192.png', '/assets/icon-512.png'];
 
 self.addEventListener('install', (event) => {
