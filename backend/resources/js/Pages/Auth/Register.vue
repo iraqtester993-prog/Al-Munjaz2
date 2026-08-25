@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { useForm } from '@inertiajs/vue3'
+import { useForm, usePage } from '@inertiajs/vue3'
 import Flash from '../../Components/Flash.vue'
 
 const props = defineProps({
@@ -10,6 +10,7 @@ const props = defineProps({
 })
 
 const isCourier = props.role === 'courier'
+const page = usePage()
 const step = ref('form')
 const sending = ref(false)
 
@@ -31,7 +32,7 @@ const form = useForm({
 })
 
 const vehicleList = computed(() =>
-    Object.entries(props.vehicles).map(([key, v]) => ({ key, label: v[window.__locale] || v.ar }))
+    Object.entries(props.vehicles).map(([key, v]) => ({ key, label: v[page.props.locale || 'ar'] || v.ar }))
 )
 
 function submitForm() {
