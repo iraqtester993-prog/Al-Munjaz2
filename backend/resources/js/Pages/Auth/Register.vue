@@ -56,7 +56,7 @@ function chooseFile(event, key) {
             <Flash />
             <div style="padding: 32px 22px 20px">
                 <button class="tb-icon-btn" style="margin-bottom: 18px" @click="$inertia.visit(route('login'))">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: window.__locale === 'ar' ? 'rotate(180deg)' : '' }">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: (page.props.locale || 'ar') === 'ar' ? 'rotate(180deg)' : '' }">
                         <path d="M19 12H5m0 0 6-6m-6 6 6 6" />
                     </svg>
                 </button>
