@@ -12,6 +12,10 @@ const map = {
     courier: { cls: 'b-courier', label: t('With Courier') },
     delivered: { cls: 'b-delivered', label: t('Delivered') },
     returned: { cls: 'b-returned', label: t('Returned') },
+    cancelled: { cls: 'b-danger', label: t('Cancelled') },
+    damaged: { cls: 'b-warning', label: t('Damaged') },
+    rejected: { cls: 'b-danger', label: t('Rejected') },
+    late: { cls: 'b-warning', label: t('Late') },
 }
 
 const item = computed(() => map[props.status] ?? { cls: 'b-neutral', label: props.status })

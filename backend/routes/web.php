@@ -1,10 +1,15 @@
 <?php
 
+use App\Http\Controllers\Admin\AdminBranchTransferController;
+use App\Http\Controllers\Admin\AdminCashboxController;
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminFinanceController;
 use App\Http\Controllers\Admin\AdminNotificationController;
 use App\Http\Controllers\Admin\AdminOrderController;
+use App\Http\Controllers\Admin\AdminPlatformController;
 use App\Http\Controllers\Admin\AdminPreferencesController;
+use App\Http\Controllers\Admin\AdminPricingController;
+use App\Http\Controllers\Admin\AdminReportsController;
 use App\Http\Controllers\Admin\AdminSettingsController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\BranchController;
@@ -96,6 +101,12 @@ Route::middleware('guest')->group(function () {
     Route::get('/verify-otp', [AuthController::class, 'otpForm'])->name('verify.otp.form');
     Route::post('/verify-otp', [AuthController::class, 'verifyOtp'])->name('verify.otp');
     Route::post('/resend-otp', [AuthController::class, 'resendOtp'])->name('resend.otp');
+    Route::get('/dashboard/invitations/{token}', [AdminPlatformController::class, 'invitationForm'])
+        ->middleware('dashboard.host')
+        ->name('admin.invitations.accept');
+    Route::post('/dashboard/invitations/{token}', [AdminPlatformController::class, 'acceptInvitation'])
+        ->middleware('dashboard.host')
+        ->name('admin.invitations.accept.store');
 });
 
 /*
@@ -106,9 +117,9 @@ Route::middleware('guest')->group(function () {
 Route::middleware(['auth', 'active'])->group(function () {
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 
-    Route::get('/app', [DashboardController::class, 'app'])->name('app')->middleware('role:merchant,courier');
+    Route::get('/app', [DashboardController::class, 'app'])->name('app')->middleware('role:merchant,courier,pickup_courier,delivery_courier,transporter');
 
-    Route::get('/app/profile', [AppProfileController::class, 'index'])->name('app.profile')->middleware('role:merchant,courier');
+    Route::get('/app/profile', [AppProfileController::class, 'index'])->name('app.profile')->middleware('role:merchant,courier,pickup_courier,delivery_courier,transporter');
     Route::post('/profile/update', [AppProfileController::class, 'update'])->name('profile.update');
     Route::post('/profile/theme', [AppProfileController::class, 'theme'])->name('profile.theme');
     Route::post('/profile/locale', [AppProfileController::class, 'locale'])->name('profile.locale');
@@ -119,13 +130,15 @@ Route::middleware(['auth', 'active'])->group(function () {
     | Merchant & courier shared resources
     |--------------------------------------------------------------------------
     */
-    Route::prefix('app')->middleware('role:merchant,courier')->group(function () {
+    Route::prefix('app')->middleware('role:merchant,courier,pickup_courier,delivery_courier,transporter')->group(function () {
         Route::post('duty', [DashboardController::class, 'duty'])->name('app.duty');
         Route::get('orders', [AppOrderController::class, 'index'])->name('app.orders');
         Route::get('reports', [AppReportController::class, 'index'])->name('app.reports')->middleware('role:merchant');
         Route::post('orders', [AppOrderController::class, 'store'])->name('app.orders.store');
         Route::post('orders/{order}/update', [AppOrderController::class, 'update'])->name('app.orders.update');
         Route::post('orders/{order}/status', [AppOrderController::class, 'status'])->name('app.orders.status');
+        Route::post('orders/{order}/return', [AppOrderController::class, 'startReturn'])->name('app.orders.return');
+        Route::post('orders/{order}/return-to-merchant', [AppOrderController::class, 'confirmReturnToMerchant'])->name('app.orders.return-to-merchant');
         Route::post('orders/{order}/claim', [AppOrderController::class, 'claim'])->name('app.orders.claim');
         Route::get('wallet', [AppWalletController::class, 'index'])->name('app.wallet');
         Route::post('wallet/withdraw', [AppWalletController::class, 'withdraw'])->name('app.wallet.withdraw');
@@ -170,6 +183,26 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     Route::post('finance/requests/{financeRequest}/approve', [AdminFinanceController::class, 'approve'])->name('admin.finance.approve');
     Route::post('finance/requests/{financeRequest}/reject', [AdminFinanceController::class, 'reject'])->name('admin.finance.reject');
     Route::post('finance/settlements', [AdminFinanceController::class, 'recordSettlement'])->name('admin.finance.settlements.store');
+    Route::get('cashboxes', [AdminCashboxController::class, 'index'])->name('admin.cashboxes');
+    Route::post('cashboxes', [AdminCashboxController::class, 'store'])->name('admin.cashboxes.store');
+    Route::post('cashboxes/voucher', [AdminCashboxController::class, 'voucher'])->name('admin.cashboxes.voucher');
+    Route::post('cashboxes/transfer', [AdminCashboxController::class, 'transfer'])->name('admin.cashboxes.transfer');
+    Route::patch('cashboxes/{cashbox}/status', [AdminCashboxController::class, 'status'])->name('admin.cashboxes.status');
+    Route::get('pricing', [AdminPricingController::class, 'index'])->name('admin.pricing');
+    Route::post('pricing', [AdminPricingController::class, 'store'])->name('admin.pricing.store');
+    Route::put('pricing/{pricingRule}', [AdminPricingController::class, 'update'])->name('admin.pricing.update');
+    Route::patch('pricing/{pricingRule}/status', [AdminPricingController::class, 'status'])->name('admin.pricing.status');
+    Route::get('reports', [AdminReportsController::class, 'index'])->name('admin.reports');
+    Route::get('platform', [AdminPlatformController::class, 'index'])->name('admin.platform');
+    Route::post('platform/companies', [AdminPlatformController::class, 'storeCompany'])->name('admin.platform.companies.store');
+    Route::put('platform/companies/{tenant}', [AdminPlatformController::class, 'updateCompany'])->name('admin.platform.companies.update');
+    Route::post('platform/plans', [AdminPlatformController::class, 'storePlan'])->name('admin.platform.plans.store');
+    Route::put('platform/plans/{plan}', [AdminPlatformController::class, 'updatePlan'])->name('admin.platform.plans.update');
+    Route::post('platform/subscriptions', [AdminPlatformController::class, 'storeSubscription'])->name('admin.platform.subscriptions.store');
+    Route::patch('platform/subscriptions/{subscription}', [AdminPlatformController::class, 'updateSubscriptionStatus'])->name('admin.platform.subscriptions.status');
+    Route::post('platform/invoices', [AdminPlatformController::class, 'storeInvoice'])->name('admin.platform.invoices.store');
+    Route::patch('platform/invoices/{invoice}', [AdminPlatformController::class, 'updateInvoiceStatus'])->name('admin.platform.invoices.status');
+    Route::post('platform/invitations', [AdminPlatformController::class, 'invite'])->name('admin.platform.invitations.store');
     Route::get('notifications', [AdminNotificationController::class, 'index'])->name('admin.notifications');
     Route::post('notifications', [AdminNotificationController::class, 'store'])->name('admin.notifications.store');
     Route::get('settings', [AdminSettingsController::class, 'index'])->name('admin.settings');
@@ -180,6 +213,14 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     Route::post('chat/{chat}/send', [ChatController::class, 'adminSend'])->name('admin.chat.send');
     Route::post('preferences/theme', [AdminPreferencesController::class, 'theme'])->name('admin.preferences.theme');
     Route::post('preferences/locale', [AdminPreferencesController::class, 'locale'])->name('admin.preferences.locale');
+
+    // The transfer console is deliberately kept as its own operational page.
+    // AdminShell navigation can expose it when the dashboard information
+    // architecture is ready, without coupling transfer permissions to it.
+    Route::get('transfers', [AdminBranchTransferController::class, 'index'])->name('admin.transfers');
+    Route::post('transfers', [AdminBranchTransferController::class, 'store'])->name('admin.transfers.store');
+    Route::post('transfers/{transfer}/dispatch', [AdminBranchTransferController::class, 'dispatch'])->name('admin.transfers.dispatch');
+    Route::post('transfers/{transfer}/receive', [AdminBranchTransferController::class, 'receive'])->name('admin.transfers.receive');
 });
 
 Route::get('/admin', fn () => redirect()->route('admin.dashboard'))->middleware(['dashboard.host', 'auth', 'active', 'role:admin']);

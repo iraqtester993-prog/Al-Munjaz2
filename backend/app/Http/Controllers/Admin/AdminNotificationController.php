@@ -61,7 +61,7 @@ class AdminNotificationController extends Controller
             ]);
 
         $recipients = User::query()
-            ->whereIn('role', ['merchant', 'courier'])
+            ->whereIn('role', User::NOTIFICATION_RECIPIENT_ROLES)
             ->where('status', 'active')
             ->orderBy('name')
             ->limit(500)
@@ -94,7 +94,7 @@ class AdminNotificationController extends Controller
                 'nullable',
                 'integer',
                 Rule::exists('users', 'id')->where(fn ($query) => $query
-                    ->whereIn('role', ['merchant', 'courier'])
+                    ->whereIn('role', User::NOTIFICATION_RECIPIENT_ROLES)
                     ->where('status', 'active')),
             ],
             'type' => ['required', Rule::in(['announcement', 'system', 'account', 'finance', 'order'])],

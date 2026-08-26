@@ -8,6 +8,7 @@ use App\Models\ChatMessage;
 use App\Models\Order;
 use App\Models\Scopes\TenantScope;
 use App\Models\User;
+use App\Services\CourierOrderAccess;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -325,13 +326,22 @@ class ChatController extends Controller
             return $query;
         }
 
-        return $query->where(function (Builder $chats) use ($user): void {
+        $assignedOrderIds = $user->isCourierRole()
+            ? app(CourierOrderAccess::class)->assigned($user)->select('id')
+            : null;
+
+        return $query->where(function (Builder $chats) use ($user, $assignedOrderIds): void {
             $chats->where('user_id', $user->id)
-                ->orWhere(function (Builder $directChats) use ($user): void {
+                ->orWhere(function (Builder $directChats) use ($user, $assignedOrderIds): void {
                     $directChats
                         ->where('counterparty_type', 'order_chat')
-                        ->where('counterparty_id', $user->id)
-                        ->whereHas('order', fn (Builder $orders) => $orders->where('courier_id', $user->id));
+                        ->where('counterparty_id', $user->id);
+
+                    if ($assignedOrderIds) {
+                        $directChats->whereIn('order_id', $assignedOrderIds);
+                    } else {
+                        $directChats->whereRaw('1 = 0');
+                    }
                 });
         });
     }
@@ -344,7 +354,11 @@ class ChatController extends Controller
             return;
         }
 
-        abort_unless($user->role === 'courier' && (int) $order->courier_id === (int) $user->id, 403);
+        abort_unless(
+            $user->isCourierRole()
+                && app(CourierOrderAccess::class)->assigned($user)->whereKey($order->id)->exists(),
+            403,
+        );
     }
 
     private function merchantIdForOrder(Order $order, User $actor): ?int

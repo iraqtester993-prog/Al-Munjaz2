@@ -203,14 +203,14 @@ function submitRecharge() {
 
             <section class="courier-summary-grid">
                 <article class="courier-metric collection-metric">
-                    <span>{{ t('Completed Deliveries') }}</span>
-                    <strong class="mono">{{ summary.completed_deliveries || 0 }}</strong>
-                    <small>{{ t('Deliveries') }}</small>
-                </article>
-                <article class="courier-metric">
                     <span>{{ t('Total Collections') }}</span>
                     <strong class="mono">{{ fmt(summary.collections_total || 0) }}</strong>
                     <small>{{ t('IQD') }}</small>
+                </article>
+                <article class="courier-metric">
+                    <span>{{ t('Completed Deliveries') }}</span>
+                    <strong class="mono">{{ summary.completed_deliveries || 0 }}</strong>
+                    <small>{{ t('Deliveries') }}</small>
                 </article>
             </section>
 

@@ -4,9 +4,9 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -17,6 +17,27 @@ class User extends Authenticatable
     use HasApiTokens, HasFactory, Notifiable, SoftDeletes;
 
     public const ROLES = ['admin', 'owner', 'branch_manager', 'merchant', 'courier', 'pickup_courier', 'delivery_courier', 'transporter', 'support'];
+
+    /**
+     * Operational accounts are explicit rather than inferred from a vehicle
+     * type. A general courier can work both legs of a delivery while the
+     * specialised roles remain visible to the dashboard, API, and campaigns.
+     *
+     * @var array<int, string>
+     */
+    public const COURIER_ROLES = ['courier', 'pickup_courier', 'delivery_courier', 'transporter'];
+
+    /**
+     * Transporters work on an inter-branch transfer, never directly on one
+     * order. This list protects the direct-order assignment picker from
+     * presenting an unsafe, misleading option.
+     *
+     * @var array<int, string>
+     */
+    public const DIRECT_ORDER_COURIER_ROLES = ['courier', 'pickup_courier', 'delivery_courier'];
+
+    /** @var array<int, string> */
+    public const NOTIFICATION_RECIPIENT_ROLES = ['merchant', ...self::COURIER_ROLES];
 
     public const STATUSES = ['pending', 'active', 'suspended', 'rejected'];
 
@@ -76,6 +97,11 @@ class User extends Authenticatable
     public function isAdmin(): bool
     {
         return $this->role === 'admin';
+    }
+
+    public function isCourierRole(): bool
+    {
+        return in_array($this->role, self::COURIER_ROLES, true);
     }
 
     public function isActiveUser(): bool

@@ -14,10 +14,11 @@ use App\Models\User;
 use App\Services\CourierOrderAccess;
 use App\Services\CourierOrderAssignmentService;
 use App\Services\OrderWorkflowService;
+use App\Services\PricingService;
 use App\Tenancy\TenantContext;
 use DateTimeInterface;
-use Illuminate\Support\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 
@@ -30,7 +31,7 @@ class AppOrderController extends Controller
             'q' => ['nullable', 'string', 'max:120'],
         ]);
 
-        $isCourier = $request->user()->role === 'courier';
+        $isCourier = $request->user()->isCourierRole();
 
         $baseQuery = $isCourier
             ? app(CourierOrderAccess::class)->assigned($request->user())
@@ -108,15 +109,24 @@ class AppOrderController extends Controller
             'address_en' => $o->address_en,
             'order_type' => $o->order_type,
             'delivery_vehicle' => $o->delivery_vehicle,
+            'weight_grams' => (int) ($o->weight_grams ?? 0),
             'vehicle_note' => $o->vehicle_note,
             'province_id' => $o->province_id,
             'price' => $o->price,
             'fee' => $o->fee,
+            // The pricing quote stays immutable; the return flow exposes the
+            // separately selected amount only after a courier chooses it.
+            'return_fee' => (int) ($o->return_fee ?? 0),
+            'return_fee_applied' => (int) ($o->return_fee_applied ?? 0),
+            'pricing_rule_id' => $o->pricing_rule_id,
             'status' => $o->status,
             'workflow_stage' => $o->workflow_stage,
             'date' => $o->date->toDateString(),
             'created_at' => $this->timestamp($o->created_at),
             'updated_at' => $this->timestamp($o->updated_at),
+            'returned_at' => $this->timestamp($o->returned_at),
+            'returned_to_merchant_at' => $this->timestamp($o->returned_to_merchant_at),
+            'return_fee_charged_at' => $this->timestamp($o->return_fee_charged_at),
             'notes' => $o->notes,
             'pickup_deadline_at' => $o->pickup_deadline_at?->toIso8601String(),
             'courier' => $o->courier ? ['name' => $o->courier->name, 'phone' => $o->courier->phone] : null,
@@ -163,6 +173,7 @@ class AppOrderController extends Controller
             'address_ar' => ['required', 'string', 'max:255'],
             'order_type' => ['nullable', 'string', 'max:60'],
             'delivery_vehicle' => ['required', Rule::in(['normal', 'bike', 'sedan', 'suv', 'truck'])],
+            'weight_grams' => ['nullable', 'integer', 'min:0', 'max:1000000'],
             'vehicle_note' => ['nullable', 'string', 'max:255'],
             'province_id' => ['required', 'integer', 'exists:provinces,id'],
             'price' => ['required', 'integer', 'min:1'],
@@ -191,7 +202,18 @@ class AppOrderController extends Controller
         // These operational defaults are controlled from the dashboard.  A
         // merchant can never override them in a browser request.
         $availabilityMinutes = max(1, min((int) Setting::get('order_expiry_minutes', 30), 1440));
-        $order->fee = max(0, min((int) Setting::get('delivery_fee', 0), 1_000_000));
+        $quote = app(PricingService::class)->quote(
+            $user,
+            (int) $data['province_id'],
+            $data['order_type'] ?? null,
+            $data['delivery_vehicle'],
+            (int) ($data['weight_grams'] ?? 0),
+            max(0, min((int) Setting::get('delivery_fee', 0), 1_000_000)),
+        );
+        $order->weight_grams = (int) ($data['weight_grams'] ?? 0);
+        $order->fee = $quote['fee'];
+        $order->return_fee = $quote['return_fee'];
+        $order->pricing_rule_id = $quote['rule']?->id;
         $order->pickup_deadline_at = now()->addMinutes($availabilityMinutes);
         $order->merchant_id = $user->id;
         $order->created_by = $user->id;
@@ -230,6 +252,7 @@ class AppOrderController extends Controller
             'address_ar' => ['required', 'string', 'max:255'],
             'order_type' => ['nullable', 'string', 'max:60'],
             'delivery_vehicle' => ['required', Rule::in(['normal', 'bike', 'sedan', 'suv', 'truck'])],
+            'weight_grams' => ['nullable', 'integer', 'min:0', 'max:1000000'],
             'vehicle_note' => ['nullable', 'string', 'max:255'],
             'province_id' => ['required', 'integer', 'exists:provinces,id'],
             'price' => ['required', 'integer', 'min:1'],
@@ -242,10 +265,23 @@ class AppOrderController extends Controller
             'المحافظة المختارة غير مفعلة لحسابك.'
         );
 
+        $quote = app(PricingService::class)->quote(
+            $request->user(),
+            (int) $data['province_id'],
+            $data['order_type'] ?? null,
+            $data['delivery_vehicle'],
+            (int) ($data['weight_grams'] ?? 0),
+            max(0, min((int) Setting::get('delivery_fee', 0), 1_000_000)),
+        );
+
         $order->update([
             ...$data,
             'customer_name_en' => $request->input('customer_name_en') ?: $data['customer_name_ar'],
             'address_en' => $request->input('address_en') ?: $data['address_ar'],
+            'weight_grams' => (int) ($data['weight_grams'] ?? 0),
+            'fee' => $quote['fee'],
+            'return_fee' => $quote['return_fee'],
+            'pricing_rule_id' => $quote['rule']?->id,
         ]);
 
         return back()->with('success', __('orders.updated', ['track' => $order->track_no]));
@@ -265,10 +301,18 @@ class AppOrderController extends Controller
 
         abort_if($user->role === 'merchant', 403, 'لا يمكن للتاجر تغيير مرحلة التوصيل.');
 
-        if ($user->role === 'courier') {
-            $allowed = match ($order->status) {
-                'approved' => ['courier'],
-                'courier' => ['delivered', 'returned'],
+        if ($user->isCourierRole()) {
+            $allowed = match ($user->role) {
+                'courier' => match ($order->status) {
+                    'approved' => ['courier'],
+                    // Returns are deliberately handled by the two-step
+                    // endpoint below so a fee and physical handback cannot
+                    // be skipped with a generic status post.
+                    'courier' => ['delivered'],
+                    default => [],
+                },
+                'pickup_courier' => $order->status === 'approved' ? ['courier'] : [],
+                'delivery_courier' => $order->status === 'courier' ? ['delivered'] : [],
                 default => [],
             };
 
@@ -278,6 +322,45 @@ class AppOrderController extends Controller
         app(OrderWorkflowService::class)->changeStatus($order, $to, $user, $request->input('note'));
 
         return back()->with('success', __('orders.status_changed'));
+    }
+
+    public function startReturn(Request $request, Order $order)
+    {
+        $this->authorizeOrder($order, $request);
+        abort_unless($request->user()->role === 'courier', 403, 'إرجاع الطلب متاح للمندوب المعيّن فقط.');
+
+        $data = $request->validate([
+            'fee_mode' => ['required', Rule::in(['none', 'fee'])],
+            'return_fee_applied' => ['nullable', 'integer', 'min:1', 'max:1000000', Rule::requiredIf($request->input('fee_mode') === 'fee')],
+            'note' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        app(OrderWorkflowService::class)->startCourierReturn(
+            $order,
+            $request->user(),
+            $data['fee_mode'] === 'fee' ? (int) $data['return_fee_applied'] : 0,
+            $data['note'] ?? null,
+        );
+
+        return back()->with('success', 'تم تسجيل الإرجاع. أكّد تسليم الطلب إلى التاجر بعد إتمامه فعلياً.');
+    }
+
+    public function confirmReturnToMerchant(Request $request, Order $order)
+    {
+        $this->authorizeOrder($order, $request);
+        abort_unless($request->user()->role === 'courier', 403, 'تأكيد الإرجاع متاح للمندوب المعيّن فقط.');
+
+        $data = $request->validate([
+            'note' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        app(OrderWorkflowService::class)->confirmCourierReturnToMerchant(
+            $order,
+            $request->user(),
+            $data['note'] ?? null,
+        );
+
+        return back()->with('success', 'تم تأكيد إعادة الطلب إلى التاجر وتحديث السجل التشغيلي والمالي.');
     }
 
     public function claim(Request $request, Order $order)
@@ -303,8 +386,14 @@ class AppOrderController extends Controller
             return;
         }
 
-        if ($request->user()->role === 'courier') {
-            abort_unless($order->courier_id === $request->user()->id, 403);
+        if ($request->user()->isCourierRole()) {
+            abort_unless(
+                app(CourierOrderAccess::class)
+                    ->assigned($request->user())
+                    ->whereKey($order->id)
+                    ->exists(),
+                403,
+            );
         }
 
         if ($request->user()->role === 'merchant') {

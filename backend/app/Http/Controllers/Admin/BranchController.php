@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\ActivityLog;
 use App\Models\Branch;
+use App\Models\Cashbox;
 use App\Models\Order;
 use App\Models\Scopes\TenantScope;
 use App\Models\Tenant;
@@ -92,6 +93,12 @@ class BranchController extends Controller
         }
 
         $branch->update(['is_active' => $isActive]);
+        // A branch cashbox cannot be operated while its branch is inactive.
+        // Keep this in step with the branch even when the cashbox was created
+        // by an earlier release.
+        Cashbox::withoutGlobalScope(TenantScope::class)
+            ->where('branch_id', $branch->id)
+            ->update(['is_active' => $isActive]);
         $this->record($request, $branch, 'branch.status_updated', ['is_active' => $isActive]);
 
         return back()->with('success', __('Branch status updated successfully.'));

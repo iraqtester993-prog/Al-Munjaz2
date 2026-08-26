@@ -8,10 +8,10 @@ use App\Models\Order;
 use App\Models\OrderMovement;
 use App\Models\Scopes\TenantScope;
 use App\Models\User;
-use App\Services\CourierOrderAccess;
-use App\Services\CourierOrderAssignmentService;
+use App\Services\OrderOperationalAssignmentService;
 use App\Services\OrderWorkflowService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 
@@ -20,11 +20,14 @@ class AdminOrderController extends Controller
     public function index(Request $request)
     {
         $request->validate([
-            'filter' => ['nullable', Rule::in(array_merge(['all'], Order::STATUSES))],
+            'filter' => ['nullable', Rule::in(array_merge(['all'], Order::FILTERABLE_STATUSES))],
             'q' => ['nullable', 'string', 'max:120'],
         ]);
 
-        $query = Order::query()->with([
+        // The operations dashboard serves the whole platform, including
+        // merchant-owned orders and the shared branch network.
+        $allOrders = Order::withoutGlobalScope(TenantScope::class);
+        $query = (clone $allOrders)->with([
             'courier:id,name,phone,vehicle',
             'pickupCourier:id,name,phone,vehicle',
             'deliveryCourier:id,name,phone,vehicle',
@@ -37,12 +40,13 @@ class AdminOrderController extends Controller
                 ->with('user:id,name,role')
                 ->latest('created_at'),
             'movements' => fn ($movements) => $movements
+                ->withoutGlobalScope(TenantScope::class)
                 ->with('actor:id,name,role')
                 ->latest('occurred_at'),
         ]);
 
         if ($request->input('filter') !== 'all' && $request->filled('filter')) {
-            $query->where('status', $request->input('filter'));
+            $query->operationalStatus($request->input('filter'));
         }
 
         if ($q = $request->input('q')) {
@@ -86,24 +90,23 @@ class AdminOrderController extends Controller
 
         $orders->through(fn (Order $order) => $this->orderPayload($order, $movementBranches));
 
-        $counts = [
-            'all' => Order::query()->count(),
-            'pending' => Order::query()->where('status', 'pending')->count(),
-            'approved' => Order::query()->where('status', 'approved')->count(),
-            'courier' => Order::query()->where('status', 'courier')->count(),
-            'delivered' => Order::query()->where('status', 'delivered')->count(),
-            'returned' => Order::query()->where('status', 'returned')->count(),
-        ];
+        $counts = ['all' => (clone $allOrders)->count()];
+        foreach (Order::STATUSES as $status) {
+            $counts[$status] = (clone $allOrders)->where('status', $status)->count();
+        }
+        $counts['late'] = (clone $allOrders)->operationalStatus('late')->count();
 
         $couriers = User::query()
-            ->where('role', 'courier')
+            ->whereIn('role', User::DIRECT_ORDER_COURIER_ROLES)
             ->where('status', 'active')
             ->with('provinces:id,name_ar')
-            ->get(['id', 'name', 'phone'])
+            ->get(['id', 'name', 'phone', 'role'])
             ->map(fn (User $courier) => [
                 'id' => $courier->id,
                 'name' => $courier->name,
                 'phone' => $courier->phone,
+                'role' => $courier->role,
+                'assignment_roles' => app(OrderOperationalAssignmentService::class)->modesFor($courier),
                 'provinces' => $courier->provinces->map(fn ($province) => [
                     'id' => $province->id,
                     'name_ar' => $province->name_ar,
@@ -150,7 +153,10 @@ class AdminOrderController extends Controller
 
     public function status(Request $request, Order $order)
     {
-        $request->validate(['status' => ['required', Rule::in(Order::STATUSES)]]);
+        $request->validate([
+            'status' => ['required', Rule::in(Order::STATUSES)],
+            'note' => ['nullable', 'string', 'max:255'],
+        ]);
 
         app(OrderWorkflowService::class)->changeStatus($order, $request->input('status'), $request->user(), $request->input('note'));
 
@@ -161,19 +167,16 @@ class AdminOrderController extends Controller
     {
         $request->validate([
             'courier_id' => ['required', 'exists:users,id'],
+            'assignment_role' => ['nullable', Rule::in(OrderOperationalAssignmentService::ASSIGNMENT_ROLES)],
         ]);
 
         $courier = User::findOrFail($request->integer('courier_id'));
 
-        abort_unless($courier->role === 'courier' && $courier->status === 'active', 422, 'المستخدم المختار ليس مندوباً نشطاً.');
-        abort_unless($order->status === 'pending' && $order->courier_id === null, 422, 'الطلب لم يعد متاحاً للتعيين.');
-        abort_unless($order->province_id, 422, 'يجب تحديد محافظة الطلب قبل تعيين المندوب.');
-        abort_unless(app(CourierOrderAccess::class)->canServeProvince($courier, (int) $order->province_id), 422, 'هذا المندوب غير مفعّل في محافظة الطلب.');
-
-        app(CourierOrderAssignmentService::class)->assign(
+        app(OrderOperationalAssignmentService::class)->assign(
             $order,
             $courier,
             $request->user(),
+            $request->input('assignment_role'),
             'تم تعيين المندوب من لوحة الإدارة.',
         );
 
@@ -280,10 +283,18 @@ class AdminOrderController extends Controller
             'address_ar' => $order->address_ar,
             'price' => (int) $order->price,
             'fee' => $fee,
+            // The pricing quote is immutable; the applied amount is written
+            // only by the courier's two-step return workflow.
+            'return_fee' => (int) ($order->return_fee ?? 0),
+            'return_fee_applied' => (int) ($order->return_fee_applied ?? 0),
             'financial' => [
                 'order_value' => (int) $order->price,
                 'delivery_fee' => $fee,
                 'net_to_merchant' => max(0, (int) $order->price - ($fee ?? 0)),
+                'return_fee_quote' => (int) ($order->return_fee ?? 0),
+                'return_fee_applied' => (int) ($order->return_fee_applied ?? 0),
+                'returned_to_merchant_at' => $this->iso($order->returned_to_merchant_at),
+                'return_fee_charged_at' => $this->iso($order->return_fee_charged_at),
             ],
             'order_type' => $order->order_type,
             'delivery_vehicle' => $order->delivery_vehicle,
@@ -296,6 +307,8 @@ class AdminOrderController extends Controller
             'picked_at' => $this->iso($order->picked_at),
             'delivered_at' => $this->iso($order->delivered_at),
             'returned_at' => $this->iso($order->returned_at),
+            'returned_to_merchant_at' => $this->iso($order->returned_to_merchant_at),
+            'return_fee_charged_at' => $this->iso($order->return_fee_charged_at),
             'pickup_deadline_at' => $this->iso($order->pickup_deadline_at),
             'province_id' => $order->province_id,
             'province' => $order->province ? [
@@ -354,12 +367,18 @@ class AdminOrderController extends Controller
 
         foreach ($order->movements as $movement) {
             $events->push([
-                'kind' => 'movement',
+                'kind' => data_get($movement->meta, 'event') === 'courier_assignment' ? 'assignment' : 'movement',
                 'status' => null,
                 'from_status' => null,
                 'stage' => $movement->stage,
                 'note' => $movement->note,
                 'actor' => $this->personPayload($movement->actor),
+                'assignment_role' => data_get($movement->meta, 'assignment_role'),
+                'assignee' => data_get($movement->meta, 'event') === 'courier_assignment' ? [
+                    'id' => data_get($movement->meta, 'assignee_id'),
+                    'name' => data_get($movement->meta, 'assignee_name'),
+                    'role' => data_get($movement->meta, 'assignee_role'),
+                ] : null,
                 'from_branch' => $this->branchPayload($movementBranches->get($movement->from_branch_id)),
                 'to_branch' => $this->branchPayload($movementBranches->get($movement->to_branch_id)),
                 'at' => $this->iso($movement->occurred_at),
@@ -402,7 +421,7 @@ class AdminOrderController extends Controller
         }
 
         return filled($value)
-            ? \Illuminate\Support\Carbon::parse($value)->toIso8601String()
+            ? Carbon::parse($value)->toIso8601String()
             : null;
     }
 }

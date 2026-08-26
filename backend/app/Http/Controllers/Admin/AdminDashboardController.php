@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Notification;
 use App\Models\Order;
+use App\Models\Scopes\TenantScope;
 use App\Models\Tenant;
 use App\Models\Transaction;
 use App\Models\User;
@@ -17,8 +18,14 @@ class AdminDashboardController extends Controller
     public function index(Request $request)
     {
         $today = today();
+        // The platform dashboard is intentionally cross-tenant.  Be
+        // explicit rather than relying on the logged-in admin lacking a
+        // tenant_id; this preserves a complete view for future admin setups.
+        $ordersQuery = Order::withoutGlobalScope(TenantScope::class);
+        $transactionsQuery = Transaction::withoutGlobalScope(TenantScope::class);
+        $notificationsQuery = Notification::withoutGlobalScope(TenantScope::class);
         $statusCounts = array_fill_keys(Order::STATUSES, 0);
-        $recordedStatuses = Order::query()
+        $recordedStatuses = (clone $ordersQuery)
             ->selectRaw('status, COUNT(*) as total')
             ->groupBy('status')
             ->pluck('total', 'status')
@@ -27,13 +34,13 @@ class AdminDashboardController extends Controller
         $statusCounts = array_replace($statusCounts, $recordedStatuses);
 
         $ordersCount = (int) array_sum($statusCounts);
-        $orderValue = (int) Order::query()->sum('price');
-        $deliveredValue = (int) Order::query()->where('status', 'delivered')->sum('price');
+        $orderValue = (int) (clone $ordersQuery)->sum('price');
+        $deliveredValue = (int) (clone $ordersQuery)->where('status', 'delivered')->sum('price');
         // The order fee is the source of truth for the platform's delivery fee,
         // while transactions represent the later accounting movement.
-        $fees = (int) Order::query()->sum('fee');
+        $fees = (int) (clone $ordersQuery)->sum('fee');
         $merchantCount = Tenant::query()->where('kind', 'merchant')->count();
-        $courierRoles = ['courier', 'pickup_courier', 'delivery_courier'];
+        $courierRoles = ['courier', 'pickup_courier', 'delivery_courier', 'transporter'];
         $courierCount = User::query()->whereIn('role', $courierRoles)->count();
         $onlineCouriers = User::query()
             ->whereIn('role', $courierRoles)
@@ -41,13 +48,13 @@ class AdminDashboardController extends Controller
             ->where('is_online', true)
             ->count();
 
-        $merchantBalance = (int) Tenant::query()
-            ->where('kind', 'merchant')
-            ->sum('wallet_balance');
+        $merchantBalance = (int) Wallet::query()
+            ->whereHas('user', fn ($query) => $query->where('role', 'merchant'))
+            ->sum('balance');
         $courierBudget = (int) Wallet::query()
             ->whereHas('user', fn ($query) => $query->whereIn('role', $courierRoles))
             ->sum('budget');
-        $collected = (int) Transaction::query()
+        $collected = (int) (clone $transactionsQuery)
             ->where('type', 'collected')
             ->where('direction', 1)
             ->sum('amount');
@@ -57,30 +64,30 @@ class AdminDashboardController extends Controller
             $d = $today->copy()->subDays($i);
             $week[] = [
                 'label' => $d->translatedFormat('D'),
-                'count' => Order::query()->whereDate('date', $d)->count(),
+                'count' => (clone $ordersQuery)->whereDate('date', $d)->count(),
             ];
         }
 
-        $recentOrders = Order::query()
+        $recentOrders = (clone $ordersQuery)
             ->with(['courier:id,name', 'merchant:id,name,shop_name', 'tenant:id,name'])
             ->latest('id')
             ->limit(8)
             ->get()
             ->map(fn (Order $o) => [
-            'id' => $o->id,
-            'track_no' => $o->track_no,
-            'customer_name_ar' => $o->customer_name_ar,
-            'customer_name_en' => $o->customer_name_en,
-            'phone' => $o->phone,
-            'price' => $o->price,
-            'status' => $o->status,
-            'date' => $o->date->toDateString(),
-            'source' => $o->source,
-            'merchant_name' => $o->merchant?->name ?? $o->tenant?->name,
-            'courier_name' => $o->courier?->name,
-        ]);
+                'id' => $o->id,
+                'track_no' => $o->track_no,
+                'customer_name_ar' => $o->customer_name_ar,
+                'customer_name_en' => $o->customer_name_en,
+                'phone' => $o->phone,
+                'price' => $o->price,
+                'status' => $o->status,
+                'date' => $o->date->toDateString(),
+                'source' => $o->source,
+                'merchant_name' => $o->merchant?->name ?? $o->tenant?->name,
+                'courier_name' => $o->courier?->name,
+            ]);
 
-        $recentNotifs = Notification::query()->latest('id')->limit(5)->get()->map(fn (Notification $n) => [
+        $recentNotifs = (clone $notificationsQuery)->latest('id')->limit(5)->get()->map(fn (Notification $n) => [
             'id' => $n->id,
             'title' => $n->titleFor(),
             'body' => $n->bodyFor(),
@@ -88,7 +95,7 @@ class AdminDashboardController extends Controller
             'time' => $n->created_at->diffForHumans(),
         ]);
 
-        $merchantStats = Order::query()
+        $merchantStats = (clone $ordersQuery)
             ->selectRaw('COALESCE(merchant_id, created_by) as merchant_user_id')
             ->selectRaw('COUNT(*) as orders_count')
             ->selectRaw("COALESCE(SUM(CASE WHEN status = 'delivered' THEN price ELSE 0 END), 0) as collected")
@@ -121,7 +128,7 @@ class AdminDashboardController extends Controller
                 'collected' => (int) $merchant->collected,
             ]);
 
-        $todayOrders = Order::query()->whereDate('date', $today)->count();
+        $todayOrders = (clone $ordersQuery)->whereDate('date', $today)->count();
         $attentionCount = ($statusCounts['pending'] ?? 0) + ($statusCounts['approved'] ?? 0);
         $deliveryRate = $ordersCount > 0
             ? (int) round((($statusCounts['delivered'] ?? 0) / $ordersCount) * 100)
@@ -139,7 +146,7 @@ class AdminDashboardController extends Controller
                 'merchants' => $merchantCount,
                 'couriers' => $courierCount,
                 'users' => User::query()->count(),
-                'unreadNotifs' => Notification::query()->whereNull('read_at')->count(),
+                'unreadNotifs' => (clone $notificationsQuery)->whereNull('read_at')->count(),
             ],
             'operations' => [
                 'todayOrders' => $todayOrders,
@@ -165,7 +172,7 @@ class AdminDashboardController extends Controller
 
     public function finance(Request $request)
     {
-        $transactions = Transaction::query()
+        $transactions = Transaction::withoutGlobalScope(TenantScope::class)
             ->with('user:id,name')
             ->latest('date')
             ->limit(200)
@@ -184,17 +191,17 @@ class AdminDashboardController extends Controller
         return Inertia::render('Admin/Finance', [
             'transactions' => $transactions,
             'summary' => [
-                'settlements' => Transaction::query()->where('type', 'settlement')->where('direction', 1)->sum('amount'),
-                'withdrawals' => Transaction::query()->where('type', 'withdrawal')->sum('amount'),
-                'fees' => Transaction::query()->where('type', 'delivery_fee')->sum('amount'),
-                'collected' => Transaction::query()->where('type', 'collected')->where('direction', 1)->sum('amount'),
+                'settlements' => Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'settlement')->where('direction', 1)->sum('amount'),
+                'withdrawals' => Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'withdrawal')->sum('amount'),
+                'fees' => Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'delivery_fee')->sum('amount'),
+                'collected' => Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'collected')->where('direction', 1)->sum('amount'),
             ],
         ]);
     }
 
     public function notifications(Request $request)
     {
-        $notifications = Notification::query()
+        $notifications = Notification::withoutGlobalScope(TenantScope::class)
             ->latest('id')
             ->limit(100)
             ->get()

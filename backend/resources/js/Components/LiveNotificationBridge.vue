@@ -11,7 +11,7 @@ let pollTimer
 let toneUnlocked = false
 
 function userCanReceive() {
-    return ['merchant', 'courier'].includes(page.props.auth?.user?.role)
+    return ['merchant', 'courier', 'pickup_courier', 'delivery_courier', 'transporter'].includes(page.props.auth?.user?.role)
 }
 
 function dismiss(id) {

@@ -5,7 +5,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>المنجز السريع — {{ $isDashboard ? 'لوحة الإدارة' : __('Merchant App') }}</title>
+    <title>{{ config('app.name') }}{{ $isDashboard ? ' — لوحة الإدارة' : '' }}</title>
     <meta name="theme-color" content="#0B6E68">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">

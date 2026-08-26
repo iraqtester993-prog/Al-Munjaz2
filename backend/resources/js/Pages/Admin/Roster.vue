@@ -8,9 +8,12 @@ const props = defineProps({
     role: { type: String, required: true },
     rows: { type: Array, default: () => [] },
     filters: { type: Object, required: true },
+    roleFilters: { type: Object, default: () => ({}) },
+    selectedRole: { type: String, default: 'all' },
 })
 
 const active = ref('all')
+const activeRole = ref(props.selectedRole)
 
 const filterList = computed(() => [
     { key: 'all', label: t('All') },
@@ -74,10 +77,45 @@ function documentLabel(type) {
 }
 
 const isCourier = computed(() => props.role === 'courier')
+
+const operationalRoleFilters = computed(() => [
+    { key: 'all', label: t('All Couriers') },
+    { key: 'courier', label: t('Couriers') },
+    { key: 'pickup_courier', label: t('Pickup Couriers') },
+    { key: 'delivery_courier', label: t('Delivery Couriers') },
+    { key: 'transporter', label: t('Transporters') },
+])
+
+function courierRoleLabel(role) {
+    const labels = {
+        courier: 'Courier',
+        pickup_courier: 'Pickup courier',
+        delivery_courier: 'Delivery courier',
+        transporter: 'Transporter',
+    }
+
+    return t(labels[role] || role)
+}
+
+function changeCourierRole(role) {
+    activeRole.value = role
+    router.get(route('admin.couriers'), { role }, { preserveScroll: true, preserveState: true, replace: true })
+}
 </script>
 
 <template>
     <AdminShell :title="isCourier ? t('Couriers') : t('Merchants')">
+        <div v-if="isCourier" class="filter-bar roster-role-filter">
+            <button
+                v-for="filter in operationalRoleFilters"
+                :key="filter.key"
+                class="fbtn"
+                :class="{ active: activeRole === filter.key }"
+                @click="changeCourierRole(filter.key)"
+            >
+                {{ filter.label }} <span class="cnt">{{ roleFilters[filter.key] ?? 0 }}</span>
+            </button>
+        </div>
         <div class="filter-bar">
             <button v-for="f in filterList" :key="f.key" class="fbtn" :class="{ active: active === f.key }" @click="active = f.key">
                 {{ f.label }} <span class="cnt">{{ filters[f.key] ?? 0 }}</span>
@@ -91,6 +129,7 @@ const isCourier = computed(() => props.role === 'courier')
                     <div class="uc-id">
                         <b>{{ row.name }}</b>
                         <span class="vtag" style="margin-top: 4px; display: inline-block">{{ row.user?.phone }}</span>
+                        <small v-if="isCourier" class="courier-role-label">{{ courierRoleLabel(row.user?.role || row.role) }}</small>
                     </div>
                     <span class="uc-flag" :class="{ active: row.status === 'active' }" :style="{ background: statusClass(row.status) === 'b-warning' ? 'var(--warning-tint)' : statusClass(row.status) === 'b-danger' ? 'var(--danger-tint)' : '' }">
                         <i :style="{ width: '7px', height: '7px', borderRadius: '50%', background: 'currentColor', display: 'inline-block' }"></i>
@@ -148,3 +187,8 @@ const isCourier = computed(() => props.role === 'courier')
         <div v-else class="panel"><div class="empty">{{ t('No users found') }}</div></div>
     </AdminShell>
 </template>
+
+<style scoped>
+.roster-role-filter { margin-bottom: 10px; }
+.courier-role-label { display: block; margin-top: 4px; color: var(--primary-strong); font-size: 9px; font-weight: 900; }
+</style>

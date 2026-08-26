@@ -21,7 +21,9 @@ const props = defineProps({
 
 const page = usePage()
 const user = computed(() => page.props.auth?.user)
-const isCourier = computed(() => user.value?.role === 'courier')
+// Pickup, delivery and transporter accounts share the courier mobile shell;
+// their allowed work is still limited server-side by their operational role.
+const isCourier = computed(() => ['courier', 'pickup_courier', 'delivery_courier', 'transporter'].includes(user.value?.role))
 const locale = computed(() => page.props.locale || 'ar')
 const theme = ref(user.value?.theme || document.body?.dataset.theme || 'light')
 const liveNotificationUnread = ref(Number(page.props.notificationUnread || 0))

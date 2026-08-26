@@ -11,6 +11,7 @@ use App\Models\OrderMovement;
 use App\Models\OrderStatusLog;
 use App\Models\Province;
 use App\Models\PushSubscription;
+use App\Models\Scopes\TenantScope;
 use App\Models\Setting;
 use App\Models\Tenant;
 use App\Models\User;
@@ -185,6 +186,65 @@ class SmokeTest extends TestCase
             ->assertInertia(fn (Assert $p) => $p->component('Mobile/Wallet'));
     }
 
+    public function test_mobile_home_cards_expose_all_localized_text_for_english_and_kurdish(): void
+    {
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+        $courier = User::where('username', 'مندوب')->firstOrFail();
+        $province = $merchant->provinces()->firstOrFail();
+
+        $order = Order::withoutGlobalScopes()->create([
+            'tenant_id' => $merchant->tenant_id,
+            'merchant_id' => $merchant->id,
+            'created_by' => $merchant->id,
+            'track_no' => 'ALM-LOCALIZED-HOME',
+            'source' => 'merchant',
+            'customer_name_ar' => 'عميل الصفحة الرئيسية',
+            'customer_name_en' => 'Home Card Customer',
+            'phone' => '07710008888',
+            'address_ar' => 'بغداد — الكرادة',
+            'address_en' => 'Baghdad — Karrada',
+            'delivery_vehicle' => 'normal',
+            'price' => 52000,
+            'fee' => 3000,
+            'status' => 'pending',
+            'workflow_stage' => 'created',
+            'province_id' => $province->id,
+            'date' => today(),
+        ]);
+
+        $merchant->update(['locale' => 'en']);
+        $this->actingAs($merchant)->get('/app')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Mobile/MerchantHome')
+                ->where('locale', 'en')
+                ->where('recentOrders.0.id', $order->id)
+                ->where('recentOrders.0.customer_name_en', 'Home Card Customer')
+                ->where('recentOrders.0.customer_name_ku', 'Home Card Customer')
+                ->where('recentOrders.0.address_en', 'Baghdad — Karrada')
+                ->where('recentOrders.0.address_ku', 'Baghdad — Karrada')
+                ->where('heroSlides.0.title_en', 'Track every order in real time')
+                ->where('heroSlides.0.title_ku', 'هەر داواکارییەک بە ڕاستەوخۆ بەدواداچوون بکە')
+                ->where('heroSlides.0.body_ku', 'لە تەبی داواکارییەکان شوێنی ڕاستەقینەی داواکارییەکەت بزانە')
+            );
+
+        $courier->update(['locale' => 'ku']);
+        $this->actingAs($courier)->get('/app')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Mobile/CourierHome')
+                ->where('locale', 'ku')
+                ->where('availableOrders.0.id', $order->id)
+                ->where('availableOrders.0.customer_name_en', 'Home Card Customer')
+                ->where('availableOrders.0.customer_name_ku', 'Home Card Customer')
+                ->where('availableOrders.0.address_en', 'Baghdad — Karrada')
+                ->where('availableOrders.0.address_ku', 'Baghdad — Karrada')
+                ->where('heroSlides.0.title_en', 'Enable GPS for accurate delivery')
+                ->where('heroSlides.0.title_ku', 'GPS چالاک بکە بۆ گەیاندنی وردتر')
+                ->where('heroSlides.0.body_ku', 'یارمەتی لقەکە دەدات گەشتەکەت بە ڕاستەوخۆ بەدواداچوون بکات')
+            );
+    }
+
     public function test_mobile_notification_feed_returns_new_rows_and_the_total_unread_count(): void
     {
         $merchant = User::where('username', 'تاجر')->firstOrFail();
@@ -233,6 +293,22 @@ class SmokeTest extends TestCase
         $this->actingAs($admin)->get('/dashboard/finance')
             ->assertOk()
             ->assertInertia(fn (Assert $p) => $p->component('Admin/Finance'));
+
+        $this->actingAs($admin)->get('/dashboard/transfers')
+            ->assertOk()
+            ->assertInertia(fn (Assert $p) => $p->component('Admin/Transfers'));
+
+        $this->actingAs($admin)->get('/dashboard/cashboxes')
+            ->assertOk()
+            ->assertInertia(fn (Assert $p) => $p->component('Admin/Cashboxes'));
+
+        $this->actingAs($admin)->get('/dashboard/pricing')
+            ->assertOk()
+            ->assertInertia(fn (Assert $p) => $p->component('Admin/Pricing'));
+
+        $this->actingAs($admin)->get('/dashboard/reports')
+            ->assertOk()
+            ->assertInertia(fn (Assert $p) => $p->component('Admin/Reports'));
 
         $this->actingAs($admin)->get('/dashboard/notifications')
             ->assertOk()
@@ -675,7 +751,7 @@ class SmokeTest extends TestCase
         $this->actingAs($merchant)->post('/app/chats/open', ['order_id' => $order->id])
             ->assertRedirect();
 
-        $chat = Chat::withoutGlobalScope(\App\Models\Scopes\TenantScope::class)
+        $chat = Chat::withoutGlobalScope(TenantScope::class)
             ->where('order_id', $order->id)
             ->where('counterparty_type', 'order_chat')
             ->firstOrFail();
@@ -686,7 +762,7 @@ class SmokeTest extends TestCase
         $this->actingAs($courier)->post('/app/chats/open', ['order_id' => $order->id])
             ->assertRedirect();
 
-        $this->assertSame(1, Chat::withoutGlobalScope(\App\Models\Scopes\TenantScope::class)
+        $this->assertSame(1, Chat::withoutGlobalScope(TenantScope::class)
             ->where('order_id', $order->id)
             ->where('counterparty_type', 'order_chat')
             ->count());

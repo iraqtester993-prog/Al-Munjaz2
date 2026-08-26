@@ -69,8 +69,8 @@ class AdminFinanceController extends Controller
                 'role' => $user->role,
                 'wallet_balance' => (int) ($user->wallet?->balance ?? 0),
                 'budget' => (int) ($user->wallet?->budget ?? 0),
-                'cash_on_hand' => $user->role === 'courier' ? $finance->cashOnHand($user->id) : null,
-                'recharge_capacity' => $user->role === 'courier' ? $finance->rechargeCapacity($user->id) : null,
+                'cash_on_hand' => $user->isCourierRole() ? $finance->cashOnHand($user->id) : null,
+                'recharge_capacity' => $user->isCourierRole() ? $finance->rechargeCapacity($user->id) : null,
             ]);
 
         return Inertia::render('Admin/Finance', [
@@ -127,7 +127,7 @@ class AdminFinanceController extends Controller
     public function recordSettlement(Request $request, FinanceRequestService $finance)
     {
         $data = $request->validate([
-            'user_id' => ['required', 'integer', Rule::exists('users', 'id')->where(fn ($query) => $query->whereIn('role', ['merchant', 'courier']))],
+            'user_id' => ['required', 'integer', Rule::exists('users', 'id')->where(fn ($query) => $query->whereIn('role', ['merchant', ...User::COURIER_ROLES]))],
             'type' => ['required', Rule::in(FinanceRequest::TYPES)],
             'amount' => ['required', 'integer', 'min:1000'],
             'branch_id' => ['nullable', 'integer', Rule::exists('branches', 'id')],
@@ -137,10 +137,10 @@ class AdminFinanceController extends Controller
         $account = User::withoutGlobalScopes()->findOrFail($data['user_id']);
         $requestType = $data['type'];
 
-        if ($requestType === FinanceRequest::CASH_HANDOVER && $account->role !== 'courier') {
+        if ($requestType === FinanceRequest::CASH_HANDOVER && ! $account->isCourierRole()) {
             return back()->withErrors(['user_id' => __('Cash handover must belong to a courier account.')]);
         }
-        if ($requestType === FinanceRequest::BUDGET_RECHARGE && $account->role !== 'courier') {
+        if ($requestType === FinanceRequest::BUDGET_RECHARGE && ! $account->isCourierRole()) {
             return back()->withErrors(['user_id' => __('Budget recharge must belong to a courier account.')]);
         }
         if ($requestType === FinanceRequest::MERCHANT_PAYOUT && $account->role !== 'merchant') {

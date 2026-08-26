@@ -19,12 +19,28 @@ class CourierOrderAccess
 {
     public function assigned(User $courier): Builder
     {
-        return $this->base()
-            ->where('courier_id', $courier->id);
+        return match ($courier->role) {
+            // A general courier can deliberately be assigned to either leg
+            // from the dashboard, so show every explicit assignment.
+            'courier' => $this->base()->where(function (Builder $query) use ($courier): void {
+                $query->where('courier_id', $courier->id)
+                    ->orWhere('pickup_courier_id', $courier->id)
+                    ->orWhere('delivery_courier_id', $courier->id);
+            }),
+            'pickup_courier' => $this->base()->where('pickup_courier_id', $courier->id),
+            'delivery_courier' => $this->base()->where('delivery_courier_id', $courier->id),
+            // A transporter works from the inter-branch transfer console;
+            // it must never see an arbitrary direct-order queue.
+            default => $this->base()->whereRaw('1 = 0'),
+        };
     }
 
     public function available(User $courier): Builder
     {
+        if ($courier->role !== 'courier') {
+            return $this->base()->whereRaw('1 = 0');
+        }
+
         $provinceIds = $this->provinceIds($courier);
 
         return $this->base()
@@ -40,7 +56,7 @@ class CourierOrderAccess
 
     public function canClaim(Order $order, User $courier): bool
     {
-        if ($order->status !== 'pending' || $order->courier_id !== null || ! $order->province_id) {
+        if ($courier->role !== 'courier' || $order->status !== 'pending' || $order->courier_id !== null || ! $order->province_id) {
             return false;
         }
 

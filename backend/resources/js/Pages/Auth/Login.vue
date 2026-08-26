@@ -85,10 +85,6 @@ function icon(name) {
 
         <section v-if="view === 'start'" class="start-pane">
             <div class="start-center">
-                <div class="start-hero-copy">
-                    <h1>{{ t('Choose your app') }}</h1>
-                    <p>{{ t('Same company account on Al-Munjaz Al-Saree, with an interface built for your role.') }}</p>
-                </div>
                 <div class="role-cards">
                     <button v-for="role in roles" :key="role.key" class="reference-role-card" type="button" @click="chooseRole(role.key)">
                         <span class="role-art">
@@ -155,9 +151,6 @@ function icon(name) {
 .start-pane, .login-pane { flex:1; display:flex; flex-direction:column; padding:18px 22px calc(28px + env(safe-area-inset-bottom, 0px)); }
 .start-pane { justify-content:space-between; }
 .start-center{flex:1;display:flex;flex-direction:column;justify-content:center;}
-.start-hero-copy{padding:0 4px 20px;}
-.start-hero-copy h1{margin:0 0 8px;font-size:24px;font-weight:900;line-height:1.5;}
-.start-hero-copy p{margin:0;max-width:345px;font-size:12.5px;line-height:1.8;font-weight:600;opacity:.85;}
 .role-cards { display:grid; gap:12px; }
 .reference-role-card { width:100%; display:flex; align-items:center; gap:13px; padding:15px; text-align:right; color:#fff; background:rgba(255,255,255,.15); border:1px solid rgba(255,255,255,.32); border-radius:18px; font:inherit; backdrop-filter:blur(7px); }
 .reference-role-card:active { transform:scale(.985); }

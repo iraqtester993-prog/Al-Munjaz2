@@ -6,8 +6,8 @@ use App\Models\ActivityLog;
 use App\Models\Branch;
 use App\Models\FinanceRequest;
 use App\Models\Notification;
-use App\Models\Order;
 use App\Models\Scopes\TenantScope;
+use App\Models\Tenant;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Models\Wallet;
@@ -30,7 +30,7 @@ class FinanceRequestService
         $this->ensure($amount >= 1000, 'الحد الأدنى للعملية هو 1,000 د.ع.');
 
         if (in_array($type, [FinanceRequest::CASH_HANDOVER, FinanceRequest::BUDGET_RECHARGE], true)) {
-            $this->ensure($user->role === 'courier', 'هذه العملية متاحة للمندوب فقط.');
+            $this->ensure($user->isCourierRole(), 'هذه العملية متاحة للمندوب فقط.');
         }
 
         if ($type === FinanceRequest::MERCHANT_PAYOUT) {
@@ -85,10 +85,13 @@ class FinanceRequestService
      */
     public function cashOnHand(int $courierId): int
     {
-        $delivered = (int) Order::withoutGlobalScope(TenantScope::class)
-            ->where('courier_id', $courierId)
-            ->where('status', 'delivered')
-            ->sum('price');
+        $courier = User::withoutGlobalScopes()->find($courierId);
+        $delivered = $courier && $courier->isCourierRole()
+            ? (int) app(CourierOrderAccess::class)
+                ->assigned($courier)
+                ->where('status', 'delivered')
+                ->sum('price')
+            : 0;
 
         $handedOver = (int) Transaction::withoutGlobalScope(TenantScope::class)
             ->where('user_id', $courierId)
@@ -207,19 +210,29 @@ class FinanceRequestService
 
     private function approveCashHandover(FinanceRequest $request, User $user, Wallet $wallet, int $amount, ?int $branchId): Transaction
     {
-        $this->ensure($user->role === 'courier', 'تسليم النقدية متاح للمندوب فقط.');
+        $this->ensure($user->isCourierRole(), 'تسليم النقدية متاح للمندوب فقط.');
         $this->ensure($branchId !== null, 'اختر الفرع الذي استلم النقدية.');
         $branch = $this->activeBranch($branchId, true);
         $this->ensure($amount <= $this->cashOnHand($user->id), 'مبلغ التسليم أكبر من النقدية التي يحملها المندوب.');
 
-        $branch->increment('cash_balance', $amount);
+        // Do not mutate the branch balance directly: a physical handover
+        // must create its cashbox voucher in the same transaction as the
+        // immutable wallet ledger entry. CashboxService also synchronises the
+        // legacy branch cash field used by existing dashboard summaries.
+        app(CashboxService::class)->receiveCourierHandover(
+            $branch,
+            $user,
+            $amount,
+            $request->reference,
+            $request->note,
+        );
 
         return $this->ledger($request, $user, FinanceRequest::CASH_HANDOVER, $amount, -1, 'تم استلام النقدية في '.$branch->name_ar);
     }
 
     private function approveBudgetRecharge(FinanceRequest $request, User $user, Wallet $wallet, int $amount): Transaction
     {
-        $this->ensure($user->role === 'courier', 'شحن الميزانية متاح للمندوب فقط.');
+        $this->ensure($user->isCourierRole(), 'شحن الميزانية متاح للمندوب فقط.');
         $this->ensure(
             $amount <= $this->rechargeCapacity($user->id),
             'لا يمكن شحن ميزانية أكبر من النقدية المسلّمة وغير المستخدمة.'
@@ -236,6 +249,7 @@ class FinanceRequestService
         $this->ensure($wallet->balance >= $amount, 'رصيد التاجر لا يغطي مبلغ التسوية.');
 
         $wallet->decrement('balance', $amount);
+        $this->syncLegacyMerchantTenantBalance($user, (int) $wallet->fresh()->balance);
 
         return $this->ledger($request, $user, FinanceRequest::MERCHANT_PAYOUT, $amount, -1, 'تسوية مستحقات التاجر من الإدارة');
     }
@@ -274,6 +288,21 @@ class FinanceRequestService
             ->where('user_id', $userId)
             ->when($lock, fn ($walletQuery) => $walletQuery->lockForUpdate())
             ->firstOrFail();
+    }
+
+    /**
+     * The wallet is authoritative. Keep the historic tenant amount aligned
+     * only while older reports/imports still include that column.
+     */
+    private function syncLegacyMerchantTenantBalance(User $user, int $balance): void
+    {
+        if ($user->role !== 'merchant' || ! $user->tenant_id) {
+            return;
+        }
+
+        Tenant::query()->whereKey($user->tenant_id)->update([
+            'wallet_balance' => max(0, $balance),
+        ]);
     }
 
     private function activeBranch(int $branchId, bool $lock = false): Branch

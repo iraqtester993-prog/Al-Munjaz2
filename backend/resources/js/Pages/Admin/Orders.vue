@@ -19,6 +19,7 @@ const query = ref(props.q)
 const active = ref(props.filter)
 const assignFor = ref(null)
 const assignCourier = ref('')
+const assignmentRole = ref('courier')
 const branchFor = ref(null)
 const originBranch = ref('')
 const destinationBranch = ref('')
@@ -29,8 +30,22 @@ const eligibleCouriers = computed(() => {
     if (!assignFor.value?.province_id) return []
 
     return props.couriers.filter((courier) =>
-        (courier.provinces || []).some((province) => Number(province.id) === Number(assignFor.value.province_id))
+        (courier.assignment_roles || []).includes(assignmentRole.value)
+        && (courier.provinces || []).some((province) => Number(province.id) === Number(assignFor.value.province_id))
     )
+})
+
+const assignmentModes = computed(() => {
+    const order = assignFor.value
+    const modes = [
+        { key: 'courier', label: t('Courier') },
+        { key: 'pickup_courier', label: t('Pickup courier') },
+        { key: 'delivery_courier', label: t('Delivery courier') },
+    ]
+
+    if (!order) return modes
+
+    return modes.filter((mode) => mode.key !== 'courier' || (order.status === 'pending' && !order.courier_id))
 })
 
 const eligibleBranches = computed(() => {
@@ -44,13 +59,13 @@ const eligibleBranches = computed(() => {
 
 const filters = computed(() => {
     const list = [{ key: 'all', label: t('All') }]
-    for (const status of ['pending', 'approved', 'courier', 'delivered', 'returned']) {
+    for (const status of ['pending', 'approved', 'courier', 'delivered', 'returned', 'cancelled', 'damaged', 'rejected', 'late']) {
         list.push({ key: status, label: tStatus(status) })
     }
     return list
 })
 
-const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned']
+const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned', 'cancelled', 'damaged', 'rejected']
 
 function tStatus(status) {
     const labels = {
@@ -61,6 +76,8 @@ function tStatus(status) {
         returned: 'Returned',
         cancelled: 'Cancelled',
         damaged: 'Damaged',
+        rejected: 'Rejected',
+        late: 'Late',
     }
 
     return t(labels[status] || status)
@@ -81,8 +98,11 @@ function tStage(stage) {
         out_for_delivery: 'Out for delivery',
         delivered: 'Delivered',
         returned: 'Returned',
+        return_pending_merchant: 'Return pending merchant confirmation',
+        returned_to_merchant: 'Returned to merchant',
         cancelled: 'Cancelled',
         damaged: 'Damaged',
+        rejected: 'Rejected',
         financially_closed: 'Financially closed',
     }
 
@@ -112,6 +132,7 @@ function setStatus(order, status) {
 
 function openAssign(order) {
     assignFor.value = order
+    assignmentRole.value = order.status === 'pending' && !order.courier_id ? 'courier' : 'pickup_courier'
     assignCourier.value = ''
 }
 
@@ -121,7 +142,7 @@ function doAssign() {
     busyId.value = assignFor.value.id
     router.post(
         route('admin.orders.courier', assignFor.value.id),
-        { courier_id: assignCourier.value },
+        { courier_id: assignCourier.value, assignment_role: assignmentRole.value },
         {
             preserveScroll: true,
             onSuccess: () => (assignFor.value = null),
@@ -201,12 +222,16 @@ function formatDateTime(value) {
 
 function timelineTitle(event) {
     if (event.kind === 'created') return t('Order created')
+    if (event.kind === 'assignment') return `${t('Courier assignment')} — ${courierRoleLabel(event.assignment_role)}`
     if (event.kind === 'movement') return `${t('Branch movement')} — ${tStage(event.stage)}`
     return `${t('Order status changed')} — ${tStatus(event.status)}`
 }
 
 function timelineDescription(event) {
     const details = []
+    if (event.kind === 'assignment' && event.assignee?.name) {
+        details.push(`${event.assignee.name} · ${courierRoleLabel(event.assignee.role || event.assignment_role)}`)
+    }
     if (event.kind === 'movement') {
         const from = event.from_branch?.name
         const to = event.to_branch?.name
@@ -216,6 +241,21 @@ function timelineDescription(event) {
     if (event.note) details.push(event.note)
     if (event.actor?.name) details.push(event.actor.name)
     return details.join(' • ')
+}
+
+function courierRoleLabel(role) {
+    const labels = {
+        courier: 'Courier',
+        pickup_courier: 'Pickup courier',
+        delivery_courier: 'Delivery courier',
+        transporter: 'Transporter',
+    }
+
+    return t(labels[role] || role || 'Not specified')
+}
+
+function isTerminalStatus(status) {
+    return ['delivered', 'returned', 'cancelled', 'damaged', 'rejected'].includes(status)
 }
 
 function provinceName(province) {
@@ -295,8 +335,10 @@ function provinceName(province) {
                                 </td>
                                 <td>
                                     <b v-if="order.courier">{{ order.courier.name }}</b>
+                                    <b v-else-if="order.delivery_courier">{{ order.delivery_courier.name }}</b>
+                                    <b v-else-if="order.pickup_courier">{{ order.pickup_courier.name }}</b>
                                     <span v-else class="text-muted">{{ t('Unassigned') }}</span>
-                                    <small v-if="order.courier?.phone" class="mono">{{ order.courier.phone }}</small>
+                                    <small v-if="(order.courier || order.delivery_courier || order.pickup_courier)?.phone" class="mono">{{ (order.courier || order.delivery_courier || order.pickup_courier).phone }}</small>
                                 </td>
                                 <td><StatusBadge :status="order.status" /></td>
                                 <td class="admin-order-actions-cell" @click.stop>
@@ -311,7 +353,7 @@ function provinceName(province) {
                                         >
                                             <option v-for="status in statusOptions" :key="status" :value="status">{{ tStatus(status) }}</option>
                                         </select>
-                                        <button v-if="order.status === 'pending'" class="fbtn mini" type="button" @click="openAssign(order)">{{ t('Assign') }}</button>
+                                        <button v-if="!isTerminalStatus(order.status)" class="fbtn mini" type="button" @click="openAssign(order)">{{ t('Assign') }}</button>
                                         <button class="fbtn mini" type="button" @click="openBranches(order)">{{ t('Branches') }}</button>
                                     </div>
                                 </td>
@@ -390,7 +432,7 @@ function provinceName(province) {
                     <div v-if="detailsFor.timeline?.length" class="order-timeline">
                         <div v-for="(event, index) in detailsFor.timeline" :key="`${event.kind}-${event.at}-${index}`" class="order-timeline-item">
                             <div class="order-timeline-rail">
-                                <span class="order-timeline-marker" :class="`is-${event.kind}`">{{ event.kind === 'movement' ? '↔' : event.kind === 'created' ? '+' : '✓' }}</span>
+                                <span class="order-timeline-marker" :class="`is-${event.kind}`">{{ event.kind === 'movement' ? '↔' : event.kind === 'assignment' ? '◎' : event.kind === 'created' ? '+' : '✓' }}</span>
                             </div>
                             <div class="order-timeline-copy">
                                 <b>{{ timelineTitle(event) }}</b>
@@ -412,10 +454,17 @@ function provinceName(province) {
 
         <SheetModal :open="!!assignFor" :title="t('Assign Courier')" :subtitle="assignFor?.track_no" @close="assignFor = null">
             <div class="field">
-                <label>{{ t('Courier') }}</label>
+                <label>{{ t('Assignment Role') }}</label>
+                <select v-model="assignmentRole" @change="assignCourier = ''">
+                    <option v-for="mode in assignmentModes" :key="mode.key" :value="mode.key">{{ mode.label }}</option>
+                </select>
+                <p v-if="assignmentRole !== 'courier'" class="assign-help">{{ t('Specialist assignments are scheduled on the order without changing its status or wallet balance.') }}</p>
+            </div>
+            <div class="field">
+                <label>{{ courierRoleLabel(assignmentRole) }}</label>
                 <select v-model="assignCourier">
                     <option value="" disabled>{{ t('Select courier') }}</option>
-                    <option v-for="courier in eligibleCouriers" :key="courier.id" :value="courier.id">{{ courier.name }} — {{ courier.phone }}</option>
+                    <option v-for="courier in eligibleCouriers" :key="courier.id" :value="courier.id">{{ courier.name }} — {{ courierRoleLabel(courier.role) }} — {{ courier.phone }}</option>
                 </select>
                 <p v-if="!assignFor?.province_id" class="field-error">{{ t('Cannot assign before the order governorate is set.') }}</p>
                 <p v-else-if="!eligibleCouriers.length" class="field-error">{{ t('No active courier is available for this order governorate.') }}</p>
@@ -484,12 +533,14 @@ function provinceName(province) {
 .order-timeline-item:not(:last-child) .order-timeline-rail::after { position: absolute; top: 27px; bottom: -4px; width: 1px; background: var(--border); content: ''; }
 .order-timeline-marker { position: relative; z-index: 1; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; color: var(--primary-strong); background: var(--primary-tint); font-size: 12px; font-weight: 900; }
 .order-timeline-marker.is-movement { color: var(--warning); background: var(--warning-tint); }
+.order-timeline-marker.is-assignment { color: var(--primary-strong); background: var(--primary-tint); }
 .order-timeline-marker.is-status { color: var(--success); background: var(--success-tint); }
 .order-timeline-copy { padding: 2px 0 14px; }
 .order-timeline-copy b { display: block; color: var(--ink); font-size: 11.5px; font-weight: 900; line-height: 1.45; }
 .order-timeline-copy p, .order-timeline-copy time { display: block; margin: 3px 0 0; color: var(--ink-faint); font-size: 10.5px; font-weight: 700; line-height: 1.5; }
 .order-detail-note { margin: 0; color: var(--ink-soft); font-size: 11.5px; font-weight: 700; line-height: 1.8; }
 .order-detail-note + .order-detail-note { margin-top: 8px; }
+.assign-help { margin: 6px 0 0; color: var(--ink-faint); font-size: 10px; font-weight: 700; line-height: 1.55; }
 
 @media (max-width: 620px) {
     .order-detail-summary, .order-detail-grid { grid-template-columns: 1fr; }

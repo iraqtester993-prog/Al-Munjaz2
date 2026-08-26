@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\Branch;
+use App\Models\Cashbox;
+use App\Models\CashboxVoucher;
 use App\Models\FinanceRequest;
 use App\Models\Transaction;
 use App\Models\User;
@@ -72,6 +74,20 @@ class FinanceWorkflowTest extends TestCase
             'direction' => -1,
         ]);
         $this->assertSame($startingBranchCash + 1000, (int) $branch->fresh()->cash_balance);
+        $cashbox = Cashbox::withoutGlobalScopes()->where('branch_id', $branch->id)->firstOrFail();
+        $this->assertSame($startingBranchCash + 1000, (int) $cashbox->balance);
+        $this->assertDatabaseHas('cashbox_vouchers', [
+            'cashbox_id' => $cashbox->id,
+            'actor_id' => $courier->id,
+            'type' => 'courier_handover',
+            'direction' => 1,
+            'amount' => 1000,
+            'reference' => $handover->reference,
+        ]);
+        $this->assertSame(1, CashboxVoucher::withoutGlobalScopes()
+            ->where('cashbox_id', $cashbox->id)
+            ->where('type', 'courier_handover')
+            ->count());
 
         $this->actingAs($courier)
             ->post('/app/wallet/recharge', ['amount' => 1000, 'note' => 'شحن من التسليم المعتمد'])

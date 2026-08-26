@@ -64,6 +64,10 @@ function vehicleLabel(order) {
     }[order.delivery_vehicle] || t('Regular Delivery')
 }
 
+function orderTypeLabel(order) {
+    return order?.order_type || t('Not specified')
+}
+
 function localizedOrderValue(order, key) {
     const preferred = locale.value === 'en' ? 'en' : locale.value === 'ku' ? 'ku' : 'ar'
 
@@ -162,9 +166,15 @@ onUnmounted(() => window.clearInterval(ticker))
 
                     <div class="available-summary">
                         <strong class="mono">{{ fmt(order.price) }} <small>{{ t('IQD') }}</small></strong>
-                        <span class="vehicle-badge">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8"/></svg>
-                            {{ vehicleLabel(order) }}
+                        <span class="available-badges">
+                            <span v-if="order.order_type" class="order-type-badge">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13ZM8 9h8M8 12h8M8 15h5"/></svg>
+                                {{ orderTypeLabel(order) }}
+                            </span>
+                            <span class="vehicle-badge">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8"/></svg>
+                                {{ vehicleLabel(order) }}
+                            </span>
                         </span>
                     </div>
 
@@ -185,7 +195,9 @@ onUnmounted(() => window.clearInterval(ticker))
             </article>
         </div>
         <div v-else class="availability-empty">
-            <span>✓</span>
+            <span class="availability-empty-icon" aria-hidden="true">
+                <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12 2.3 2.3 4.8-5"/></svg>
+            </span>
             <b>{{ t('No orders found') }}</b>
             <p>{{ t('Available New Orders') }}</p>
         </div>
@@ -212,7 +224,8 @@ onUnmounted(() => window.clearInterval(ticker))
                 <div class="detail-row"><span class="text-muted">{{ t('Phone') }}</span><b class="mono">{{ selected.phone }}</b></div>
                 <div class="detail-row"><span class="text-muted">{{ t('Address') }}</span><b>{{ customerAddress(selected) }}</b></div>
                 <div class="detail-row"><span class="text-muted">{{ t('Order amount') }}</span><b class="mono">{{ fmt(selected.price) }} {{ t('IQD') }}</b></div>
-                <div class="detail-row"><span class="text-muted">{{ t('Order Type') }}</span><b>{{ vehicleLabel(selected) }}</b></div>
+                <div class="detail-row"><span class="text-muted">{{ t('Order Type') }}</span><b>{{ orderTypeLabel(selected) }}</b></div>
+                <div class="detail-row"><span class="text-muted">{{ t('Delivery Vehicle') }}</span><b>{{ vehicleLabel(selected) }}</b></div>
                 <div v-if="selected.vehicle_note || selected.notes" class="detail-row detail-note"><span class="text-muted">{{ t('Notes') }}</span><b>{{ selected.vehicle_note || selected.notes }}</b></div>
                 <div class="detail-row"><span class="text-muted">{{ t('Available Budget') }}</span><b class="mono">{{ fmt(stats.budget) }} {{ t('IQD') }}</b></div>
                 <div v-if="selected.pickup_deadline_at" class="detail-row"><span class="text-muted">{{ t('Time to reach the merchant') }}</span><b class="mono" :style="{ color: countdownColor(selected) }">{{ remainingText(selected) }}</b></div>
@@ -265,7 +278,7 @@ onUnmounted(() => window.clearInterval(ticker))
 .available-summary { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:11px; }
 .available-summary > strong { color:var(--primary-strong); font-size:17px; font-weight:900; }
 .available-summary > strong small { font-family:var(--font); color:var(--ink-faint); font-size:10px; }
-.vehicle-badge { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid color-mix(in srgb, var(--primary) 26%, var(--border)); border-radius:10px; background:color-mix(in srgb, var(--primary-tint) 78%, var(--surface)); color:var(--primary-strong); font-size:11px; font-weight:800; }
+.available-badges{display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0;flex-wrap:wrap}.vehicle-badge,.order-type-badge { display:inline-flex; align-items:center; gap:6px; max-width:135px; padding:6px 10px; border:1px solid color-mix(in srgb, var(--primary) 26%, var(--border)); border-radius:10px; background:color-mix(in srgb, var(--primary-tint) 78%, var(--surface)); color:var(--primary-strong); font-size:10px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }.order-type-badge{border-color:color-mix(in srgb,var(--accent) 28%,var(--border));background:color-mix(in srgb,var(--accent-tint) 70%,var(--surface));color:var(--accent)}
 .order-note { margin:9px 0 0; padding:6px 8px; border-radius:8px; background:var(--surface-2); color:var(--ink-soft); font-size:10.5px; font-weight:700; line-height:1.45; }
 .order-note b { color:var(--primary-strong); }
 .availability-warning { margin:8px 0 0; color:var(--danger); font-size:10px; font-weight:800; }
@@ -276,7 +289,7 @@ onUnmounted(() => window.clearInterval(ticker))
 .expiry-track { height:4px; overflow:hidden; background:var(--surface-3); }
 .expiry-track i { display:block; height:100%; border-radius:0 2px 2px 0; transition:width 1s linear, background .4s; }
 .availability-empty { padding:34px 16px; border:1px dashed var(--border); border-radius:17px; text-align:center; color:var(--ink-soft); }
-.availability-empty > span { width:53px; height:53px; margin:0 auto 10px; border-radius:50%; background:var(--surface-2); color:var(--success); display:grid; place-items:center; font-size:26px; font-weight:900; }
+.availability-empty > .availability-empty-icon { width:53px; height:53px; margin:0 auto 10px; border-radius:50%; background:var(--surface-2); color:var(--success); display:grid; place-items:center; }
 .availability-empty b, .availability-empty p { display:block; }
 .availability-empty b { font-size:12px; font-weight:900; }
 .availability-empty p { margin:3px 0 0; color:var(--ink-faint); font-size:10.5px; font-weight:700; }

@@ -2,11 +2,14 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Chat;
+use App\Models\FinanceRequest;
 use App\Models\Notification;
 use App\Models\Setting;
-use Inertia\Middleware;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
+use Illuminate\Support\Facades\Storage;
+use Inertia\Middleware;
 
 class HandleInertiaRequests extends Middleware
 {
@@ -33,6 +36,10 @@ class HandleInertiaRequests extends Middleware
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),
                 'error' => fn () => $request->session()->get('error'),
+                // An invitation link is intentionally a one-time flash value:
+                // the server only keeps its hash, so it cannot be recovered
+                // from the database after the administrator leaves the page.
+                'invite_link' => fn () => $request->session()->get('invite_link'),
             ],
             'auth' => [
                 'user' => $request->user() ? [
@@ -70,7 +77,7 @@ class HandleInertiaRequests extends Middleware
             'notificationUnread' => function () use ($request): int {
                 $user = $request->user();
 
-                if (! $user || ! in_array($user->role, ['merchant', 'courier'], true)) {
+                if (! $user || ($user->role !== 'merchant' && ! $user->isCourierRole())) {
                     return 0;
                 }
 
@@ -84,12 +91,28 @@ class HandleInertiaRequests extends Middleware
                     ->whereNull('read_at')
                     ->count();
             },
+            // Dashboard navigation needs real operational badges rather than
+            // static decoration. They are only evaluated for an admin on the
+            // administrative host and never expose another user's messages.
+            'adminBadges' => function () use ($request): array {
+                $user = $request->user();
+
+                if (! $user || ! in_array($user->role, ['admin', 'owner'], true)) {
+                    return [];
+                }
+
+                return [
+                    'finance' => FinanceRequest::withoutGlobalScopes()->where('status', FinanceRequest::PENDING)->count(),
+                    'notifications' => Notification::withoutGlobalScopes()->whereNull('read_at')->count(),
+                    'chat' => Chat::withoutGlobalScopes()->whereNotNull('last_at')->whereNull('admin_read_at')->count(),
+                ];
+            },
             'translations' => app()->bound('translations') ? app('translations') : [],
             'branding' => [
                 'name' => $storedBranding['name'],
                 'tagline' => $storedBranding['tagline'],
                 'logo_url' => is_string($logoPath) && $logoPath !== ''
-                    ? \Illuminate\Support\Facades\Storage::disk('public')->url($logoPath)
+                    ? Storage::disk('public')->url($logoPath)
                     : asset('logo.png'),
                 'has_custom_logo' => is_string($logoPath) && $logoPath !== '',
             ],

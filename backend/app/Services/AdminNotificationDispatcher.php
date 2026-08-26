@@ -34,6 +34,19 @@ class AdminNotificationDispatcher
      */
     public function dispatch(User $actor, array $payload): NotificationCampaign
     {
+        // FormRequest::validated() omits nullable fields that were not sent.
+        // Normalize them once so direct callers and future API clients can send
+        // a localized Arabic-only campaign without triggering an undefined-key
+        // error while the campaign records are being created.
+        $payload += [
+            'target_user_id' => null,
+            'title_en' => null,
+            'title_ku' => null,
+            'body_ar' => null,
+            'body_en' => null,
+            'body_ku' => null,
+        ];
+
         return DB::transaction(function () use ($actor, $payload): NotificationCampaign {
             $recipients = $this->recipientsFor($payload)->get(['id', 'tenant_id']);
 
@@ -106,13 +119,16 @@ class AdminNotificationDispatcher
     private function recipientsFor(array $payload): Builder
     {
         $query = User::query()
-            ->whereIn('role', ['merchant', 'courier'])
+            ->whereIn('role', User::NOTIFICATION_RECIPIENT_ROLES)
             ->where('status', 'active')
             ->orderBy('id');
 
         return match ($payload['audience']) {
             'merchants' => $query->where('role', 'merchant'),
-            'couriers' => $query->where('role', 'courier'),
+            'couriers' => $query->whereIn('role', User::COURIER_ROLES),
+            'pickup_couriers' => $query->where('role', 'pickup_courier'),
+            'delivery_couriers' => $query->where('role', 'delivery_courier'),
+            'transporters' => $query->where('role', 'transporter'),
             'user' => $query->whereKey($payload['target_user_id']),
             default => $query,
         };

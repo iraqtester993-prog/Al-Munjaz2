@@ -8,7 +8,15 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class NotificationCampaign extends Model
 {
-    public const AUDIENCES = ['all', 'merchants', 'couriers', 'user'];
+    public const AUDIENCES = [
+        'all',
+        'merchants',
+        'couriers',
+        'pickup_couriers',
+        'delivery_couriers',
+        'transporters',
+        'user',
+    ];
 
     protected $fillable = [
         'created_by',

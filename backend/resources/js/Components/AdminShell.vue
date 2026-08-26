@@ -9,6 +9,7 @@ const props = defineProps({ title: { type: String, default: '' } })
 const page = usePage()
 const isMenuOpen = ref(false)
 const user = computed(() => page.props.auth?.user)
+const adminBadges = computed(() => page.props.adminBadges || {})
 // The reference dashboard opens in the navy/cyan operating view.  Keep a
 // per-browser preference so the user's explicit light-mode choice survives
 // navigation, while first-time dashboard sessions always start in dark mode.
@@ -47,6 +48,12 @@ const localeNames = {
 const fallbackLabels = {
     'Branches': { ar: 'الفروع', en: 'Branches', ku: 'لقەکان' },
     'Branches and Funds': { ar: 'الفروع والصناديق', en: 'Branches and funds', ku: 'لقەکان و سندوقەکان' },
+    'Transfers': { ar: 'تحويلات الفروع', en: 'Branch transfers', ku: 'گواستنەوەی لقەکان' },
+    'Cashboxes': { ar: 'الصناديق', en: 'Cashboxes', ku: 'سندووقەکان' },
+    'Pricing': { ar: 'الباقات والتسعير', en: 'Pricing', ku: 'نرخدانان' },
+    'Reports': { ar: 'التقارير والتحليلات', en: 'Reports & analytics', ku: 'ڕاپۆرت و شیکاری' },
+    'Operational Team': { ar: 'الفريق والصلاحيات', en: 'Operational team', ku: 'تیمی کارپێکردن' },
+    'Platform Control': { ar: 'إدارة المنصة', en: 'Platform control', ku: 'بەڕێوەبردنی پلاتفۆرم' },
 }
 
 const availableLocales = computed(() => (page.props.locales?.length ? page.props.locales : ['ar', 'en', 'ku']))
@@ -56,13 +63,18 @@ const pageTitle = computed(() => {
 })
 const nav = computed(() => [
     { label: t('Dashboard'), icon: 'grid', route: 'admin.dashboard' },
+    { label: localized('Platform Control'), icon: 'building', route: 'admin.platform' },
     { label: t('Orders'), icon: 'box', route: 'admin.orders' },
     { label: localized('Branches and Funds'), icon: 'building', route: 'admin.branches' },
+    { label: localized('Transfers'), icon: 'transfer', route: 'admin.transfers' },
     { label: t('Merchants'), icon: 'shop', route: 'admin.merchants' },
-    { label: t('Couriers'), icon: 'bike', route: 'admin.couriers' },
-    { label: t('Finance'), icon: 'card', route: 'admin.finance' },
-    { label: t('Chat'), icon: 'chat', route: 'admin.chat' },
-    { label: t('Notifications'), icon: 'bell', route: 'admin.notifications' },
+    { label: localized('Operational Team'), icon: 'users', route: 'admin.couriers' },
+    { label: t('Finance'), icon: 'card', route: 'admin.finance', badge: adminBadges.value.finance },
+    { label: localized('Cashboxes'), icon: 'cashbox', route: 'admin.cashboxes' },
+    { label: localized('Pricing'), icon: 'tag', route: 'admin.pricing' },
+    { label: localized('Reports'), icon: 'chart', route: 'admin.reports' },
+    { label: t('Chat'), icon: 'chat', route: 'admin.chat', badge: adminBadges.value.chat },
+    { label: t('Notifications'), icon: 'bell', route: 'admin.notifications', badge: adminBadges.value.notifications },
     { label: t('Settings'), icon: 'settings', route: 'admin.settings' },
 ].map((item) => ({ ...item, url: route(item.route) })))
 
@@ -144,6 +156,11 @@ function icon(name) {
         building: 'M4 21V4a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v17M8 7h.01M12 7h.01M16 7h.01M8 11h.01M12 11h.01M16 11h.01M10 21v-5h4v5',
         shop: 'M4 10v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V10M2 7l1-3h18l1 3a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0Z',
         bike: 'M5 18a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm14-8a4 4 0 1 1 0 8 4 4 0 0 1 0-8ZM5 10h14m-7 0-2-4h5',
+        users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m14-11a4 4 0 1 0 0-8m-6 4a4 4 0 1 0 0-8',
+        transfer: 'M7 7h12m0 0-3-3m3 3-3 3M17 17H5m0 0 3 3m-3-3 3-3',
+        cashbox: 'M3 7h18v12H3zM7 7V4h10v3m-9 5h.01M12 12h.01M16 12h.01M8 16h8',
+        tag: 'M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3.4 13.4A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.6ZM8 8h.01',
+        chart: 'M4 20V10m6 10V4m6 16v-7m6 7V7',
         card: 'M3 6h18v12H3zM3 10h18M7 15h4',
         chat: 'M21 12a8 8 0 0 1-8 8H4l1.5-3.5A8 8 0 1 1 21 12Z',
         bell: 'M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6Zm5 11a2 2 0 0 0 4 0',
@@ -205,6 +222,7 @@ onMounted(() => {
                         <path :d="icon(item.icon)" />
                     </svg>
                     <span>{{ item.label }}</span>
+                    <b v-if="item.badge" class="dashboard-nav-badge">{{ item.badge > 99 ? '99+' : item.badge }}</b>
                 </button>
             </nav>
 
@@ -461,6 +479,19 @@ onMounted(() => {
 .dashboard-nav-item.active {
     color: var(--primary);
     background: linear-gradient(90deg, rgba(34, 211, 238, .16), rgba(34, 211, 238, .04));
+}
+
+.dashboard-nav-badge {
+    min-width: 19px;
+    margin-inline-start: auto;
+    padding: 2px 5px;
+    border-radius: 999px;
+    color: #fff;
+    background: var(--danger);
+    font-size: 9px;
+    font-weight: 900;
+    line-height: 1.2;
+    text-align: center;
 }
 
 [dir="ltr"] .dashboard-nav-item.active {

@@ -26,7 +26,10 @@ const form = useForm({
 
 const recipientEstimate = computed(() => {
     if (form.audience === 'merchants') return props.recipients.filter((recipient) => recipient.role === 'merchant').length
-    if (form.audience === 'couriers') return props.recipients.filter((recipient) => recipient.role === 'courier').length
+    if (form.audience === 'couriers') return props.recipients.filter((recipient) => ['courier', 'pickup_courier', 'delivery_courier', 'transporter'].includes(recipient.role)).length
+    if (form.audience === 'pickup_couriers') return props.recipients.filter((recipient) => recipient.role === 'pickup_courier').length
+    if (form.audience === 'delivery_couriers') return props.recipients.filter((recipient) => recipient.role === 'delivery_courier').length
+    if (form.audience === 'transporters') return props.recipients.filter((recipient) => recipient.role === 'transporter').length
     if (form.audience === 'user') return form.target_user_id ? 1 : 0
     return props.recipients.length
 })
@@ -34,7 +37,10 @@ const recipientEstimate = computed(() => {
 const audienceOptions = computed(() => [
     { value: 'all', label: t('All active merchants and couriers') },
     { value: 'merchants', label: t('All Merchants') },
-    { value: 'couriers', label: t('All Couriers') },
+    { value: 'couriers', label: t('All Operational Couriers') },
+    { value: 'pickup_couriers', label: t('Pickup Couriers') },
+    { value: 'delivery_couriers', label: t('Delivery Couriers') },
+    { value: 'transporters', label: t('Transporters') },
     { value: 'user', label: t('Specific Account') },
 ])
 
@@ -52,18 +58,33 @@ function setAudience(value) {
 }
 
 function recipientLabel(recipient) {
-    return `${recipient.name} · ${t(recipient.role === 'merchant' ? 'Merchant' : 'Courier')} · ${recipient.phone || '—'}`
+    return `${recipient.name} · ${roleLabel(recipient.role)} · ${recipient.phone || '—'}`
 }
 
 function audienceLabel(campaign) {
     const labels = {
         all: t('All Users'),
         merchants: t('Merchants'),
-        couriers: t('Couriers'),
+        couriers: t('All Operational Couriers'),
+        pickup_couriers: t('Pickup Couriers'),
+        delivery_couriers: t('Delivery Couriers'),
+        transporters: t('Transporters'),
         user: campaign.target_user?.name || t('One Account'),
     }
 
     return labels[campaign.audience] || campaign.audience
+}
+
+function roleLabel(role) {
+    const labels = {
+        merchant: 'Merchant',
+        courier: 'Courier',
+        pickup_courier: 'Pickup courier',
+        delivery_courier: 'Delivery courier',
+        transporter: 'Transporter',
+    }
+
+    return t(labels[role] || role)
 }
 
 function typeLabel(type) {
@@ -207,7 +228,7 @@ function submit() {
                         <div v-for="delivery in deliveries" :key="delivery.id" class="delivery-row">
                             <span class="delivery-state" :class="{ read: delivery.read }" :title="delivery.read ? t('Read') : t('Not read')" />
                             <div><b>{{ delivery.recipient?.name || t('Unknown User') }}</b><span>{{ delivery.title }} · {{ delivery.created_at }}</span></div>
-                            <small>{{ delivery.recipient?.role === 'merchant' ? t('Merchant') : t('Courier') }}</small>
+                            <small>{{ roleLabel(delivery.recipient?.role) }}</small>
                         </div>
                         <div v-if="!deliveries.length" class="empty-state">{{ t('No delivery records yet.') }}</div>
                     </div>

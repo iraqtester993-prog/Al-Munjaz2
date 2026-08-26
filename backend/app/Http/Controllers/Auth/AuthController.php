@@ -48,7 +48,11 @@ class AuthController extends Controller
             return back()->withErrors(['username' => __('auth.failed')]);
         }
 
-        if ($user->role !== $credentials['role']) {
+        $roleMatches = $credentials['role'] === 'courier'
+            ? $user->isCourierRole()
+            : $user->role === $credentials['role'];
+
+        if (! $roleMatches) {
             return back()->withErrors(['username' => __('auth.role_mismatch')]);
         }
 
@@ -319,7 +323,7 @@ class AuthController extends Controller
     {
         return match ($user->role) {
             'admin' => '/dashboard',
-            'merchant', 'courier' => '/app',
+            'merchant', 'courier', 'pickup_courier', 'delivery_courier', 'transporter' => '/app',
             default => '/login',
         };
     }

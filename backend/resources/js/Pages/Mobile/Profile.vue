@@ -15,7 +15,7 @@ const props = defineProps({
 const page = usePage()
 const user = computed(() => page.props.auth?.user || {})
 const locale = computed(() => page.props.locale || 'ar')
-const isCourier = computed(() => user.value.role === 'courier')
+const isCourier = computed(() => ['courier', 'pickup_courier', 'delivery_courier', 'transporter'].includes(user.value.role))
 const showEdit = ref(false)
 const showDocuments = ref(false)
 const showVerification = ref(false)

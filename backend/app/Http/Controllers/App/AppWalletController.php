@@ -19,7 +19,7 @@ class AppWalletController extends Controller
     {
         $user = $request->user();
         $wallet = $user->wallet ?: Wallet::create(['user_id' => $user->id, 'balance' => 0, 'budget' => 0]);
-        $isCourier = $user->role === 'courier';
+        $isCourier = $user->isCourierRole();
 
         $ledger = Transaction::query()
             ->where('user_id', $user->id)
@@ -85,7 +85,7 @@ class AppWalletController extends Controller
             'branches' => $branches,
             'summary' => $isCourier
                 ? $this->courierSummary($user, $finance)
-                : $this->merchantSummary($ledger),
+                : $this->merchantSummary($ledger, $wallet),
         ]);
     }
 
@@ -94,15 +94,9 @@ class AppWalletController extends Controller
      * A payout leaves the merchant wallet only after administration approves
      * it, rather than when the browser submits a form.
      */
-    private function merchantSummary($ledger): array
+    private function merchantSummary($ledger, Wallet $wallet): array
     {
         $orders = Order::query();
-        $legacySettlements = (clone $ledger)
-            ->where('type', 'settlement')
-            ->where('direction', 1);
-        $payouts = (clone $ledger)
-            ->where('type', FinanceRequest::MERCHANT_PAYOUT)
-            ->where('direction', -1);
         $lastSettlement = (clone $ledger)
             ->where(function ($query) {
                 $query
@@ -115,14 +109,11 @@ class AppWalletController extends Controller
             })
             ->first();
 
-        $deliveredValue = (int) (clone $orders)
-            ->where('status', 'delivered')
-            ->sum('price');
-        $settledValue = (int) (clone $legacySettlements)->sum('amount')
-            + (int) (clone $payouts)->sum('amount');
-
         return [
-            'undisbursed_due' => max(0, $deliveredValue - $settledValue),
+            // The workflow posts every delivered order to this locked wallet
+            // and finance approvals debit the same record.  It is therefore
+            // the single amount a merchant can safely request for payout.
+            'undisbursed_due' => max(0, (int) $wallet->balance),
             'delivered_orders' => (int) (clone $orders)->where('status', 'delivered')->count(),
             'last_settlement' => $lastSettlement ? [
                 'amount' => (int) $lastSettlement->amount,
@@ -177,7 +168,7 @@ class AppWalletController extends Controller
     public function handover(Request $request, FinanceRequestService $finance)
     {
         $user = $request->user();
-        abort_unless($user->role === 'courier', 403);
+        abort_unless($user->isCourierRole(), 403);
 
         $data = $request->validate([
             'amount' => ['required', 'integer', 'min:1000'],
@@ -199,7 +190,7 @@ class AppWalletController extends Controller
     public function recharge(Request $request, FinanceRequestService $finance)
     {
         $user = $request->user();
-        abort_unless($user->role === 'courier', 403);
+        abort_unless($user->isCourierRole(), 403);
 
         $data = $request->validate([
             'amount' => ['required', 'integer', 'min:1000'],
