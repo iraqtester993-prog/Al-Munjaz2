@@ -56,7 +56,15 @@ const courierStatusCards = computed(() => [
 ])
 
 function tStatus(s) {
-    const m = { pending: t('Pending'), approved: t('Approved'), courier: t('With Courier'), delivered: t('Delivered'), returned: t('Returned') }
+    const m = {
+        pending: t('Pending'),
+        approved: t('Approved'),
+        courier: t('With Courier'),
+        delivered: t('Delivered'),
+        returned: t('Returned'),
+        cancelled: t('Cancelled'),
+        damaged: t('Damaged'),
+    }
     return m[s] || s
 }
 
@@ -140,7 +148,11 @@ function openEdit() {
     showForm.value = true
 }
 
-function openComplaint(order) {
+function openSupport() {
+    router.post(route('app.chats.open'), {}, { preserveScroll: true })
+}
+
+function openOrderChat(order) {
     router.post(route('app.chats.open'), { order_id: order.id }, { preserveScroll: true })
 }
 
@@ -187,23 +199,76 @@ function pickupText(order) {
     return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')} ${t('Minutes abbreviation')}`
 }
 
-const STATUS_FLOW = ['pending', 'approved', 'courier', 'delivered']
+function tStage(stage) {
+    const labels = {
+        created: 'Created',
+        awaiting_pickup: 'Awaiting pickup',
+        pickup_assigned: 'Pickup assigned',
+        picked_up: 'Picked up',
+        at_origin_branch: 'At origin branch',
+        sorting: 'Sorting',
+        awaiting_transfer: 'Awaiting transfer',
+        in_transfer: 'In transfer',
+        at_destination_branch: 'At destination branch',
+        delivery_assigned: 'Delivery assigned',
+        out_for_delivery: 'Out for delivery',
+        delivered: 'Delivered',
+        returned: 'Returned',
+        cancelled: 'Cancelled',
+        damaged: 'Damaged',
+        financially_closed: 'Financially closed',
+    }
 
-function flowIndex(status) {
-    const i = STATUS_FLOW.indexOf(status)
-    return i >= 0 ? i : (status === 'returned' ? 0 : 0)
+    return t(labels[stage] || stage || 'Not specified')
 }
 
-const steps = computed(() => {
-    if (!selected.value) return []
-    const cur = flowIndex(selected.value.status)
-    return STATUS_FLOW.map((s, i) => ({
-        key: s,
-        label: tStatus(s),
-        done: selected.value.status === 'delivered' ? i < cur + 1 : i < cur,
-        current: i === cur && selected.value.status !== 'returned',
-    }))
-})
+function branchName(branch) {
+    if (!branch) return t('Not specified')
+
+    const language = locale.value === 'en' ? 'en' : locale.value === 'ku' ? 'ku' : 'ar'
+    return branch[`name_${language}`] || branch.name_ar || branch.name || t('Not specified')
+}
+
+function routeText(order) {
+    const origin = order?.origin_branch ? branchName(order.origin_branch) : ''
+    const destination = order?.destination_branch ? branchName(order.destination_branch) : ''
+
+    if (origin && destination && origin !== destination) return `${origin} → ${destination}`
+    return origin || destination || t('Not specified')
+}
+
+function formatDateTime(value) {
+    if (!value) return '—'
+
+    try {
+        const language = { ar: 'ar-IQ', en: 'en-US', ku: 'ku-IQ' }[locale.value] || 'ar-IQ'
+        return new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+    } catch {
+        return value
+    }
+}
+
+function timelineTitle(event) {
+    if (event.kind === 'created') return t('Order created')
+    if (event.kind === 'movement') return `${t('Branch movement')} — ${tStage(event.stage)}`
+    return `${t('Order status changed')} — ${tStatus(event.status)}`
+}
+
+function timelineDescription(event) {
+    const details = []
+
+    if (event.kind === 'movement') {
+        const from = event.from_branch ? branchName(event.from_branch) : ''
+        const to = event.to_branch ? branchName(event.to_branch) : ''
+        if (from && to && from !== to) details.push(`${from} → ${to}`)
+        else if (from || to) details.push(from || to)
+    }
+
+    if (event.note) details.push(event.note)
+    if (event.actor?.name) details.push(event.actor.name)
+
+    return details.join(' • ')
+}
 
 onMounted(() => {
     ticker = window.setInterval(() => { now.value = Date.now() }, 1000)
@@ -316,13 +381,38 @@ onUnmounted(() => window.clearInterval(ticker))
                     <b>{{ selected.courier.name }}</b>
                 </div>
 
-                <div v-if="selected.status !== 'returned'" class="sheet-route" style="margin: 14px 0">
-                    <div v-for="s in steps" :key="s.key" class="sheet-step" :class="{ done: s.done, current: s.current }">
-                        <span class="sheet-line"></span>
-                        <span class="sheet-node">{{ s.done ? '✓' : '' }}</span>
-                        <span class="sheet-label">{{ s.label }}</span>
+                <section class="mobile-operational-section">
+                    <h4>{{ t('Operational Details') }}</h4>
+                    <div class="detail-row">
+                        <span class="text-muted">{{ t('Workflow stage') }}</span>
+                        <b>{{ tStage(selected.workflow_stage) }}</b>
                     </div>
-                </div>
+                    <div v-if="selected.origin_branch || selected.destination_branch" class="mobile-branch-route">
+                        <span class="mobile-route-label">{{ t('Branch Route') }}</span>
+                        <b>{{ routeText(selected) }}</b>
+                        <small v-if="selected.origin_branch">{{ t('Origin / pickup branch') }}: {{ branchName(selected.origin_branch) }}</small>
+                        <small v-if="selected.destination_branch">{{ t('Destination / delivery branch') }}: {{ branchName(selected.destination_branch) }}</small>
+                    </div>
+                </section>
+
+                <section class="mobile-operational-section">
+                    <h4>{{ t('Operational Timeline') }}</h4>
+                    <div v-if="selected.timeline?.length" class="mobile-order-timeline">
+                        <div v-for="(event, index) in selected.timeline" :key="`${event.kind}-${event.at}-${index}`" class="mobile-timeline-event">
+                            <div class="mobile-timeline-rail">
+                                <span class="mobile-timeline-marker" :class="`is-${event.kind}`">
+                                    {{ event.kind === 'movement' ? '↔' : event.kind === 'created' ? '+' : '✓' }}
+                                </span>
+                            </div>
+                            <div class="mobile-timeline-copy">
+                                <b>{{ timelineTitle(event) }}</b>
+                                <p v-if="timelineDescription(event)">{{ timelineDescription(event) }}</p>
+                                <time>{{ formatDateTime(event.at) }}</time>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="empty-hint">{{ t('No operational activity yet.') }}</div>
+                </section>
 
                 <div v-if="actionsFor(selected).length" class="deliv-actions" style="margin-top: 6px">
                     <button v-for="a in actionsFor(selected)" :key="a.next" class="mini-btn" :class="a.kind" :disabled="busy === selected.id" @click="setStatus(selected, a.next)">
@@ -331,7 +421,11 @@ onUnmounted(() => window.clearInterval(ticker))
                     </button>
                 </div>
 
-                <button v-if="['approved', 'courier'].includes(selected.status)" class="order-complaint" type="button" @click="openComplaint(selected)">
+                <button v-if="selected.courier" class="order-complaint order-chat" type="button" @click="openOrderChat(selected)">
+                    {{ isCourier ? t('Chat with merchant') : t('Chat with courier') }}
+                </button>
+
+                <button v-if="['approved', 'courier'].includes(selected.status)" class="order-complaint" type="button" @click="openSupport">
                     {{ t('Contact Support') }}
                 </button>
 
@@ -347,5 +441,7 @@ onUnmounted(() => window.clearInterval(ticker))
 .merchant-status-grid{display:grid;gap:10px}.merchant-status-card{display:flex;align-items:center;gap:13px;min-height:76px;padding:14px 15px;border:1.5px solid var(--border);border-radius:16px;background:var(--surface);color:var(--ink);font:inherit;text-align:right;cursor:pointer;transition:transform .15s}.merchant-status-card:active{transform:scale(.985)}.merchant-status-icon{width:45px;height:45px;display:grid;place-items:center;flex:none;border-radius:13px;background:rgba(255,255,255,.82);font-size:21px;font-weight:900;box-shadow:0 2px 8px rgba(11,110,104,.11)}.merchant-status-copy{display:flex;align-items:center;justify-content:space-between;flex:1;gap:12px}.merchant-status-copy b{font-size:12px;font-weight:900}.merchant-status-copy strong{font-size:24px;font-weight:900;line-height:1}.merchant-status-card>svg{opacity:.58;flex:none}.merchant-status-card.all{border-color:rgba(11,110,104,.25);background:linear-gradient(135deg,#E2F6F4,#C5ECE8);color:#0B6E68}.merchant-status-card.pending{border-color:rgba(217,119,6,.28);background:linear-gradient(135deg,#FFF3E0,#FFE1B3);color:#B45309}.merchant-status-card.approved{border-color:rgba(14,165,233,.28);background:linear-gradient(135deg,#E1F4FF,#C3E9FF);color:#0369A1}.merchant-status-card.courier{border-color:rgba(37,99,235,.28);background:linear-gradient(135deg,#E5EDFF,#CCDCFF);color:#1D4ED8}.merchant-status-card.delivered{border-color:rgba(22,163,74,.28);background:linear-gradient(135deg,#E3F8E9,#C4EFD2);color:#15803D}.merchant-status-card.returned{border-color:rgba(220,38,38,.28);background:linear-gradient(135deg,#FFE9EA,#FFD2D5);color:#B91C1C}.orders-list-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}.orders-back{display:grid;place-items:center;width:36px;height:36px;border:0;border-radius:10px;background:var(--surface-2);color:var(--ink);cursor:pointer}.orders-list-head>b{flex:1;font-size:14px;font-weight:900}.orders-list-head>span{padding:3px 10px;border-radius:20px;background:var(--surface-2);color:var(--ink-soft);font-size:11px;font-weight:800}
 .mobile-order-stack{display:grid;gap:10px}.mobile-order-card{overflow:hidden;border:1.5px solid color-mix(in srgb,var(--primary) 35%,var(--border));border-radius:16px;background:linear-gradient(145deg,color-mix(in srgb,var(--primary-tint) 75%,var(--surface)),var(--surface));box-shadow:0 4px 13px rgba(11,110,104,.08);cursor:pointer}.mobile-order-head{display:flex;align-items:center;gap:10px;padding:12px 13px 8px}.mobile-order-head .order-mid{flex:1}.mobile-order-head .order-mid b{font-size:13px}.mobile-order-head :deep(.badge){flex:none}.mobile-order-summary{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 13px 10px}.mobile-order-summary strong{color:var(--primary-strong);font-size:16px;font-weight:900}.mobile-order-summary small{color:var(--ink-faint);font-family:var(--font);font-size:10px}.mobile-vehicle-badge{padding:5px 9px;border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border));border-radius:9px;background:color-mix(in srgb,var(--primary-tint) 75%,var(--surface));color:var(--primary-strong);font-size:10px;font-weight:800}.mobile-order-note{margin:0 13px 10px;padding:6px 8px;border-radius:8px;background:var(--surface-2);color:var(--ink-soft);font-size:10px;font-weight:700}.mobile-order-note b{color:var(--primary-strong)}.mobile-order-timer{display:flex;align-items:center;gap:5px;padding:8px 12px;border-top:1px solid var(--border);background:var(--surface-2);color:var(--success);font-size:10px;font-weight:900}.mobile-order-timer i{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 7px color-mix(in srgb,var(--success) 70%,transparent)}
 .order-complaint{display:flex;align-items:center;justify-content:center;width:100%;margin-top:10px;padding:9px 12px;border:1px solid color-mix(in srgb,var(--danger) 24%,transparent);border-radius:10px;background:color-mix(in srgb,var(--danger-tint) 82%,transparent);color:var(--danger);font:inherit;font-size:11px;font-weight:900;cursor:pointer}
+.order-chat{border-color:color-mix(in srgb,var(--primary) 28%,transparent);background:var(--primary-tint);color:var(--primary-strong)}
 .courier-orders-overview .merchant-status-grid{gap:10px}
+.mobile-operational-section{margin:15px 0}.mobile-operational-section h4{margin:0 0 9px;color:var(--ink);font-size:12px;font-weight:900}.mobile-branch-route{display:grid;gap:5px;margin-top:9px;padding:11px 12px;border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border));border-radius:12px;background:color-mix(in srgb,var(--primary-tint) 62%,var(--surface));color:var(--primary-strong)}.mobile-route-label{font-size:10px;font-weight:900;color:var(--ink-soft)}.mobile-branch-route>b{font-size:12px}.mobile-branch-route small{color:var(--ink-soft);font-size:10px;font-weight:700}.mobile-order-timeline{display:grid;gap:0}.mobile-timeline-event{display:grid;grid-template-columns:28px 1fr;gap:9px;min-height:57px}.mobile-timeline-rail{position:relative;display:flex;justify-content:center}.mobile-timeline-rail::after{position:absolute;top:24px;bottom:-3px;width:1px;background:var(--border);content:""}.mobile-timeline-event:last-child .mobile-timeline-rail::after{display:none}.mobile-timeline-marker{position:relative;z-index:1;display:grid;place-items:center;width:23px;height:23px;border:1px solid var(--border);border-radius:50%;background:var(--surface);color:var(--ink-soft);font-size:11px;font-weight:900}.mobile-timeline-marker.is-created{border-color:color-mix(in srgb,var(--primary) 40%,var(--border));background:var(--primary-tint);color:var(--primary-strong)}.mobile-timeline-marker.is-status{border-color:color-mix(in srgb,var(--success) 44%,var(--border));background:var(--success-tint);color:var(--success)}.mobile-timeline-marker.is-movement{border-color:color-mix(in srgb,var(--accent) 42%,var(--border));background:var(--accent-tint);color:var(--accent)}.mobile-timeline-copy{display:grid;gap:2px;padding:1px 0 14px}.mobile-timeline-copy>b{font-size:11px;color:var(--ink)}.mobile-timeline-copy p{margin:0;color:var(--ink-soft);font-size:10px;line-height:1.55}.mobile-timeline-copy time{color:var(--ink-faint);font-size:9px}
 </style>

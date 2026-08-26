@@ -65,14 +65,15 @@
 }
 
 *{box-sizing:border-box; margin:0; padding:0;}
+html{min-height:100%; background:var(--bg); overscroll-behavior:none;}
 html,body{height:100%;}
 body{
-  font-family:var(--font); background:var(--surface-3); color:var(--ink);
-  font-size:14.5px; line-height:1.6; -webkit-font-smoothing:antialiased;
+  min-height:100dvh; font-family:var(--font); background:var(--bg); color:var(--ink);
+  font-size:14.5px; line-height:1.6; -webkit-font-smoothing:antialiased; overscroll-behavior:none;
 }
-button{font-family:inherit; cursor:pointer; border:none; background:none; color:inherit;}
+button{font-family:inherit; cursor:pointer; border:none; background:none; color:inherit; -webkit-tap-highlight-color:transparent; touch-action:manipulation;}
 input,textarea,select{font-family:inherit;}
-a{color:inherit; text-decoration:none;}
+a{color:inherit; text-decoration:none; -webkit-tap-highlight-color:transparent; touch-action:manipulation;}
 ul{list-style:none;}
 svg{display:block; flex-shrink:0;}
 .mono{font-family:Consolas, 'Cascadia Mono', monospace; direction:ltr; font-variant-numeric:tabular-nums;}
@@ -105,20 +106,17 @@ svg{display:block; flex-shrink:0;}
    MOBILE APP (Merchant / Courier)
    ============================================================ */
 .app-stage{
-  height:100dvh; min-height:100dvh; display:flex; align-items:center; justify-content:center;
-  overflow:hidden; background:var(--surface-3);
+  width:100%; height:100dvh; min-height:100svh; display:flex; align-items:stretch; justify-content:center;
+  overflow:hidden; background:var(--bg);
 }
 .app-shell{
-  width:100%; max-width:460px; height:100%; min-height:0; position:relative;
+  width:100%; max-width:none; height:100%; min-height:0; position:relative;
   background:var(--bg); display:flex; flex-direction:column; overflow:hidden;
-}
-@media(min-width:480px){
-  .app-shell{max-height:min(94vh, 880px); min-height:0; height:94vh; border-radius:26px; box-shadow:0 30px 60px -20px rgba(15,27,26,.35); border:1px solid var(--border);}
 }
 
 /* Top bar */
 .app-topbar{
-  display:flex; align-items:center; gap:10px; padding:14px 16px 12px;
+  display:flex; align-items:center; gap:10px; padding:calc(14px + env(safe-area-inset-top, 0px)) 16px 12px;
   border-bottom:1px solid var(--border); background:var(--surface); flex:none;
   position:relative; z-index:30;
 }
@@ -131,6 +129,7 @@ svg{display:block; flex-shrink:0;}
 
 .app-content{flex:1; min-height:0; overflow-y:auto; padding:16px 16px calc(90px + env(safe-area-inset-bottom, 0px)); -webkit-overflow-scrolling:touch;}
 .app-content.without-tabs{padding-bottom:16px;}
+.app-content.chat-thread-content{display:flex;flex-direction:column;padding:0;overflow:hidden;}
 .app-content::-webkit-scrollbar{display:none;}
 
 /* Bottom tabs */

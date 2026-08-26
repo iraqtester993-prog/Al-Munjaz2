@@ -3,13 +3,21 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Tenant extends Model
 {
     use SoftDeletes;
+
+    /**
+     * The platform tenant owns the operational branch network configured by
+     * administrators. It is deliberately separate from every merchant's
+     * tenant: a network branch can serve many merchants without making their
+     * private tenant data visible to one another.
+     */
+    public const PLATFORM_SLUG = 'almunjaz-system';
 
     protected $fillable = [
         'plan_id', 'slug', 'name', 'kind', 'status',
@@ -41,5 +49,27 @@ class Tenant extends Model
 
         return $this->status === 'trial'
             && ($this->trial_ends_at === null || $this->trial_ends_at->isFuture());
+    }
+
+    public static function platform(): self
+    {
+        $tenant = static::withTrashed()
+            ->where('slug', self::PLATFORM_SLUG)
+            ->first();
+
+        if ($tenant) {
+            if ($tenant->trashed()) {
+                $tenant->restore();
+            }
+
+            return $tenant;
+        }
+
+        return static::create([
+            'slug' => self::PLATFORM_SLUG,
+            'name' => 'المنجز السريع',
+            'kind' => 'company',
+            'status' => 'active',
+        ]);
     }
 }

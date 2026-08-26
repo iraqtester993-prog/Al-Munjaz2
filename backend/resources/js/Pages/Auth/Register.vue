@@ -345,7 +345,7 @@ function icon(name) {
 </template>
 
 <style scoped>
-.register-reference { min-height:100vh; max-width:460px; margin:0 auto; color:#fff; background:linear-gradient(175deg, var(--primary-strong), var(--primary) 59%, var(--accent)); overflow-y:auto; }
+.register-reference { min-height:100dvh; width:100%; color:#fff; background:linear-gradient(175deg, var(--primary-strong), var(--primary) 59%, var(--accent)); overflow-y:auto; }
 .reg-header { display:grid; grid-template-columns:38px 1fr 38px; align-items:center; padding:16px 18px 6px; }
 .reg-back { width:34px; height:34px; display:grid; place-items:center; color:#fff; border:1px solid rgba(255,255,255,.28); border-radius:10px; background:rgba(255,255,255,.14); }
 .reg-brand { display:flex; align-items:center; justify-content:center; gap:8px; font-size:14px; font-weight:900; }
@@ -399,5 +399,4 @@ function icon(name) {
 .reg-submit { width:100%; min-height:46px; margin-top:19px; border-radius:12px; background:#fff; color:var(--primary-strong); font:inherit; font-size:13px; font-weight:900; box-shadow:0 8px 20px -6px rgba(0,0,0,.28); }
 .reg-login { margin:15px 0 0; text-align:center; color:rgba(255,255,255,.76); font-size:11px; font-weight:600; }
 .reg-login a { color:#fff; font-weight:900; text-decoration:underline; cursor:pointer; }
-@media (min-width:480px) { .register-reference { min-height:94vh; margin:3vh auto; border:1px solid rgba(255,255,255,.18); border-radius:26px; box-shadow:0 30px 60px -20px rgba(15,27,26,.4); } }
 </style>

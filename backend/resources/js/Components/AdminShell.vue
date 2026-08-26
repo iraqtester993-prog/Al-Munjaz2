@@ -9,7 +9,27 @@ const props = defineProps({ title: { type: String, default: '' } })
 const page = usePage()
 const isMenuOpen = ref(false)
 const user = computed(() => page.props.auth?.user)
-const theme = ref(user.value?.theme === 'dark' ? 'dark' : 'light')
+// The reference dashboard opens in the navy/cyan operating view.  Keep a
+// per-browser preference so the user's explicit light-mode choice survives
+// navigation, while first-time dashboard sessions always start in dark mode.
+function savedTheme() {
+    try {
+        return window.localStorage.getItem('almunjaz-admin-theme')
+    } catch {
+        return null
+    }
+}
+
+function persistTheme(value) {
+    try {
+        window.localStorage.setItem('almunjaz-admin-theme', value)
+    } catch {
+        // Storage can be disabled in a private browser session. The server
+        // preference still receives the change below.
+    }
+}
+
+const theme = ref(savedTheme() === 'light' ? 'light' : 'dark')
 const locale = ref(page.props.locale || user.value?.locale || 'ar')
 const currentPath = computed(() => new URL(page.url, window.location.origin).pathname.replace(/\/$/, ''))
 const branding = computed(() => page.props.branding || {
@@ -79,6 +99,7 @@ function toggleTheme() {
     const next = previous === 'dark' ? 'light' : 'dark'
     theme.value = next
     applyTheme(next)
+    persistTheme(next)
 
     router.post(route('admin.preferences.theme'), { theme: next }, {
         preserveScroll: true,
@@ -86,6 +107,7 @@ function toggleTheme() {
         onError: () => {
             theme.value = previous
             applyTheme(previous)
+            persistTheme(previous)
         },
     })
 }
@@ -166,17 +188,11 @@ onMounted(() => {
                 <div class="dashboard-brand-mark" aria-hidden="true"><img :src="branding.logo_url" alt="" /></div>
                 <div>
                     <b>{{ branding.name }}</b>
-                    <span>{{ branding.tagline || t('Admin Dashboard') }}</span>
+                    <span>{{ branding.tagline || t('Platform control center') }}</span>
                 </div>
             </div>
 
-            <div class="dashboard-status">
-                <span class="dashboard-live"><i /> {{ t('Online') }}</span>
-                <small>{{ t('Platform management') }}</small>
-            </div>
-
             <nav class="dashboard-nav" :aria-label="t('Dashboard')">
-                <p class="dashboard-nav-caption">{{ t('Dashboard') }}</p>
                 <button
                     v-for="item in nav"
                     :key="item.route"
@@ -218,12 +234,11 @@ onMounted(() => {
                 </button>
 
                 <div class="dashboard-title">
-                    <p>{{ t('Admin Dashboard') }}</p>
                     <h1>{{ pageTitle }}</h1>
                 </div>
 
                 <div class="dashboard-top-spacer" />
-                <span class="dashboard-top-live"><i /> {{ t('Online') }}</span>
+                <span class="dashboard-top-live"><i /> {{ t('Live data from app') }}</span>
 
                 <label class="dashboard-language">
                     <span class="sr-only">{{ t('Language') }}</span>
@@ -252,11 +267,6 @@ onMounted(() => {
                 </button>
 
                 <slot name="topbar-actions" />
-
-                <div class="dashboard-top-user">
-                    <div class="dashboard-avatar">{{ user?.name?.charAt(0) || 'إ' }}</div>
-                    <span>{{ user?.name || t('Admin Dashboard') }}</span>
-                </div>
             </header>
 
             <div class="dashboard-content content">
@@ -302,7 +312,7 @@ onMounted(() => {
     height: 100dvh;
     min-height: 100vh;
     display: grid;
-    grid-template-columns: 252px minmax(0, 1fr);
+    grid-template-columns: 242px minmax(0, 1fr);
     overflow: hidden;
     color: var(--ink);
     background: var(--bg);
@@ -396,18 +406,6 @@ onMounted(() => {
     font-weight: 700;
 }
 
-.dashboard-status {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin: 14px 14px 4px;
-    padding: 9px 10px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--surface);
-}
-
 .dashboard-live,
 .dashboard-top-live {
     display: inline-flex;
@@ -430,27 +428,11 @@ onMounted(() => {
     animation: dashboard-pulse 1.6s ease-in-out infinite;
 }
 
-.dashboard-status small {
-    overflow: hidden;
-    color: var(--ink-faint);
-    font-size: 9px;
-    font-weight: 700;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 .dashboard-nav {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 13px 10px;
-}
-
-.dashboard-nav-caption {
-    padding: 0 11px 8px;
-    color: var(--ink-faint);
-    font-size: 10px;
-    font-weight: 900;
+    padding: 14px 10px;
 }
 
 .dashboard-nav-item {
@@ -490,8 +472,7 @@ onMounted(() => {
     border-top: 1px solid var(--border);
 }
 
-.dashboard-operator,
-.dashboard-top-user {
+.dashboard-operator {
     display: flex;
     align-items: center;
     gap: 9px;
@@ -558,7 +539,7 @@ onMounted(() => {
     min-width: 0;
     min-height: 0;
     display: grid;
-    grid-template-rows: 68px minmax(0, 1fr);
+    grid-template-rows: 62px minmax(0, 1fr);
 }
 
 .dashboard-topbar {
@@ -587,17 +568,10 @@ onMounted(() => {
     min-width: 0;
 }
 
-.dashboard-title p {
-    margin-bottom: 1px;
-    color: var(--ink-faint);
-    font-size: 10px;
-    font-weight: 800;
-}
-
 .dashboard-title h1 {
     overflow: hidden;
     color: var(--ink);
-    font-size: 17px;
+    font-size: 16px;
     font-weight: 900;
     line-height: 1.35;
     text-overflow: ellipsis;
@@ -656,13 +630,6 @@ onMounted(() => {
 
 .dashboard-icon-button:active {
     transform: scale(.96);
-}
-
-.dashboard-top-user {
-    padding-inline-start: 3px;
-    color: var(--ink);
-    font-size: 11px;
-    font-weight: 800;
 }
 
 .dashboard-content {
@@ -763,16 +730,11 @@ onMounted(() => {
         padding: 0 12px;
     }
 
-    .dashboard-title p {
-        display: none;
-    }
-
     .dashboard-title h1 {
         font-size: 14px;
     }
 
-    .dashboard-top-live,
-    .dashboard-top-user span {
+    .dashboard-top-live {
         display: none;
     }
 

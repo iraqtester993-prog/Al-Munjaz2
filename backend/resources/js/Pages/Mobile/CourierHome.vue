@@ -225,7 +225,7 @@ onUnmounted(() => window.clearInterval(ticker))
                     </div>
                     <div class="merchant-card-actions">
                         <a v-if="whatsappUrl(selected.merchant.phone)" :href="whatsappUrl(selected.merchant.phone)" target="_blank" rel="noopener">{{ t('WhatsApp') }}</a>
-                        <button type="button" @click="openOrderChat(selected)">{{ t('Chat') }}</button>
+                        <button v-if="selected.courier_id" type="button" @click="openOrderChat(selected)">{{ t('Chat') }}</button>
                     </div>
                 </section>
 

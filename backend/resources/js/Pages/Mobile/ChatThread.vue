@@ -1,5 +1,5 @@
 <script setup>
-import { ref, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, ref, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
 import axios from 'axios'
 import { route } from 'ziggy-js'
 import { usePage } from '@inertiajs/vue3'
@@ -14,6 +14,8 @@ const text = ref('')
 const page = usePage()
 const locale = () => page.props.locale || 'ar'
 const chatTitle = () => props.chat?.[`title_${locale()}`] || props.chat?.title_ar || t('Support')
+const isOrderConversation = computed(() => props.chat?.counterparty_type === 'order_chat')
+const chatSubtitle = computed(() => isOrderConversation.value ? t('Order conversation') : t('Support'))
 const sending = ref(false)
 const msgs = ref([...props.messages])
 const threadEl = ref(null)
@@ -86,38 +88,39 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div class="app-stage">
-        <div class="app-shell">
-            <header class="app-topbar">
-                <button class="tb-icon-btn" @click="$inertia.visit(route('app.chats'))">
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: locale() === 'ar' ? 'rotate(180deg)' : '' }">
-                        <path d="M19 12H5m0 0 6-6m-6 6 6 6" />
-                    </svg>
-                </button>
-                <div class="tb-title">
-                    {{ chatTitle() }}
-                    <span class="tb-sub">{{ t('Support') }}</span>
-                </div>
-                <div class="chat-avatar" style="width: 34px; height: 34px; font-size: 13px">{{ chatTitle()?.charAt(0) }}</div>
-            </header>
+    <AppShell
+        :title="chatTitle()"
+        :subtitle="chatSubtitle"
+        :back="true"
+        :back-url="route('app.chats')"
+        :hide-tabs="true"
+        :show-notif="false"
+        content-class="chat-thread-content"
+    >
+        <template #actions>
+            <span class="chat-thread-avatar">{{ chatTitle()?.charAt(0) }}</span>
+        </template>
 
-            <div ref="threadEl" class="thread">
-                <div v-for="m in msgs" :key="m.id" class="bubble" :class="m.from_me ? 'bubble-me' : 'bubble-them'">
-                    {{ m.text }}
-                    <span class="bubble-time">{{ m.time }}</span>
-                </div>
-                <div v-if="!msgs.length" class="empty-hint">{{ t('Say hello to start the conversation') }}</div>
+        <div ref="threadEl" class="thread">
+            <div v-for="m in msgs" :key="m.id" class="bubble" :class="m.from_me ? 'bubble-me' : 'bubble-them'">
+                {{ m.text }}
+                <span class="bubble-time">{{ m.time }}</span>
             </div>
-
-            <div class="chat-input-bar">
-                <input v-model="text" :placeholder="t('Type a message')" @keydown="onEnter" />
-                <button class="send-btn" :disabled="sending || !text.trim()" @click="send">
-                    <span v-if="sending" class="loader"></span>
-                    <svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: locale() === 'ar' ? 'scaleX(-1)' : '' }">
-                        <path d="m22 2-7 20-4-9-9-4Z M22 2 11 13" />
-                    </svg>
-                </button>
-            </div>
+            <div v-if="!msgs.length" class="empty-hint">{{ t('Say hello to start the conversation') }}</div>
         </div>
-    </div>
+
+        <div class="chat-input-bar">
+            <input v-model="text" :placeholder="t('Type a message')" @keydown="onEnter" />
+            <button class="send-btn" :disabled="sending || !text.trim()" @click="send">
+                <span v-if="sending" class="loader"></span>
+                <svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: locale() === 'ar' ? 'scaleX(-1)' : '' }">
+                    <path d="m22 2-7 20-4-9-9-4Z M22 2 11 13" />
+                </svg>
+            </button>
+        </div>
+    </AppShell>
 </template>
+
+<style scoped>
+.chat-thread-avatar{width:34px;height:34px;display:grid;place-items:center;border-radius:50%;background:var(--primary-tint);color:var(--primary-strong);font-size:13px;font-weight:900;flex:none;}
+</style>

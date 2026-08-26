@@ -16,7 +16,7 @@ class Transaction extends Model
     public const COURIER_TX = ['collected', 'returned', 'cash_added', 'paid_order', 'commission'];
 
     protected $fillable = [
-        'tenant_id', 'user_id', 'type', 'amount', 'direction',
+        'finance_request_id', 'tenant_id', 'user_id', 'type', 'amount', 'direction',
         'ref', 'order_id', 'date', 'note',
     ];
 
@@ -35,6 +35,11 @@ class Transaction extends Model
     public function order(): BelongsTo
     {
         return $this->belongsTo(Order::class);
+    }
+
+    public function financeRequest(): BelongsTo
+    {
+        return $this->belongsTo(FinanceRequest::class);
     }
 
     public function signedAmount(): int

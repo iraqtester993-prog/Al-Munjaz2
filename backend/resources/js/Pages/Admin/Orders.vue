@@ -1,6 +1,6 @@
 <script setup>
-import { ref, computed } from 'vue'
-import { router, usePage } from '@inertiajs/vue3'
+import { computed, ref } from 'vue'
+import { router } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
 import StatusBadge from '../../Components/StatusBadge.vue'
@@ -15,7 +15,6 @@ const props = defineProps({
     branches: { type: Array, default: () => [] },
 })
 
-const page = usePage()
 const query = ref(props.q)
 const active = ref(props.filter)
 const assignFor = ref(null)
@@ -23,10 +22,12 @@ const assignCourier = ref('')
 const branchFor = ref(null)
 const originBranch = ref('')
 const destinationBranch = ref('')
+const detailsFor = ref(null)
 const busyId = ref(null)
 
 const eligibleCouriers = computed(() => {
     if (!assignFor.value?.province_id) return []
+
     return props.couriers.filter((courier) =>
         (courier.provinces || []).some((province) => Number(province.id) === Number(assignFor.value.province_id))
     )
@@ -34,20 +35,58 @@ const eligibleCouriers = computed(() => {
 
 const eligibleBranches = computed(() => {
     if (!branchFor.value) return []
-    return props.branches.filter((branch) => Number(branch.tenant_id) === Number(branchFor.value.tenant_id))
+
+    return props.branches.filter((branch) =>
+        Boolean(branch.is_platform_managed)
+        || Number(branch.tenant_id) === Number(branchFor.value.tenant_id)
+    )
 })
 
 const filters = computed(() => {
     const list = [{ key: 'all', label: t('All') }]
-    for (const s of ['pending', 'approved', 'courier', 'delivered', 'returned']) {
-        list.push({ key: s, label: tStatus(s) })
+    for (const status of ['pending', 'approved', 'courier', 'delivered', 'returned']) {
+        list.push({ key: status, label: tStatus(status) })
     }
     return list
 })
 
-function tStatus(s) {
-    const m = { pending: t('Pending'), approved: t('Approved'), courier: t('With Courier'), delivered: t('Delivered'), returned: t('Returned') }
-    return m[s] || s
+const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned']
+
+function tStatus(status) {
+    const labels = {
+        pending: 'Pending',
+        approved: 'Approved',
+        courier: 'With Courier',
+        delivered: 'Delivered',
+        returned: 'Returned',
+        cancelled: 'Cancelled',
+        damaged: 'Damaged',
+    }
+
+    return t(labels[status] || status)
+}
+
+function tStage(stage) {
+    const labels = {
+        created: 'Created',
+        awaiting_pickup: 'Awaiting pickup',
+        pickup_assigned: 'Pickup assigned',
+        picked_up: 'Picked up',
+        at_origin_branch: 'At origin branch',
+        sorting: 'Sorting',
+        awaiting_transfer: 'Awaiting transfer',
+        in_transfer: 'In transfer',
+        at_destination_branch: 'At destination branch',
+        delivery_assigned: 'Delivery assigned',
+        out_for_delivery: 'Out for delivery',
+        delivered: 'Delivered',
+        returned: 'Returned',
+        cancelled: 'Cancelled',
+        damaged: 'Damaged',
+        financially_closed: 'Financially closed',
+    }
+
+    return t(labels[stage] || stage || 'Not specified')
 }
 
 function apply() {
@@ -56,12 +95,16 @@ function apply() {
 
 function setStatus(order, status) {
     if (busyId.value) return
+
     busyId.value = order.id
     router.post(
         route('admin.orders.status', order.id),
         { status },
         {
             preserveScroll: true,
+            onSuccess: () => {
+                if (detailsFor.value?.id === order.id) detailsFor.value = null
+            },
             onFinish: () => (busyId.value = null),
         }
     )
@@ -74,6 +117,7 @@ function openAssign(order) {
 
 function doAssign() {
     if (!assignCourier.value || !assignFor.value) return
+
     busyId.value = assignFor.value.id
     router.post(
         route('admin.orders.courier', assignFor.value.id),
@@ -94,6 +138,7 @@ function openBranches(order) {
 
 function saveBranches() {
     if (!branchFor.value || (!originBranch.value && !destinationBranch.value)) return
+
     busyId.value = branchFor.value.id
     router.post(route('admin.orders.branches', branchFor.value.id), {
         origin_branch_id: originBranch.value || null,
@@ -105,14 +150,92 @@ function saveBranches() {
     })
 }
 
-const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned']
+function openDetails(order) {
+    detailsFor.value = order
+}
+
+function money(value) {
+    if (value === null || value === undefined) return '—'
+    return `${fmt(value)} ${t('IQD')}`
+}
+
+function sourceLabel(source) {
+    return source === 'courier' ? t('Courier') : t('Merchant')
+}
+
+function branchName(branch) {
+    return branch?.name || t('Not specified')
+}
+
+function routeText(order) {
+    const origin = order.origin_branch?.name
+    const destination = order.destination_branch?.name
+
+    if (origin && destination && origin !== destination) return `${origin} → ${destination}`
+    return origin || destination || t('Not specified')
+}
+
+function formatDate(value) {
+    if (!value) return '—'
+
+    try {
+        const lang = document.documentElement.lang || 'ar'
+        const locale = lang === 'ar' ? 'ar-IQ' : lang === 'ku' ? 'ku-IQ' : 'en-US'
+        return new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(new Date(value))
+    } catch {
+        return value
+    }
+}
+
+function formatDateTime(value) {
+    if (!value) return '—'
+
+    try {
+        const lang = document.documentElement.lang || 'ar'
+        const locale = lang === 'ar' ? 'ar-IQ' : lang === 'ku' ? 'ku-IQ' : 'en-US'
+        return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+    } catch {
+        return value
+    }
+}
+
+function timelineTitle(event) {
+    if (event.kind === 'created') return t('Order created')
+    if (event.kind === 'movement') return `${t('Branch movement')} — ${tStage(event.stage)}`
+    return `${t('Order status changed')} — ${tStatus(event.status)}`
+}
+
+function timelineDescription(event) {
+    const details = []
+    if (event.kind === 'movement') {
+        const from = event.from_branch?.name
+        const to = event.to_branch?.name
+        if (from && to && from !== to) details.push(`${from} → ${to}`)
+        else if (from || to) details.push(from || to)
+    }
+    if (event.note) details.push(event.note)
+    if (event.actor?.name) details.push(event.actor.name)
+    return details.join(' • ')
+}
+
+function provinceName(province) {
+    if (!province) return t('Not specified')
+    const lang = document.documentElement.lang || 'ar'
+    return province[`name_${lang}`] || province.name_ar || t('Not specified')
+}
 </script>
 
 <template>
     <AdminShell :title="t('Orders')">
         <div class="filter-bar">
-            <button v-for="f in filters" :key="f.key" class="fbtn" :class="{ active: active === f.key }" @click="active = f.key; apply()">
-                {{ f.label }} <span class="cnt">{{ counts[f.key] ?? 0 }}</span>
+            <button
+                v-for="filterOption in filters"
+                :key="filterOption.key"
+                class="fbtn"
+                :class="{ active: active === filterOption.key }"
+                @click="active = filterOption.key; apply()"
+            >
+                {{ filterOption.label }} <span class="cnt">{{ counts[filterOption.key] ?? 0 }}</span>
             </button>
             <div class="search">
                 <input v-model="query" :placeholder="t('Search')" @keyup.enter="apply" />
@@ -121,55 +244,81 @@ const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned'
 
         <div class="panel">
             <div class="panel-body" style="padding: 0">
-                <table class="tbl">
-                    <thead>
-                        <tr>
-                            <th>{{ t('Order') }}</th>
-                            <th>{{ t('Customer') }}</th>
-                            <th>{{ t('Price') }}</th>
-                            <th>{{ t('Status') }}</th>
-                            <th>{{ t('Courier') }}</th>
-                            <th>{{ t('Actions') }}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr v-for="o in orders.data" :key="o.id">
-                            <td class="mono" style="font-weight: 800">{{ o.track_no }}</td>
-                            <td>
-                                <div class="user-cell">
-                                    <div>
-                                        <b>{{ o.customer_name_ar }}</b>
-                                        <div class="text-muted mono" style="font-size: 10px">{{ o.phone }}</div>
-                                        <div v-if="o.origin_branch || o.destination_branch" class="text-muted" style="font-size: 10px; margin-top: 3px">
-                                            {{ o.origin_branch?.name || '—' }} ← {{ o.destination_branch?.name || '—' }}
-                                        </div>
+                <div class="admin-orders-table-wrap">
+                    <table class="tbl admin-orders-table">
+                        <thead>
+                            <tr>
+                                <th>{{ t('Order') }}</th>
+                                <th>{{ t('Customer') }}</th>
+                                <th>{{ t('Phone') }}</th>
+                                <th>{{ t('Address') }}</th>
+                                <th>{{ t('Merchant') }}</th>
+                                <th>{{ t('Branches') }}</th>
+                                <th>{{ t('Price') }}</th>
+                                <th>{{ t('Source') }} / {{ t('Date') }}</th>
+                                <th>{{ t('Courier') }}</th>
+                                <th>{{ t('Status') }}</th>
+                                <th>{{ t('Actions') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr
+                                v-for="order in orders.data"
+                                :key="order.id"
+                                class="admin-order-row"
+                                tabindex="0"
+                                @click="openDetails(order)"
+                                @keydown.enter="openDetails(order)"
+                            >
+                                <td class="mono admin-order-track">{{ order.track_no }}</td>
+                                <td><b>{{ order.customer?.name || order.customer_name_ar }}</b></td>
+                                <td class="mono text-muted">{{ order.customer?.phone || order.phone }}</td>
+                                <td class="admin-order-address">
+                                    <span>{{ order.customer?.address || order.address_ar }}</span>
+                                    <small v-if="order.province">{{ provinceName(order.province) }}</small>
+                                </td>
+                                <td>
+                                    <b>{{ order.merchant?.shop_name || order.merchant?.name || order.tenant || '—' }}</b>
+                                    <small v-if="order.merchant?.shop_name && order.merchant?.name">{{ order.merchant.name }}</small>
+                                </td>
+                                <td class="admin-route-cell">
+                                    <b>{{ routeText(order) }}</b>
+                                    <small>{{ tStage(order.workflow_stage) }}</small>
+                                </td>
+                                <td>
+                                    <b class="mono">{{ money(order.financial?.order_value ?? order.price) }}</b>
+                                    <small>{{ t('Delivery fee') }}: {{ money(order.financial?.delivery_fee ?? order.fee) }}</small>
+                                </td>
+                                <td>
+                                    <span class="src-tag">{{ sourceLabel(order.source) }}</span>
+                                    <small class="mono">{{ formatDate(order.date) }}</small>
+                                </td>
+                                <td>
+                                    <b v-if="order.courier">{{ order.courier.name }}</b>
+                                    <span v-else class="text-muted">{{ t('Unassigned') }}</span>
+                                    <small v-if="order.courier?.phone" class="mono">{{ order.courier.phone }}</small>
+                                </td>
+                                <td><StatusBadge :status="order.status" /></td>
+                                <td class="admin-order-actions-cell" @click.stop>
+                                    <div class="admin-order-actions">
+                                        <button class="fbtn mini" type="button" @click="openDetails(order)">{{ t('View Details') }}</button>
+                                        <select
+                                            class="fbtn mini"
+                                            :value="order.status"
+                                            :disabled="busyId === order.id"
+                                            style="appearance: auto"
+                                            @change="setStatus(order, $event.target.value)"
+                                        >
+                                            <option v-for="status in statusOptions" :key="status" :value="status">{{ tStatus(status) }}</option>
+                                        </select>
+                                        <button v-if="order.status === 'pending'" class="fbtn mini" type="button" @click="openAssign(order)">{{ t('Assign') }}</button>
+                                        <button class="fbtn mini" type="button" @click="openBranches(order)">{{ t('Branches') }}</button>
                                     </div>
-                                </div>
-                            </td>
-                            <td><b class="mono">{{ fmt(o.price) }}</b></td>
-                            <td><StatusBadge :status="o.status" /></td>
-                            <td>
-                                <span v-if="o.courier">{{ o.courier.name }}</span>
-                                <span v-else class="text-muted">—</span>
-                            </td>
-                            <td>
-                                <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap">
-                                    <select
-                                        class="fbtn mini"
-                                        :value="o.status"
-                                        :disabled="busyId === o.id"
-                                        style="appearance: auto"
-                                        @change="setStatus(o, $event.target.value)"
-                                    >
-                                        <option v-for="s in statusOptions" :key="s" :value="s">{{ tStatus(s) }}</option>
-                                    </select>
-                                    <button v-if="o.status === 'pending'" class="fbtn mini" @click="openAssign(o)">{{ t('Assign') }}</button>
-                                    <button class="fbtn mini" @click="openBranches(o)">{{ t('Branches') }}</button>
-                                </div>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
                 <div v-if="!orders.data.length" class="empty">{{ t('No orders found') }}</div>
             </div>
         </div>
@@ -180,12 +329,93 @@ const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned'
             <button class="fbtn" :disabled="!orders.next_page_url" @click="router.get(orders.next_page_url, {}, { preserveState: true })">→</button>
         </div>
 
+        <SheetModal :open="!!detailsFor" :title="t('Order Details')" :subtitle="detailsFor?.track_no" :wide="true" @close="detailsFor = null">
+            <div v-if="detailsFor" class="order-detail-sheet">
+                <div class="order-detail-hero">
+                    <div>
+                        <span class="order-detail-kicker">{{ t('Order') }}</span>
+                        <b class="mono">{{ detailsFor.track_no }}</b>
+                        <span>{{ formatDateTime(detailsFor.created_at) }}</span>
+                    </div>
+                    <StatusBadge :status="detailsFor.status" />
+                </div>
+
+                <div class="order-detail-summary">
+                    <div>
+                        <span>{{ t('Price') }}</span>
+                        <b class="mono">{{ money(detailsFor.financial?.order_value ?? detailsFor.price) }}</b>
+                    </div>
+                    <div>
+                        <span>{{ t('Delivery fee') }}</span>
+                        <b class="mono">{{ money(detailsFor.financial?.delivery_fee ?? detailsFor.fee) }}</b>
+                    </div>
+                    <div>
+                        <span>{{ t('Net to Merchant') }}</span>
+                        <b class="mono order-detail-positive">{{ money(detailsFor.financial?.net_to_merchant) }}</b>
+                    </div>
+                </div>
+
+                <section class="order-detail-section">
+                    <h4>{{ t('Customer Information') }}</h4>
+                    <div class="order-detail-grid">
+                        <div><span>{{ t('Customer') }}</span><b>{{ detailsFor.customer?.name || detailsFor.customer_name_ar }}</b></div>
+                        <div><span>{{ t('Phone') }}</span><b class="mono">{{ detailsFor.customer?.phone || detailsFor.phone }}</b></div>
+                        <div v-if="detailsFor.customer?.phone2"><span>{{ t('Phone 2') }}</span><b class="mono">{{ detailsFor.customer.phone2 }}</b></div>
+                        <div class="order-detail-grid-wide"><span>{{ t('Address') }}</span><b>{{ detailsFor.customer?.address || detailsFor.address_ar }}</b></div>
+                        <div><span>{{ t('City / Governorate') }}</span><b>{{ provinceName(detailsFor.province) }}</b></div>
+                    </div>
+                </section>
+
+                <section class="order-detail-section">
+                    <h4>{{ t('Operational Details') }}</h4>
+                    <div class="order-detail-grid">
+                        <div><span>{{ t('Merchant') }}</span><b>{{ detailsFor.merchant?.shop_name || detailsFor.merchant?.name || detailsFor.tenant || '—' }}</b></div>
+                        <div><span>{{ t('Courier') }}</span><b>{{ detailsFor.courier?.name || t('Unassigned') }}</b></div>
+                        <div><span>{{ t('Pickup courier') }}</span><b>{{ detailsFor.pickup_courier?.name || detailsFor.courier?.name || t('Not specified') }}</b></div>
+                        <div><span>{{ t('Delivery courier') }}</span><b>{{ detailsFor.delivery_courier?.name || detailsFor.courier?.name || t('Not specified') }}</b></div>
+                        <div><span>{{ t('Origin / pickup branch') }}</span><b>{{ branchName(detailsFor.origin_branch) }}</b></div>
+                        <div><span>{{ t('Destination / delivery branch') }}</span><b>{{ branchName(detailsFor.destination_branch) }}</b></div>
+                        <div><span>{{ t('Order Type') }}</span><b>{{ detailsFor.order_type || t('Not specified') }}</b></div>
+                        <div><span>{{ t('Vehicle') }}</span><b>{{ detailsFor.delivery_vehicle || t('Not specified') }}</b></div>
+                        <div><span>{{ t('Source') }}</span><b>{{ sourceLabel(detailsFor.source) }}</b></div>
+                        <div><span>{{ t('Status') }}</span><b>{{ tStatus(detailsFor.status) }}</b></div>
+                        <div><span>{{ t('Created at') }}</span><b>{{ formatDateTime(detailsFor.created_at) }}</b></div>
+                        <div><span>{{ t('Last updated') }}</span><b>{{ formatDateTime(detailsFor.updated_at) }}</b></div>
+                        <div v-if="detailsFor.pickup_deadline_at" class="order-detail-grid-wide"><span>{{ t('Pickup deadline') }}</span><b>{{ formatDateTime(detailsFor.pickup_deadline_at) }}</b></div>
+                    </div>
+                </section>
+
+                <section class="order-detail-section">
+                    <h4>{{ t('Operational Timeline') }}</h4>
+                    <div v-if="detailsFor.timeline?.length" class="order-timeline">
+                        <div v-for="(event, index) in detailsFor.timeline" :key="`${event.kind}-${event.at}-${index}`" class="order-timeline-item">
+                            <div class="order-timeline-rail">
+                                <span class="order-timeline-marker" :class="`is-${event.kind}`">{{ event.kind === 'movement' ? '↔' : event.kind === 'created' ? '+' : '✓' }}</span>
+                            </div>
+                            <div class="order-timeline-copy">
+                                <b>{{ timelineTitle(event) }}</b>
+                                <p v-if="timelineDescription(event)">{{ timelineDescription(event) }}</p>
+                                <time>{{ formatDateTime(event.at) }}</time>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="empty-hint">{{ t('No operational activity yet.') }}</div>
+                </section>
+
+                <section v-if="detailsFor.notes || detailsFor.vehicle_note" class="order-detail-section">
+                    <h4>{{ t('Notes') }}</h4>
+                    <p v-if="detailsFor.notes" class="order-detail-note">{{ detailsFor.notes }}</p>
+                    <p v-if="detailsFor.vehicle_note" class="order-detail-note"><b>{{ t('Vehicle Note') }}:</b> {{ detailsFor.vehicle_note }}</p>
+                </section>
+            </div>
+        </SheetModal>
+
         <SheetModal :open="!!assignFor" :title="t('Assign Courier')" :subtitle="assignFor?.track_no" @close="assignFor = null">
             <div class="field">
                 <label>{{ t('Courier') }}</label>
                 <select v-model="assignCourier">
                     <option value="" disabled>{{ t('Select courier') }}</option>
-                    <option v-for="c in eligibleCouriers" :key="c.id" :value="c.id">{{ c.name }} — {{ c.phone }}</option>
+                    <option v-for="courier in eligibleCouriers" :key="courier.id" :value="courier.id">{{ courier.name }} — {{ courier.phone }}</option>
                 </select>
                 <p v-if="!assignFor?.province_id" class="field-error">{{ t('Cannot assign before the order governorate is set.') }}</p>
                 <p v-else-if="!eligibleCouriers.length" class="field-error">{{ t('No active courier is available for this order governorate.') }}</p>
@@ -196,7 +426,7 @@ const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned'
         </SheetModal>
 
         <SheetModal :open="!!branchFor" :title="t('Branch Route')" :subtitle="branchFor?.track_no" @close="branchFor = null">
-            <p class="text-muted" style="margin: 0 0 14px; font-size: 11px; line-height: 1.8">{{ t('Choose the branch receiving the order and the branch responsible for delivery. Only branches belonging to this merchant are shown.') }}</p>
+            <p class="text-muted" style="margin: 0 0 14px; font-size: 11px; line-height: 1.8">{{ t('Choose the branch receiving the order and the branch responsible for delivery. Administration network branches and this merchant’s own branches are shown.') }}</p>
             <div class="field">
                 <label>{{ t('Origin / pickup branch') }}</label>
                 <select v-model="originBranch">
@@ -211,8 +441,59 @@ const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned'
                     <option v-for="branch in eligibleBranches" :key="branch.id" :value="branch.id">{{ branch.name }} — {{ branch.city }}</option>
                 </select>
             </div>
-            <p v-if="!eligibleBranches.length" class="field-error">{{ t('No active branches exist for this merchant yet.') }}</p>
+            <p v-if="!eligibleBranches.length" class="field-error">{{ t('No active administration or merchant branches exist for this order yet.') }}</p>
             <button class="btn btn-primary" style="width: 100%" :disabled="(!originBranch && !destinationBranch) || busyId" @click="saveBranches">{{ t('Save Branch Route') }}</button>
         </SheetModal>
     </AdminShell>
 </template>
+
+<style scoped>
+.admin-orders-table-wrap { width: 100%; overflow: auto; overscroll-behavior-inline: contain; }
+.admin-orders-table { min-width: 1480px; }
+.admin-order-row { cursor: pointer; outline: none; }
+.admin-order-row:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.admin-order-track { color: var(--primary); font-weight: 900; white-space: nowrap; }
+.admin-order-address { min-width: 185px; max-width: 230px; color: var(--ink-soft); line-height: 1.55; }
+.admin-order-address span, .admin-orders-table td > small { display: block; }
+.admin-orders-table small { margin-top: 3px; color: var(--ink-faint); font-size: 10px; font-weight: 700; line-height: 1.45; }
+.admin-route-cell { min-width: 155px; line-height: 1.4; }
+.admin-route-cell b { display: block; font-size: 11.5px; }
+.admin-order-actions-cell { min-width: 230px; }
+.admin-order-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.order-detail-sheet { display: grid; gap: 16px; padding-bottom: 4px; }
+.order-detail-hero { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 15px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); }
+.order-detail-hero > div { min-width: 0; display: grid; gap: 3px; }
+.order-detail-kicker, .order-detail-hero > div > span:last-child { color: var(--ink-faint); font-size: 10.5px; font-weight: 800; }
+.order-detail-hero b { color: var(--primary); font-size: 17px; font-weight: 900; }
+.order-detail-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.order-detail-summary > div { padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.order-detail-summary span, .order-detail-grid span { display: block; color: var(--ink-faint); font-size: 10px; font-weight: 800; }
+.order-detail-summary b { display: block; margin-top: 5px; font-size: 13px; font-weight: 900; }
+.order-detail-positive { color: var(--success); }
+.order-detail-section { padding: 15px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.order-detail-section h4 { margin: 0 0 13px; color: var(--ink); font-size: 12.5px; font-weight: 900; }
+.order-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; }
+.order-detail-grid > div { min-width: 0; }
+.order-detail-grid b { display: block; margin-top: 4px; color: var(--ink); font-size: 11.5px; font-weight: 800; line-height: 1.55; overflow-wrap: anywhere; }
+.order-detail-grid-wide { grid-column: 1 / -1; }
+
+.order-timeline { display: grid; gap: 0; }
+.order-timeline-item { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px; min-height: 58px; }
+.order-timeline-rail { position: relative; display: flex; justify-content: center; }
+.order-timeline-item:not(:last-child) .order-timeline-rail::after { position: absolute; top: 27px; bottom: -4px; width: 1px; background: var(--border); content: ''; }
+.order-timeline-marker { position: relative; z-index: 1; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; color: var(--primary-strong); background: var(--primary-tint); font-size: 12px; font-weight: 900; }
+.order-timeline-marker.is-movement { color: var(--warning); background: var(--warning-tint); }
+.order-timeline-marker.is-status { color: var(--success); background: var(--success-tint); }
+.order-timeline-copy { padding: 2px 0 14px; }
+.order-timeline-copy b { display: block; color: var(--ink); font-size: 11.5px; font-weight: 900; line-height: 1.45; }
+.order-timeline-copy p, .order-timeline-copy time { display: block; margin: 3px 0 0; color: var(--ink-faint); font-size: 10.5px; font-weight: 700; line-height: 1.5; }
+.order-detail-note { margin: 0; color: var(--ink-soft); font-size: 11.5px; font-weight: 700; line-height: 1.8; }
+.order-detail-note + .order-detail-note { margin-top: 8px; }
+
+@media (max-width: 620px) {
+    .order-detail-summary, .order-detail-grid { grid-template-columns: 1fr; }
+    .order-detail-grid-wide { grid-column: auto; }
+    .order-detail-hero { align-items: flex-start; flex-direction: column; }
+}
+</style>

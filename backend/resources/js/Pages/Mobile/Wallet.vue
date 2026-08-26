@@ -1,6 +1,6 @@
 <script setup>
-import { ref, computed } from 'vue'
-import { router } from '@inertiajs/vue3'
+import { computed, ref } from 'vue'
+import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AppShell from '../../Components/AppShell.vue'
 import SheetModal from '../../Components/SheetModal.vue'
@@ -9,28 +9,78 @@ const props = defineProps({
     isCourier: { type: Boolean, default: false },
     balance: { type: Number, default: 0 },
     budget: { type: Number, default: 0 },
+    summary: { type: Object, default: () => ({}) },
     transactions: { type: Array, default: () => [] },
+    requests: { type: Array, default: () => [] },
+    branches: { type: Array, default: () => [] },
 })
 
-const showWithdraw = ref(false)
-const showBudget = ref(false)
-const withdrawAmount = ref('')
-const gateway = ref('')
-const budgetAmount = ref('')
-const budgetMode = ref('add')
+const page = usePage()
+const locale = computed(() => page.props.locale || 'ar')
 const busy = ref(false)
+const showWithdraw = ref(false)
+const showHandover = ref(false)
+const showRecharge = ref(false)
+const withdraw = ref({ amount: '', gateway: '' })
+const handover = ref({ amount: '', branch_id: '', note: '' })
+const recharge = ref({ amount: '', note: '' })
 
 const typeMap = {
-    withdrawal: { label: t('Withdrawal'), tint: 'var(--danger-tint)', color: 'var(--danger)', icon: 'out' },
-    cash_added: { label: t('Cash Added'), tint: 'var(--success-tint)', color: 'var(--success)', icon: 'in' },
-    budget_deduct: { label: t('Budget Deduct'), tint: 'var(--warning-tint)', color: 'var(--warning)', icon: 'out' },
-    settlement: { label: t('Settlement'), tint: 'var(--primary-tint)', color: 'var(--primary-strong)', icon: 'in' },
-    delivery_fee: { label: t('Delivery Fee'), tint: 'var(--accent-tint)', color: 'var(--accent)', icon: 'fee' },
-    collected: { label: t('Collected'), tint: 'var(--success-tint)', color: 'var(--success)', icon: 'in' },
+    withdrawal: { key: 'Withdrawal', tint: 'var(--danger-tint)', color: 'var(--danger)', icon: 'out' },
+    cash_added: { key: 'Cash Added', tint: 'var(--success-tint)', color: 'var(--success)', icon: 'in' },
+    budget_deduct: { key: 'Budget Deduct', tint: 'var(--warning-tint)', color: 'var(--warning)', icon: 'out' },
+    budget_release: { key: 'Budget Released', tint: 'var(--success-tint)', color: 'var(--success)', icon: 'in' },
+    paid_order: { key: 'Order Budget Hold', tint: 'var(--warning-tint)', color: 'var(--warning)', icon: 'out' },
+    settlement: { key: 'Settlement', tint: 'var(--primary-tint)', color: 'var(--primary-strong)', icon: 'in' },
+    merchant_payout: { key: 'Merchant Payout', tint: 'var(--primary-tint)', color: 'var(--primary-strong)', icon: 'out' },
+    cash_handover: { key: 'Cash Handover', tint: 'var(--warning-tint)', color: 'var(--warning)', icon: 'out' },
+    budget_recharge: { key: 'Budget Recharge', tint: 'var(--success-tint)', color: 'var(--success)', icon: 'in' },
+    delivery_fee: { key: 'Delivery Fee', tint: 'var(--accent-tint)', color: 'var(--accent)', icon: 'fee' },
+    collected: { key: 'Collected', tint: 'var(--success-tint)', color: 'var(--success)', icon: 'in' },
+    returned: { key: 'Returned', tint: 'var(--st-returned-tint)', color: 'var(--st-returned)', icon: 'out' },
+    commission: { key: 'Delivery Commission', tint: 'var(--accent-tint)', color: 'var(--accent)', icon: 'fee' },
 }
 
-function txMeta(t) {
-    return typeMap[t.type] || { label: t.type, tint: 'var(--surface-2)', color: 'var(--ink-soft)', icon: 'in' }
+const requestMap = {
+    cash_handover: 'Cash Handover',
+    budget_recharge: 'Budget Recharge',
+    merchant_payout: 'Settlement Request',
+}
+
+const transactionGroups = computed(() => {
+    const groups = new Map()
+
+    props.transactions.forEach((transaction) => {
+        const date = transaction.date || ''
+        const current = groups.get(date) || []
+        current.push(transaction)
+        groups.set(date, current)
+    })
+
+    return [...groups.entries()]
+        .sort(([a], [b]) => b.localeCompare(a))
+        .map(([date, transactions]) => ({
+            date,
+            transactions,
+            total: transactions.reduce((sum, transaction) => sum + (Number(transaction.direction) >= 0 ? Number(transaction.amount || 0) : -Number(transaction.amount || 0)), 0),
+        }))
+})
+
+const lastSettlement = computed(() => props.summary.last_settlement || null)
+const pendingRequests = computed(() => props.requests.filter((request) => request.status === 'pending'))
+const rechargeCapacity = computed(() => Number(props.summary.recharge_capacity || 0))
+
+function txMeta(transaction) {
+    const meta = typeMap[transaction.type] || { key: transaction.type || 'Transaction', tint: 'var(--surface-2)', color: 'var(--ink-soft)', icon: 'in' }
+    return { ...meta, label: t(meta.key) }
+}
+
+function requestLabel(request) {
+    return t(requestMap[request.type] || request.type)
+}
+
+function statusLabel(status) {
+    return t({ pending: 'Pending Review', approved: 'Approved', rejected: 'Rejected' }[status] || status)
 }
 
 function txIcon(name) {
@@ -42,121 +92,269 @@ function txIcon(name) {
     return paths[name] || paths.in
 }
 
-function doWithdraw() {
-    const amount = parseInt(withdrawAmount.value, 10)
+function formatDate(date) {
+    if (!date) return t('Not specified')
+
+    const language = { ar: 'ar-IQ', en: 'en-US', ku: 'ku-IQ' }[locale.value] || 'ar-IQ'
+    return new Intl.DateTimeFormat(language, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+        .format(new Date(`${date.slice(0, 10)}T12:00:00`))
+}
+
+function requestDate(date) {
+    if (!date) return t('Not specified')
+    return new Intl.DateTimeFormat({ ar: 'ar-IQ', en: 'en-US', ku: 'ku-IQ' }[locale.value] || 'ar-IQ', {
+        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+    }).format(new Date(date))
+}
+
+function contactSupport() {
+    router.post(route('app.chats.open'), {}, { preserveScroll: true })
+}
+
+function submit(routeName, payload, done) {
+    const amount = Number.parseInt(payload.amount, 10)
     if (!amount || amount < 1000) return
+
     busy.value = true
-    router.post(route('app.wallet.withdraw'), { amount, gateway: gateway.value }, {
+    router.post(route(routeName), { ...payload, amount }, {
         preserveScroll: true,
-        onSuccess: () => {
-            showWithdraw.value = false
-            withdrawAmount.value = ''
-            gateway.value = ''
-            busy.value = false
-        },
+        onSuccess: done,
         onFinish: () => (busy.value = false),
     })
 }
 
-function doBudget() {
-    const amount = parseInt(budgetAmount.value, 10)
-    if (!amount || amount < 1) return
-    busy.value = true
-    router.post(route('app.wallet.budget'), { amount, mode: budgetMode.value }, {
-        preserveScroll: true,
-        onSuccess: () => {
-            showBudget.value = false
-            budgetAmount.value = ''
-            busy.value = false
-        },
-        onFinish: () => (busy.value = false),
+function doWithdraw() {
+    submit('app.wallet.withdraw', withdraw.value, () => {
+        showWithdraw.value = false
+        withdraw.value = { amount: '', gateway: '' }
+    })
+}
+
+function submitHandover() {
+    submit('app.wallet.handover', handover.value, () => {
+        showHandover.value = false
+        handover.value = { amount: '', branch_id: '', note: '' }
+    })
+}
+
+function submitRecharge() {
+    submit('app.wallet.recharge', recharge.value, () => {
+        showRecharge.value = false
+        recharge.value = { amount: '', note: '' }
     })
 }
 </script>
 
 <template>
     <AppShell :title="t('Wallet')">
-        <div class="wallet-card">
-            <div class="wc-top">
-                <span class="wc-badge">{{ isCourier ? t('Courier') : t('Merchant') }}</span>
-                <span class="wc-badge">{{ t('Available') }}</span>
-            </div>
-            <div class="wc-value mono">{{ fmt(balance) }} <span style="font-size: 15px; font-weight: 700">{{ t('IQD') }}</span></div>
-            <div class="wc-label">{{ t('Total Balance') }}</div>
-            <div v-if="isCourier" style="margin-top: 10px; background: rgba(255,255,255,.1); border-radius: 12px; padding: 10px 12px; display: flex; justify-content: space-between; font-size: 11.5px; font-weight: 700">
-                <span>{{ t('Budget') }}</span>
-                <b class="mono">{{ fmt(budget) }} {{ t('IQD') }}</b>
-            </div>
-            <div class="wallet-actions">
-                <button @click="showWithdraw = true">
-                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M12 21V7m0 0 6 6m-6-6-6 6 M4 3h16" />
-                    </svg>
-                    {{ t('Withdraw') }}
-                </button>
-                <button v-if="isCourier" class="solid" @click="showBudget = true">
-                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M12 5v14M5 12h14" />
-                    </svg>
-                    {{ t('Budget') }}
-                </button>
-            </div>
+        <template v-if="!isCourier">
+            <section class="wallet-card merchant-wallet-card">
+                <div class="wallet-orbit wallet-orbit-one" aria-hidden="true"></div>
+                <div class="wallet-orbit wallet-orbit-two" aria-hidden="true"></div>
+                <div class="wallet-content">
+                    <div class="wc-top">
+                        <span class="wc-badge">{{ t('Available Balance') }}</span>
+                        <span class="wallet-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24"><path d="M20 7H6a2 2 0 0 1-2-2 2 2 0 0 1 2-2h13v3M20 7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6M16 14h.01" /></svg>
+                        </span>
+                    </div>
+                    <div class="wc-value mono">{{ fmt(balance) }} <span>{{ t('IQD') }}</span></div>
+                    <div class="wc-label">{{ t('Current Balance') }}</div>
+
+                    <div class="wallet-divider"></div>
+                    <div class="merchant-finance-grid">
+                        <div>
+                            <span>{{ t('Undisbursed Dues') }}</span>
+                            <strong class="mono">{{ fmt(summary.undisbursed_due || 0) }}</strong>
+                        </div>
+                        <div>
+                            <span>{{ t('Last Settlement') }}</span>
+                            <strong v-if="lastSettlement" class="mono">{{ fmt(lastSettlement.amount) }}</strong>
+                            <strong v-else>—</strong>
+                            <small v-if="lastSettlement">{{ formatDate(lastSettlement.date) }}</small>
+                        </div>
+                    </div>
+
+                    <div class="wallet-actions wallet-actions-inline">
+                        <button type="button" class="solid" @click="showWithdraw = true">
+                            <svg viewBox="0 0 24 24"><path d="M12 21V7m0 0 6 6m-6-6-6 6M4 3h16" /></svg>
+                            {{ t('Request Withdrawal') }}
+                        </button>
+                        <button type="button" @click="contactSupport">
+                            <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H4l1.5-3.5A8 8 0 1 1 21 12Z" /></svg>
+                            {{ t('Support') }}
+                        </button>
+                    </div>
+                </div>
+            </section>
+        </template>
+
+        <template v-else>
+            <section class="courier-wallet-balance list-card">
+                <span class="courier-wallet-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M20 7H6a2 2 0 0 1-2-2 2 2 0 0 1 2-2h13v3M20 7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6M16 14h.01" /></svg>
+                </span>
+                <div>
+                    <span>{{ t('Cash On Hand') }}</span>
+                    <strong class="mono">{{ fmt(balance) }} <small>{{ t('IQD') }}</small></strong>
+                    <small>{{ t('Calculated from delivered orders less approved handovers.') }}</small>
+                </div>
+            </section>
+
+            <section class="courier-summary-grid">
+                <article class="courier-metric collection-metric">
+                    <span>{{ t('Completed Deliveries') }}</span>
+                    <strong class="mono">{{ summary.completed_deliveries || 0 }}</strong>
+                    <small>{{ t('Deliveries') }}</small>
+                </article>
+                <article class="courier-metric">
+                    <span>{{ t('Total Collections') }}</span>
+                    <strong class="mono">{{ fmt(summary.collections_total || 0) }}</strong>
+                    <small>{{ t('IQD') }}</small>
+                </article>
+            </section>
+
+            <section class="wallet-card courier-budget-card">
+                <div class="wallet-orbit wallet-orbit-one" aria-hidden="true"></div>
+                <div class="wallet-orbit wallet-orbit-two" aria-hidden="true"></div>
+                <div class="wallet-content">
+                    <div class="budget-title">
+                        <span class="wallet-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24"><path d="M12 22a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-12v4l2.7 1.6" /></svg>
+                        </span>
+                        <b>{{ t('Budget') }}</b>
+                    </div>
+                    <span class="budget-label">{{ t('Available Budget') }}</span>
+                    <strong class="budget-value mono">{{ fmt(budget) }} <small>{{ t('IQD') }}</small></strong>
+                    <div class="wallet-divider"></div>
+                    <div class="budget-bottom-row">
+                        <span>{{ t('Available after approved handover') }}</span>
+                        <b class="mono">{{ fmt(rechargeCapacity) }} {{ t('IQD') }}</b>
+                    </div>
+                    <div class="courier-finance-actions">
+                        <button type="button" class="courier-recharge" @click="showHandover = true">
+                            <svg viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14" /></svg>
+                            {{ t('Hand Over Cash') }}
+                        </button>
+                        <button type="button" class="courier-secondary" :disabled="rechargeCapacity < 1000" @click="showRecharge = true">
+                            {{ t('Request Budget Recharge') }}
+                        </button>
+                    </div>
+                    <p class="finance-note">{{ t('Cash and recharge requests change no balance until administration approves them.') }}</p>
+                </div>
+            </section>
+        </template>
+
+        <section v-if="requests.length" class="finance-requests list-card">
+            <header class="finance-requests-head">
+                <div>
+                    <h3>{{ t('Finance Requests') }}</h3>
+                    <span>{{ pendingRequests.length ? t(':count Pending', { count: pendingRequests.length }) : t('Request History') }}</span>
+                </div>
+                <b v-if="pendingRequests.length" class="pending-count">{{ pendingRequests.length }}</b>
+            </header>
+            <article v-for="request in requests" :key="request.id" class="finance-request-row">
+                <span class="request-icon" :class="request.status">
+                    <svg viewBox="0 0 24 24"><path d="M12 3v9l3 2M5.5 5.5a9 9 0 1 0 13 0" /></svg>
+                </span>
+                <span class="request-main">
+                    <b>{{ requestLabel(request) }}</b>
+                    <small class="mono">{{ request.reference }}</small>
+                    <small v-if="request.branch">{{ request.branch.name }}{{ request.branch.city ? ` — ${request.branch.city}` : '' }}</small>
+                    <small v-else>{{ requestDate(request.created_at) }}</small>
+                </span>
+                <span class="request-end">
+                    <b class="mono">{{ fmt(request.approved_amount ?? request.amount) }}</b>
+                    <small :class="`state-${request.status}`">{{ statusLabel(request.status) }}</small>
+                </span>
+            </article>
+        </section>
+
+        <div class="section-title wallet-section-title">
+            <h3>{{ t('Transaction History') }}</h3>
+            <span>{{ t('Recent Transactions') }}</span>
         </div>
 
-        <div class="section-title">
-            <h3>{{ t('My Statement') }}</h3>
-        </div>
-
-        <div v-if="transactions.length" class="list-card">
-            <div v-for="tx in transactions" :key="tx.id" class="tx-row">
-                <div class="tx-ic" :style="{ background: txMeta(tx).tint, color: txMeta(tx).color }">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                        <path :d="txIcon(txMeta(tx).icon)" />
-                    </svg>
-                </div>
-                <div class="tx-mid">
-                    <b>{{ txMeta(tx).label }}</b>
-                    <span class="mono">{{ tx.ref }} · {{ tx.date }}</span>
-                </div>
-                <div class="tx-amt" :class="tx.direction >= 0 ? 'up' : 'dn'" style="direction: ltr">
-                    {{ tx.direction >= 0 ? '+' : '-' }}{{ fmt(tx.amount) }}
-                </div>
-            </div>
+        <div v-if="transactionGroups.length" class="list-card wallet-history">
+            <section v-for="group in transactionGroups" :key="group.date" class="transaction-day">
+                <header class="transaction-day-header">
+                    <span>{{ formatDate(group.date) }}</span>
+                    <b class="mono" :class="group.total >= 0 ? 'up' : 'dn'">{{ group.total >= 0 ? '+' : '-' }}{{ fmt(Math.abs(group.total)) }} {{ t('IQD') }}</b>
+                </header>
+                <article v-for="tx in group.transactions" :key="tx.id" class="tx-row">
+                    <span class="tx-ic" :style="{ background: txMeta(tx).tint, color: txMeta(tx).color }">
+                        <svg viewBox="0 0 24 24"><path :d="txIcon(txMeta(tx).icon)" /></svg>
+                    </span>
+                    <span class="tx-mid">
+                        <b>{{ txMeta(tx).label }}</b>
+                        <small>{{ tx.note || tx.ref || t('Not specified') }}</small>
+                        <span class="mono">{{ tx.ref || '—' }}</span>
+                    </span>
+                    <b class="tx-amt" :class="Number(tx.direction) >= 0 ? 'up' : 'dn'">{{ Number(tx.direction) >= 0 ? '+' : '-' }}{{ fmt(tx.amount) }}</b>
+                </article>
+            </section>
         </div>
         <div v-else class="empty-hint">{{ t('No transactions yet') }}</div>
 
-        <SheetModal :open="showWithdraw" :title="t('Withdraw')" @close="showWithdraw = false">
+        <SheetModal :open="showWithdraw" :title="t('Request Withdrawal')" :subtitle="t('Administration confirms the settlement before your balance changes.')" @close="showWithdraw = false">
             <div class="field">
                 <label>{{ t('Amount') }} ({{ t('Min') }} 1,000)</label>
-                <input v-model="withdrawAmount" type="number" min="1000" :placeholder="t('Amount')" dir="ltr" style="text-align: center; font-size: 20px; font-weight: 800" />
+                <input v-model="withdraw.amount" type="number" min="1000" :placeholder="t('Amount')" dir="ltr" />
             </div>
             <div class="field">
                 <label>{{ t('Gateway') }}</label>
-                <input v-model="gateway" :placeholder="t('Gateway')" />
+                <input v-model="withdraw.gateway" :placeholder="t('Gateway')" />
             </div>
-            <div v-if="balance > 0" class="detail-row" style="background: var(--surface-2); border-radius: 10px; padding: 10px 12px">
-                <span class="text-muted">{{ t('Available') }}</span>
+            <div class="withdraw-available">
+                <span>{{ t('Available Balance') }}</span>
                 <b class="mono">{{ fmt(balance) }} {{ t('IQD') }}</b>
             </div>
-            <button class="btn btn-primary" style="width: 100%; margin-top: 14px" :disabled="busy || !withdrawAmount" @click="doWithdraw">
-                <span v-if="busy" class="loader"></span>
-                {{ t('Confirm') }}
+            <button class="btn btn-primary withdraw-submit" :disabled="busy || !withdraw.amount" @click="doWithdraw">
+                <span v-if="busy" class="loader"></span>{{ t('Submit Request') }}
             </button>
         </SheetModal>
 
-        <SheetModal :open="showBudget" :title="t('Budget')" @close="showBudget = false">
-            <div class="seg" style="margin-bottom: 14px">
-                <button :class="{ active: budgetMode === 'add' }" @click="budgetMode = 'add'">{{ t('Add') }}</button>
-                <button :class="{ active: budgetMode === 'set' }" @click="budgetMode = 'set'">{{ t('Set') }}</button>
+        <SheetModal :open="showHandover" :title="t('Hand Over Cash')" :subtitle="t('The branch cashbox changes only after administration approval.')" @close="showHandover = false">
+            <div class="field">
+                <label>{{ t('Amount') }} ({{ t('Cash On Hand') }}: {{ fmt(balance) }})</label>
+                <input v-model="handover.amount" type="number" min="1000" :max="balance" :placeholder="t('Amount')" dir="ltr" />
+            </div>
+            <div class="field">
+                <label>{{ t('Receiving Branch') }}</label>
+                <select v-model="handover.branch_id">
+                    <option value="">{{ t('Select branch') }}</option>
+                    <option v-for="branch in branches" :key="branch.id" :value="branch.id">{{ branch.name }}{{ branch.city ? ` — ${branch.city}` : '' }}</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>{{ t('Note (optional)') }}</label>
+                <textarea v-model="handover.note" rows="3" :placeholder="t('Handover note')"></textarea>
+            </div>
+            <button class="btn btn-primary withdraw-submit" :disabled="busy || !handover.amount" @click="submitHandover">
+                <span v-if="busy" class="loader"></span>{{ t('Submit Request') }}
+            </button>
+        </SheetModal>
+
+        <SheetModal :open="showRecharge" :title="t('Request Budget Recharge')" :subtitle="t('Only approved cash handovers can fund a recharge.')" @close="showRecharge = false">
+            <div class="withdraw-available recharge-capacity">
+                <span>{{ t('Available after approved handover') }}</span>
+                <b class="mono">{{ fmt(rechargeCapacity) }} {{ t('IQD') }}</b>
             </div>
             <div class="field">
                 <label>{{ t('Amount') }}</label>
-                <input v-model="budgetAmount" type="number" min="1" :placeholder="t('Amount')" dir="ltr" style="text-align: center; font-size: 20px; font-weight: 800" />
+                <input v-model="recharge.amount" type="number" min="1000" :max="rechargeCapacity" :placeholder="t('Amount')" dir="ltr" />
             </div>
-            <button class="btn btn-primary" style="width: 100%; margin-top: 14px" :disabled="busy || !budgetAmount" @click="doBudget">
-                <span v-if="busy" class="loader"></span>
-                {{ t('Save') }}
+            <div class="field">
+                <label>{{ t('Note (optional)') }}</label>
+                <textarea v-model="recharge.note" rows="3" :placeholder="t('Recharge note')"></textarea>
+            </div>
+            <button class="btn btn-primary withdraw-submit" :disabled="busy || !recharge.amount" @click="submitRecharge">
+                <span v-if="busy" class="loader"></span>{{ t('Submit Request') }}
             </button>
         </SheetModal>
     </AppShell>
 </template>
+
+<style scoped>
+.wallet-card{position:relative;overflow:hidden;padding:22px 20px;border-radius:22px}.wallet-content{position:relative;z-index:1}.wallet-orbit{position:absolute;border-radius:50%;background:rgba(255,255,255,.07);pointer-events:none}.wallet-orbit-one{top:-30px;inset-inline-start:-30px;width:120px;height:120px}.wallet-orbit-two{right:-20px;bottom:-40px;width:140px;height:140px}.wc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.wc-badge{font-size:10px;font-weight:800;opacity:.78}.wallet-icon,.courier-wallet-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:rgba(255,255,255,.14);color:#fff}.wallet-icon svg,.courier-wallet-icon svg,.wallet-actions svg,.courier-recharge svg,.tx-ic svg,.request-icon svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.85;stroke-linecap:round;stroke-linejoin:round}.wc-value{font-size:30px;font-weight:900}.wc-value span{font-family:var(--font);font-size:13px;opacity:.72}.wc-label{margin-top:3px;font-size:10.5px;font-weight:700;opacity:.72}.wallet-divider{height:1px;margin:18px 0 14px;background:rgba(255,255,255,.14)}.merchant-finance-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.merchant-finance-grid>div{min-width:0;padding:12px 13px;border:1px solid rgba(255,255,255,.1);border-radius:14px;background:rgba(255,255,255,.08)}.merchant-finance-grid span,.merchant-finance-grid small{display:block;font-size:9.5px;font-weight:700;opacity:.74}.merchant-finance-grid strong{display:block;overflow:hidden;margin-top:5px;font-size:15.5px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.merchant-finance-grid small{overflow:hidden;margin-top:4px;text-overflow:ellipsis;white-space:nowrap}.wallet-actions{display:flex;gap:9px}.wallet-actions-inline{margin-top:16px}.wallet-actions-inline button{display:flex;flex:1;align-items:center;flex-direction:row;justify-content:center;padding:12px;gap:7px;border:1px solid rgba(255,255,255,.22);border-radius:12px;background:rgba(255,255,255,.1);color:#fff;font:800 11px var(--font)}.wallet-actions-inline button.solid{border-color:#fff;background:#fff;color:var(--primary-strong)}.wallet-actions-inline button svg{width:15px;height:15px}.courier-wallet-balance{display:flex;align-items:flex-start;gap:13px;margin-bottom:14px;padding:18px 20px}.courier-wallet-icon{flex:none;background:var(--primary-tint);color:var(--primary-strong)}.courier-wallet-balance>div{min-width:0}.courier-wallet-balance span,.courier-wallet-balance strong,.courier-wallet-balance small{display:block}.courier-wallet-balance span{margin-bottom:3px;color:var(--ink-soft);font-size:11px;font-weight:750}.courier-wallet-balance strong{font-size:21px;font-weight:900}.courier-wallet-balance small{margin-top:3px;color:var(--ink-faint);font-size:9.5px;font-weight:700}.courier-wallet-balance strong small{display:inline;margin:0;font-family:var(--font);font-size:11px}.courier-summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}.courier-metric{position:relative;overflow:hidden;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--surface)}.collection-metric{border:0;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff}.courier-metric span,.courier-metric small{display:block;font-size:10px;font-weight:750}.courier-metric span{color:var(--ink-soft)}.collection-metric span{color:rgba(255,255,255,.85)}.courier-metric strong{display:inline-block;margin-top:7px;font-size:23px;font-weight:900}.courier-metric small{display:inline-block;margin-inline-start:4px;color:var(--ink-faint)}.collection-metric small{color:rgba(255,255,255,.75)}.courier-budget-card{background:linear-gradient(135deg,var(--primary-strong),var(--primary));color:#fff}.budget-title{display:flex;align-items:center;gap:8px;margin-bottom:19px}.budget-title .wallet-icon{width:34px;height:34px;border-radius:11px}.budget-title b{font-size:13px;font-weight:900}.budget-label{display:block;font-size:10.5px;font-weight:700;opacity:.75}.budget-value{display:block;margin-top:5px;font-size:28px;font-weight:900}.budget-value small{font-family:var(--font);font-size:13px;opacity:.7}.budget-bottom-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10.5px;font-weight:750}.budget-bottom-row b{font-size:12px}.courier-finance-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}.courier-recharge,.courier-secondary{display:flex;align-items:center;justify-content:center;gap:6px;min-height:43px;padding:10px;border-radius:12px;font:800 10.5px var(--font)}.courier-recharge{background:#fff;color:var(--primary-strong)}.courier-secondary{border:1px solid rgba(255,255,255,.32);background:rgba(255,255,255,.1);color:#fff}.courier-secondary:disabled{opacity:.5}.courier-recharge svg{width:15px;height:15px}.finance-note{margin:9px 0 0;color:rgba(255,255,255,.75);font-size:9.5px;font-weight:650;line-height:1.65;text-align:center}.finance-requests{overflow:hidden;margin-top:17px}.finance-requests-head{display:flex;align-items:center;justify-content:space-between;padding:13px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)}.finance-requests-head h3{margin:0;font-size:12px;font-weight:900}.finance-requests-head span{display:block;margin-top:2px;color:var(--ink-faint);font-size:9.5px;font-weight:700}.pending-count{display:grid;min-width:22px;height:22px;place-items:center;border-radius:999px;background:var(--warning-tint);color:var(--warning);font-size:10px}.finance-request-row{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border)}.finance-request-row:last-child{border-bottom:0}.request-icon{display:grid;flex:none;width:32px;height:32px;place-items:center;border-radius:10px;background:var(--warning-tint);color:var(--warning)}.request-icon.approved{background:var(--success-tint);color:var(--success)}.request-icon.rejected{background:var(--danger-tint);color:var(--danger)}.request-main{flex:1;min-width:0}.request-main b,.request-main small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.request-main b{font-size:11px;font-weight:850}.request-main small{margin-top:2px;color:var(--ink-faint);font-size:9px;font-weight:700}.request-end{text-align:end}.request-end b,.request-end small{display:block}.request-end b{font-size:11px}.request-end small{margin-top:3px;font-size:9px;font-weight:850}.state-pending{color:var(--warning)}.state-approved{color:var(--success)}.state-rejected{color:var(--danger)}.wallet-section-title{margin-top:18px}.wallet-section-title>span{color:var(--ink-faint);font-size:10px;font-weight:700}.wallet-history{overflow:hidden}.transaction-day-header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)}.transaction-day-header span{color:var(--ink-soft);font-size:10.5px;font-weight:800}.transaction-day-header b{font-size:10.5px;font-weight:850}.tx-row{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border)}.tx-row:last-child{border-bottom:0}.tx-ic{display:grid;flex:none;width:32px;height:32px;place-items:center;border-radius:10px}.tx-mid{flex:1;min-width:0}.tx-mid b,.tx-mid small,.tx-mid span{display:block}.tx-mid b{font-size:11px;font-weight:850}.tx-mid small{overflow:hidden;margin-top:2px;color:var(--ink-soft);font-size:9.5px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.tx-mid span{margin-top:2px;color:var(--ink-faint);font-size:8.5px}.tx-amt{font-size:12.5px;font-weight:900;direction:ltr}.up{color:var(--success)}.dn{color:var(--danger)}.empty-hint{padding:27px 10px;color:var(--ink-faint);font-size:11px;font-weight:750;text-align:center}.withdraw-available{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:10px;background:var(--surface-2);color:var(--ink-soft);font-size:11px;font-weight:750}.withdraw-available b{color:var(--ink);font-size:12px}.recharge-capacity{margin-bottom:14px}.withdraw-submit{display:flex;width:100%;align-items:center;justify-content:center;gap:8px;margin-top:14px}.field{margin-bottom:13px}.field label{display:block;margin-bottom:6px;color:var(--ink-soft);font-size:10.5px;font-weight:800}.field input,.field select,.field textarea{box-sizing:border-box;width:100%;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--ink);font:inherit;font-size:13px;outline:none;padding:10px 11px}.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-tint)}.field textarea{resize:vertical}.field input[type=number]{font-size:16px;font-weight:800;text-align:center}@media(max-width:350px){.courier-finance-actions{grid-template-columns:1fr}.merchant-finance-grid{grid-template-columns:1fr}.wallet-actions{flex-direction:column}}
+</style>

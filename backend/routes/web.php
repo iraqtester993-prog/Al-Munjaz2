@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Admin\AdminDashboardController;
+use App\Http\Controllers\Admin\AdminFinanceController;
 use App\Http\Controllers\Admin\AdminNotificationController;
 use App\Http\Controllers\Admin\AdminOrderController;
 use App\Http\Controllers\Admin\AdminPreferencesController;
@@ -36,6 +37,11 @@ $pwaManifest = fn () => response()->file(
     ['Content-Type' => 'application/manifest+json; charset=utf-8', 'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0']
 );
 
+$pwaOffline = fn () => response()->file(
+    resource_path('pwa/offline.html'),
+    ['Content-Type' => 'text/html; charset=utf-8', 'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0']
+);
+
 $pwaWorker = function () {
     // The Blade page and this dynamic worker obtain their version from the
     // same config value. This prevents an installed PWA from receiving a
@@ -55,6 +61,7 @@ $pwaWorker = function () {
 
 Route::get('/pwa/manifest', $pwaManifest);
 Route::get('/manifest.json', $pwaManifest); // Compatibility alias for the old installed PWA.
+Route::get('/pwa/offline', $pwaOffline);
 Route::get('/pwa/worker', $pwaWorker);
 Route::get('/sw.js', $pwaWorker); // Compatibility alias for the old installed PWA.
 
@@ -122,6 +129,8 @@ Route::middleware(['auth', 'active'])->group(function () {
         Route::post('orders/{order}/claim', [AppOrderController::class, 'claim'])->name('app.orders.claim');
         Route::get('wallet', [AppWalletController::class, 'index'])->name('app.wallet');
         Route::post('wallet/withdraw', [AppWalletController::class, 'withdraw'])->name('app.wallet.withdraw');
+        Route::post('wallet/handover', [AppWalletController::class, 'handover'])->name('app.wallet.handover');
+        Route::post('wallet/recharge', [AppWalletController::class, 'recharge'])->name('app.wallet.recharge');
         Route::post('wallet/budget', [AppWalletController::class, 'budget'])->name('app.wallet.budget');
         Route::get('chats', [ChatController::class, 'index'])->name('app.chats');
         Route::get('chats/{chat}', [ChatController::class, 'show'])->name('app.chats.show');
@@ -147,6 +156,8 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     Route::get('orders', [AdminOrderController::class, 'index'])->name('admin.orders');
     Route::get('branches', [BranchController::class, 'index'])->name('admin.branches');
     Route::post('branches', [BranchController::class, 'store'])->name('admin.branches.store');
+    Route::put('branches/{branch}', [BranchController::class, 'update'])->name('admin.branches.update');
+    Route::patch('branches/{branch}/status', [BranchController::class, 'status'])->name('admin.branches.status');
     Route::post('orders/{order}/status', [AdminOrderController::class, 'status'])->name('admin.orders.status');
     Route::post('orders/{order}/courier', [AdminOrderController::class, 'assignCourier'])->name('admin.orders.courier');
     Route::post('orders/{order}/branches', [AdminOrderController::class, 'assignBranches'])->name('admin.orders.branches');
@@ -155,7 +166,10 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     Route::post('users/{user}/status', [AdminUserController::class, 'status'])->name('admin.users.status');
     Route::get('users/{user}/documents/{document}', [AdminUserController::class, 'showDocument'])->name('admin.users.documents.show');
     Route::post('users/{user}/documents/{document}/review', [AdminUserController::class, 'reviewDocument'])->name('admin.users.documents.review');
-    Route::get('finance', [AdminDashboardController::class, 'finance'])->name('admin.finance');
+    Route::get('finance', [AdminFinanceController::class, 'index'])->name('admin.finance');
+    Route::post('finance/requests/{financeRequest}/approve', [AdminFinanceController::class, 'approve'])->name('admin.finance.approve');
+    Route::post('finance/requests/{financeRequest}/reject', [AdminFinanceController::class, 'reject'])->name('admin.finance.reject');
+    Route::post('finance/settlements', [AdminFinanceController::class, 'recordSettlement'])->name('admin.finance.settlements.store');
     Route::get('notifications', [AdminNotificationController::class, 'index'])->name('admin.notifications');
     Route::post('notifications', [AdminNotificationController::class, 'store'])->name('admin.notifications.store');
     Route::get('settings', [AdminSettingsController::class, 'index'])->name('admin.settings');

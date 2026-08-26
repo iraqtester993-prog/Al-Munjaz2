@@ -13,8 +13,8 @@ const showPassword = ref(false)
 
 const locale = computed(() => page.props.locale || 'ar')
 const roles = computed(() => [
-    { key: 'merchant', label: t('Merchant App'), desc: t('Merchant services'), icon: 'shop' },
-    { key: 'courier', label: t('Courier App'), desc: t('Courier services'), icon: 'bike' },
+    { key: 'merchant', label: t('Merchant App'), desc: t('My orders, statement, wallet'), icon: 'shop' },
+    { key: 'courier', label: t('Courier App'), desc: t('My deliveries, collections, wallet'), icon: 'bike' },
 ])
 
 const form = useForm({ username: '', password: '', role: 'merchant' })
@@ -84,14 +84,20 @@ function icon(name) {
         </header>
 
         <section v-if="view === 'start'" class="start-pane">
-            <div class="role-cards">
-                <button v-for="role in roles" :key="role.key" class="reference-role-card" type="button" @click="chooseRole(role.key)">
-                    <span class="role-art">
-                        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="icon(role.icon)" /></svg>
-                    </span>
-                    <span class="role-copy"><b>{{ role.label }}</b><small>{{ role.desc }}</small></span>
-                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path :d="icon('arrow')" /></svg>
-                </button>
+            <div class="start-center">
+                <div class="start-hero-copy">
+                    <h1>{{ t('Choose your app') }}</h1>
+                    <p>{{ t('Same company account on Al-Munjaz Al-Saree, with an interface built for your role.') }}</p>
+                </div>
+                <div class="role-cards">
+                    <button v-for="role in roles" :key="role.key" class="reference-role-card" type="button" @click="chooseRole(role.key)">
+                        <span class="role-art">
+                            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="icon(role.icon)" /></svg>
+                        </span>
+                        <span class="role-copy"><b>{{ role.label }}</b><small>{{ role.desc }}</small></span>
+                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path :d="icon('arrow')" /></svg>
+                    </button>
+                </div>
             </div>
 
             <PwaInstallBanner />
@@ -137,7 +143,7 @@ function icon(name) {
 </template>
 
 <style scoped>
-.reference-auth { min-height:100vh; max-width:460px; margin:0 auto; color:#fff; background:linear-gradient(175deg, var(--primary-strong), var(--primary) 59%, var(--accent)); display:flex; flex-direction:column; overflow:hidden; }
+.reference-auth { min-height:100dvh; width:100%; color:#fff; background:linear-gradient(175deg, var(--primary-strong), var(--primary) 59%, var(--accent)); display:flex; flex-direction:column; overflow:hidden; }
 .reference-auth.dark { background:linear-gradient(175deg, #08312e, #0f5450 59%, #7a4a17); }
 .reference-auth-header { display:grid; grid-template-columns:38px 1fr auto; align-items:center; padding:18px 18px 8px; }
 .reference-brand { display:flex; align-items:center; justify-content:center; gap:8px; font-size:14px; font-weight:900; }
@@ -146,8 +152,12 @@ function icon(name) {
 .auth-icon, .auth-icon-placeholder { width:34px; height:34px; border:1px solid rgba(255,255,255,.27); border-radius:10px; background:rgba(255,255,255,.14); color:#fff; display:grid; place-items:center; }
 .auth-icon-placeholder { visibility:hidden; }
 .auth-header-actions{display:flex;gap:5px;justify-content:flex-end}.auth-language{font-size:8px;font-weight:900;letter-spacing:.3px}
-.start-pane, .login-pane { flex:1; display:flex; flex-direction:column; padding:18px 22px 28px; }
-.start-pane { justify-content:center; }
+.start-pane, .login-pane { flex:1; display:flex; flex-direction:column; padding:18px 22px calc(28px + env(safe-area-inset-bottom, 0px)); }
+.start-pane { justify-content:space-between; }
+.start-center{flex:1;display:flex;flex-direction:column;justify-content:center;}
+.start-hero-copy{padding:0 4px 20px;}
+.start-hero-copy h1{margin:0 0 8px;font-size:24px;font-weight:900;line-height:1.5;}
+.start-hero-copy p{margin:0;max-width:345px;font-size:12.5px;line-height:1.8;font-weight:600;opacity:.85;}
 .role-cards { display:grid; gap:12px; }
 .reference-role-card { width:100%; display:flex; align-items:center; gap:13px; padding:15px; text-align:right; color:#fff; background:rgba(255,255,255,.15); border:1px solid rgba(255,255,255,.32); border-radius:18px; font:inherit; backdrop-filter:blur(7px); }
 .reference-role-card:active { transform:scale(.985); }
@@ -173,5 +183,4 @@ function icon(name) {
 .login-submit { width:100%; min-height:46px; margin-top:3px; border-radius:12px; background:#fff; color:var(--primary-strong); font:inherit; font-size:13px; font-weight:900; box-shadow:0 8px 20px -6px rgba(0,0,0,.28); }
 .register-link-ref { margin:17px 0 0; text-align:center; color:rgba(255,255,255,.76); font-size:11.5px; font-weight:600; }
 .register-link-ref a { color:#fff; font-weight:900; text-decoration:underline; cursor:pointer; }
-@media (min-width:480px) { .reference-auth { min-height:94vh; margin:3vh auto; border:1px solid rgba(255,255,255,.18); border-radius:26px; box-shadow:0 30px 60px -20px rgba(15,27,26,.4); } }
 </style>

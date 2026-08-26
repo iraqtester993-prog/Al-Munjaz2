@@ -14,8 +14,11 @@ return [
     |
     */
     'courier_documents' => [
-        'max_file_kilobytes' => (int) env('COURIER_DOCUMENT_MAX_KB', 1024),
-        'max_total_kilobytes' => (int) env('COURIER_DOCUMENT_TOTAL_MAX_KB', 4096),
-        'target_image_kilobytes' => (int) env('COURIER_DOCUMENT_TARGET_IMAGE_KB', 700),
+        // Shared cPanel installations commonly reject multipart requests at
+        // 2 MB before Laravel can validate them. Five optimized documents
+        // therefore stay comfortably below that proxy ceiling.
+        'max_file_kilobytes' => (int) env('COURIER_DOCUMENT_MAX_KB', 480),
+        'max_total_kilobytes' => (int) env('COURIER_DOCUMENT_TOTAL_MAX_KB', 1600),
+        'target_image_kilobytes' => (int) env('COURIER_DOCUMENT_TARGET_IMAGE_KB', 300),
     ],
 ];

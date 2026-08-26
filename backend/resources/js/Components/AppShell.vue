@@ -11,6 +11,7 @@ const props = defineProps({
     back: { type: Boolean, default: false },
     backUrl: { type: String, default: '' },
     hideTabs: { type: Boolean, default: false },
+    contentClass: { type: [String, Array, Object], default: '' },
     // `notifBadge` is retained for the chat tab.  Notification counts are
     // shared independently so the bell never accidentally shows chat data.
     notifBadge: { type: Number, default: 0 },
@@ -147,7 +148,7 @@ function icon(name) {
                 <slot name="actions" />
             </header>
 
-            <main class="app-content" :class="{ 'without-tabs': hideTabs }">
+            <main class="app-content" :class="[{ 'without-tabs': hideTabs }, contentClass]">
                 <slot />
             </main>
 

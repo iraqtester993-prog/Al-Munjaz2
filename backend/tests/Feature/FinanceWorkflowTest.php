@@ -1,0 +1,141 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\Branch;
+use App\Models\FinanceRequest;
+use App\Models\Transaction;
+use App\Models\User;
+use App\Tenancy\TenantContext;
+use Database\Seeders\DemoSeeder;
+use Database\Seeders\PlanSeeder;
+use Database\Seeders\ProvinceSeeder;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
+
+class FinanceWorkflowTest extends TestCase
+{
+    use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        TenantContext::clear();
+        $this->seed(PlanSeeder::class);
+        $this->seed(ProvinceSeeder::class);
+        $this->seed(DemoSeeder::class);
+    }
+
+    public function test_courier_cash_handover_and_budget_recharge_are_approved_once_by_administration(): void
+    {
+        $courier = User::where('username', 'مندوب')->firstOrFail();
+        $admin = User::where('role', 'admin')->firstOrFail();
+        $branch = Branch::withoutGlobalScopes()->where('is_active', true)->firstOrFail();
+        $startingBranchCash = (int) $branch->cash_balance;
+        $startingBudget = (int) $courier->wallet->budget;
+
+        $this->actingAs($courier)
+            ->post('/app/wallet/handover', [
+                'amount' => 1000,
+                'branch_id' => $branch->id,
+                'note' => 'اختبار تسليم نقدي',
+            ])
+            ->assertRedirect();
+
+        $handover = FinanceRequest::withoutGlobalScopes()
+            ->where('user_id', $courier->id)
+            ->where('type', FinanceRequest::CASH_HANDOVER)
+            ->firstOrFail();
+
+        $this->assertSame(FinanceRequest::PENDING, $handover->status);
+        $this->assertDatabaseMissing('transactions', ['finance_request_id' => $handover->id]);
+
+        $this->actingAs($admin)
+            ->post("/dashboard/finance/requests/{$handover->id}/approve", [
+                'approved_amount' => 1000,
+                'branch_id' => $branch->id,
+                'decision_note' => 'تم الاستلام في الصندوق',
+            ])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('finance_requests', [
+            'id' => $handover->id,
+            'status' => FinanceRequest::APPROVED,
+            'approved_amount' => 1000,
+            'processed_by' => $admin->id,
+        ]);
+        $this->assertDatabaseHas('transactions', [
+            'finance_request_id' => $handover->id,
+            'user_id' => $courier->id,
+            'type' => FinanceRequest::CASH_HANDOVER,
+            'amount' => 1000,
+            'direction' => -1,
+        ]);
+        $this->assertSame($startingBranchCash + 1000, (int) $branch->fresh()->cash_balance);
+
+        $this->actingAs($courier)
+            ->post('/app/wallet/recharge', ['amount' => 1000, 'note' => 'شحن من التسليم المعتمد'])
+            ->assertRedirect();
+
+        $recharge = FinanceRequest::withoutGlobalScopes()
+            ->where('user_id', $courier->id)
+            ->where('type', FinanceRequest::BUDGET_RECHARGE)
+            ->firstOrFail();
+
+        $this->actingAs($admin)
+            ->post("/dashboard/finance/requests/{$recharge->id}/approve", [
+                'approved_amount' => 1000,
+                'decision_note' => 'شحن معتمد',
+            ])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('transactions', [
+            'finance_request_id' => $recharge->id,
+            'user_id' => $courier->id,
+            'type' => FinanceRequest::BUDGET_RECHARGE,
+            'amount' => 1000,
+            'direction' => 1,
+        ]);
+        $this->assertSame($startingBudget + 1000, (int) $courier->wallet->fresh()->budget);
+
+        // A second approval cannot create another ledger record or add money twice.
+        $this->actingAs($admin)
+            ->post("/dashboard/finance/requests/{$recharge->id}/approve", ['approved_amount' => 1000])
+            ->assertSessionHasErrors('finance');
+
+        $this->assertSame(1, Transaction::withoutGlobalScopes()
+            ->where('finance_request_id', $recharge->id)
+            ->count());
+        $this->assertSame($startingBudget + 1000, (int) $courier->wallet->fresh()->budget);
+    }
+
+    public function test_merchant_payout_requires_an_administrator_approval_before_debiting_the_wallet(): void
+    {
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+        $admin = User::where('role', 'admin')->firstOrFail();
+        $startingBalance = (int) $merchant->wallet->balance;
+
+        $this->actingAs($merchant)
+            ->post('/app/wallet/withdraw', ['amount' => 2000, 'gateway' => 'cash'])
+            ->assertRedirect();
+
+        $payout = FinanceRequest::withoutGlobalScopes()
+            ->where('user_id', $merchant->id)
+            ->where('type', FinanceRequest::MERCHANT_PAYOUT)
+            ->firstOrFail();
+
+        $this->assertSame($startingBalance, (int) $merchant->wallet->fresh()->balance);
+
+        $this->actingAs($admin)
+            ->post("/dashboard/finance/requests/{$payout->id}/approve", ['approved_amount' => 2000])
+            ->assertRedirect();
+
+        $this->assertSame($startingBalance - 2000, (int) $merchant->wallet->fresh()->balance);
+        $this->assertDatabaseHas('transactions', [
+            'finance_request_id' => $payout->id,
+            'type' => FinanceRequest::MERCHANT_PAYOUT,
+            'direction' => -1,
+            'amount' => 2000,
+        ]);
+    }
+}

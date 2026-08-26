@@ -1,7 +1,8 @@
 // Laravel replaces __PWA_VERSION__ at the dynamic /pwa/worker route. Keeping
 // the source as a placeholder guarantees its cache name matches app.blade.php.
 const CACHE_NAME = 'almunjaz-shell-__PWA_VERSION__';
-const APP_SHELL = ['/pwa/manifest', '/assets/icon-192.png', '/assets/icon-512.png'];
+const OFFLINE_PAGE = '/pwa/offline';
+const APP_SHELL = [OFFLINE_PAGE, '/pwa/manifest', '/assets/icon-192.png', '/assets/icon-512.png', '/assets/icon-maskable-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
@@ -66,6 +67,14 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const requestUrl = new URL(event.request.url);
   if (requestUrl.origin !== self.location.origin) return;
+
+  // Never pretend that authenticated data is current while disconnected.
+  // We instead present an explicit, app-branded offline state for a
+  // navigation request.  The user can retry as soon as connectivity returns.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(fetch(event.request).catch(() => caches.match(OFFLINE_PAGE)));
+    return;
+  }
 
   if (requestUrl.pathname.startsWith('/build/') || requestUrl.pathname.startsWith('/assets/')) {
     event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request).then((response) => {

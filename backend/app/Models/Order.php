@@ -3,10 +3,11 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToTenant;
+use App\Models\Scopes\TenantScope;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Order extends Model
 {
@@ -14,7 +15,7 @@ class Order extends Model
 
     public const STATUSES = ['pending', 'approved', 'courier', 'delivered', 'returned', 'cancelled', 'damaged'];
 
-    public const WORKFLOW_STAGES = ['created', 'awaiting_pickup', 'pickup_assigned', 'picked_up', 'at_origin_branch', 'sorting', 'awaiting_transfer', 'in_transfer', 'at_destination_branch', 'delivery_assigned', 'out_for_delivery', 'delivered', 'financially_closed'];
+    public const WORKFLOW_STAGES = ['created', 'awaiting_pickup', 'pickup_assigned', 'picked_up', 'at_origin_branch', 'sorting', 'awaiting_transfer', 'in_transfer', 'at_destination_branch', 'delivery_assigned', 'out_for_delivery', 'delivered', 'returned', 'cancelled', 'damaged', 'financially_closed'];
 
     protected $fillable = [
         'tenant_id', 'track_no', 'source',
@@ -50,17 +51,21 @@ class Order extends Model
 
     public function branch(): BelongsTo
     {
-        return $this->belongsTo(Branch::class);
+        // A route may use a platform-managed branch owned by the operational
+        // tenant rather than by the merchant that owns the order. The order
+        // itself is authorised/scoped first; this relation must then be able
+        // to resolve that explicitly assigned shared branch.
+        return $this->belongsTo(Branch::class)->withoutGlobalScope(TenantScope::class);
     }
 
     public function originBranch(): BelongsTo
     {
-        return $this->belongsTo(Branch::class, 'origin_branch_id');
+        return $this->belongsTo(Branch::class, 'origin_branch_id')->withoutGlobalScope(TenantScope::class);
     }
 
     public function destinationBranch(): BelongsTo
     {
-        return $this->belongsTo(Branch::class, 'destination_branch_id');
+        return $this->belongsTo(Branch::class, 'destination_branch_id')->withoutGlobalScope(TenantScope::class);
     }
 
     public function merchant(): BelongsTo

@@ -47,7 +47,7 @@ async function send() {
         mergeMessages([...msgs.value, data])
         text.value = ''
     } catch (e) {
-        sendError.value = 'تعذر إرسال الرسالة. حاول مرة أخرى.'
+        sendError.value = t('Unable to send the message. Please try again.')
     } finally {
         sending.value = false
         scrollDown()

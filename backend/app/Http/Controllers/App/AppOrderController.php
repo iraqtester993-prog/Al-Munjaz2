@@ -4,15 +4,19 @@ namespace App\Http\Controllers\App;
 
 use App\Http\Controllers\Controller;
 use App\Models\ActivityLog;
-use App\Models\Notification;
+use App\Models\Branch;
 use App\Models\Order;
+use App\Models\OrderMovement;
 use App\Models\OrderStatusLog;
+use App\Models\Scopes\TenantScope;
 use App\Models\Setting;
 use App\Models\User;
 use App\Services\CourierOrderAccess;
 use App\Services\CourierOrderAssignmentService;
 use App\Services\OrderWorkflowService;
 use App\Tenancy\TenantContext;
+use DateTimeInterface;
+use Illuminate\Support\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -49,11 +53,50 @@ class AppOrderController extends Controller
             });
         }
 
-        $orders = $query->with([
+        $orderRecords = $query->with([
             'courier:id,name,phone',
             'merchant:id,name,phone,address',
             'tenant:id,name',
-        ])->latest('id')->get()->map(fn (Order $o) => [
+            // Route branches can belong to the platform operations tenant,
+            // so the relations intentionally resolve outside the viewer's
+            // tenant scope. The order itself has already passed the merchant
+            // or assigned-courier visibility query above.
+            'originBranch:id,name_ar,name_en,name_ku,city',
+            'destinationBranch:id,name_ar,name_en,name_ku,city',
+            'statusLogs' => fn ($logs) => $logs
+                ->with('user:id,name,phone,role')
+                ->latest('created_at'),
+            'movements' => fn ($movements) => $movements
+                // A courier belongs to a different tenant from the merchant
+                // order. Its auditable movement history must not disappear
+                // merely because the courier is viewing an assigned order.
+                ->withoutGlobalScope(TenantScope::class)
+                ->with('actor:id,name,phone,role')
+                ->latest('occurred_at'),
+        ])->latest('id')->get();
+
+        // Order movements retain the branch ids that were active when an
+        // event occurred. Resolve that historical route independently of the
+        // current viewer's tenant so the timeline remains truthful after a
+        // cross-network assignment.
+        $movementBranchIds = $orderRecords
+            ->flatMap(fn (Order $order) => $order->movements->flatMap(fn (OrderMovement $movement) => [
+                $movement->from_branch_id,
+                $movement->to_branch_id,
+            ]))
+            ->filter()
+            ->unique()
+            ->values();
+
+        $movementBranches = $movementBranchIds->isEmpty()
+            ? collect()
+            : Branch::withoutGlobalScope(TenantScope::class)
+                ->withTrashed()
+                ->whereIn('id', $movementBranchIds)
+                ->get(['id', 'name_ar', 'name_en', 'name_ku', 'city'])
+                ->keyBy('id');
+
+        $orders = $orderRecords->map(fn (Order $o) => [
             'id' => $o->id,
             'track_no' => $o->track_no,
             'source' => $o->source,
@@ -70,7 +113,10 @@ class AppOrderController extends Controller
             'price' => $o->price,
             'fee' => $o->fee,
             'status' => $o->status,
+            'workflow_stage' => $o->workflow_stage,
             'date' => $o->date->toDateString(),
+            'created_at' => $this->timestamp($o->created_at),
+            'updated_at' => $this->timestamp($o->updated_at),
             'notes' => $o->notes,
             'pickup_deadline_at' => $o->pickup_deadline_at?->toIso8601String(),
             'courier' => $o->courier ? ['name' => $o->courier->name, 'phone' => $o->courier->phone] : null,
@@ -78,7 +124,14 @@ class AppOrderController extends Controller
                 ? ['name' => $o->merchant->name, 'phone' => $o->merchant->phone, 'address' => $o->merchant->address]
                 : ($o->tenant ? ['name' => $o->tenant->name, 'phone' => null, 'address' => null] : null),
             'courier_id' => $o->courier_id,
-        ]);
+            'origin_branch' => $o->originBranch
+                ? $this->branchPayload($o->originBranch)
+                : null,
+            'destination_branch' => $o->destinationBranch
+                ? $this->branchPayload($o->destinationBranch)
+                : null,
+            'timeline' => $this->timelinePayload($o, $movementBranches),
+        ])->values();
 
         $counts = $isCourier
             ? [
@@ -257,6 +310,106 @@ class AppOrderController extends Controller
         if ($request->user()->role === 'merchant') {
             abort_unless($order->tenant_id === $request->user()->tenant_id, 403);
         }
+    }
+
+    /**
+     * Build a mobile-safe operational history from records that were actually
+     * written by the workflow service or the branch-routing screen. The
+     * client deliberately receives events, not an invented progress path:
+     * an unperformed transfer is never shown as completed.
+     */
+    private function timelinePayload(Order $order, $movementBranches): array
+    {
+        $events = collect();
+        $hasCreationLog = false;
+
+        foreach ($order->statusLogs as $log) {
+            $isCreated = $log->from_status === null;
+            $hasCreationLog = $hasCreationLog || $isCreated;
+
+            $events->push([
+                'kind' => $isCreated ? 'created' : 'status',
+                'status' => $log->to_status,
+                'from_status' => $log->from_status,
+                'stage' => $isCreated ? 'created' : null,
+                'note' => $log->note,
+                'actor' => $this->personPayload($log->user),
+                'from_branch' => null,
+                'to_branch' => null,
+                'at' => $this->timestamp($log->created_at),
+            ]);
+        }
+
+        // Older orders may predate status logging. Their creation time is a
+        // real event, so preserve it rather than leaving the timeline blank.
+        if (! $hasCreationLog && $order->created_at) {
+            $events->push([
+                'kind' => 'created',
+                'status' => 'pending',
+                'from_status' => null,
+                'stage' => 'created',
+                'note' => null,
+                'actor' => $this->personPayload($order->merchant),
+                'from_branch' => null,
+                'to_branch' => null,
+                'at' => $this->timestamp($order->created_at),
+            ]);
+        }
+
+        foreach ($order->movements as $movement) {
+            $events->push([
+                'kind' => 'movement',
+                'status' => null,
+                'from_status' => null,
+                'stage' => $movement->stage,
+                'note' => $movement->note,
+                'actor' => $this->personPayload($movement->actor),
+                'from_branch' => $this->branchPayload($movementBranches->get($movement->from_branch_id)),
+                'to_branch' => $this->branchPayload($movementBranches->get($movement->to_branch_id)),
+                'at' => $this->timestamp($movement->occurred_at),
+            ]);
+        }
+
+        return $events
+            ->filter(fn (array $event) => filled($event['at']))
+            ->sortByDesc('at')
+            ->values()
+            ->all();
+    }
+
+    private function personPayload(?User $user): ?array
+    {
+        return $user ? [
+            'id' => $user->id,
+            'name' => $user->name,
+            'phone' => $user->phone,
+            'role' => $user->role,
+        ] : null;
+    }
+
+    private function branchPayload(?Branch $branch): ?array
+    {
+        return $branch ? [
+            'id' => $branch->id,
+            'name' => $branch->name_ar,
+            'name_ar' => $branch->name_ar,
+            'name_en' => $branch->name_en,
+            'name_ku' => $branch->name_ku,
+            'city' => $branch->city,
+        ] : null;
+    }
+
+    private function timestamp(mixed $value): ?string
+    {
+        if (! $value) {
+            return null;
+        }
+
+        if ($value instanceof DateTimeInterface) {
+            return $value->format(DateTimeInterface::ATOM);
+        }
+
+        return Carbon::parse($value)->toIso8601String();
     }
 
     protected function counts(): array
