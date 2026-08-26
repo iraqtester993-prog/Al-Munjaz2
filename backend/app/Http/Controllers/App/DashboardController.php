@@ -93,6 +93,9 @@ class DashboardController extends Controller
             'status' => $o->status,
             'date' => $o->date->toDateString(),
             'notes' => $o->notes,
+            'pickup_latitude' => $o->pickup_latitude === null ? null : (float) $o->pickup_latitude,
+            'pickup_longitude' => $o->pickup_longitude === null ? null : (float) $o->pickup_longitude,
+            'pickup_location_label' => $o->pickup_location_label,
             'pickup_deadline_at' => $o->pickup_deadline_at?->toIso8601String(),
             'courier' => $o->courier ? ['name' => $o->courier->name, 'phone' => $o->courier->phone] : null,
             'merchant' => $o->merchant
@@ -120,6 +123,9 @@ class DashboardController extends Controller
                 'price' => $order->price,
                 'fee' => $order->fee,
                 'notes' => $order->notes,
+                'pickup_latitude' => $order->pickup_latitude === null ? null : (float) $order->pickup_latitude,
+                'pickup_longitude' => $order->pickup_longitude === null ? null : (float) $order->pickup_longitude,
+                'pickup_location_label' => $order->pickup_location_label,
                 'merchant' => $order->merchant
                     ? ['name' => $order->merchant->name, 'phone' => $order->merchant->phone, 'address' => $order->merchant->address]
                     : ($order->tenant ? ['name' => $order->tenant->name, 'phone' => null, 'address' => null] : null),

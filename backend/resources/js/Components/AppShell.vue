@@ -4,6 +4,7 @@ import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import Flash from './Flash.vue'
 import LiveNotificationBridge from './LiveNotificationBridge.vue'
+import CourierLocationTracker from './CourierLocationTracker.vue'
 
 const props = defineProps({
     title: { type: String, default: '' },
@@ -121,6 +122,7 @@ function icon(name) {
         <div class="app-shell">
             <Flash />
             <LiveNotificationBridge />
+            <CourierLocationTracker />
             <header class="app-topbar">
                 <button v-if="back" class="tb-icon-btn" type="button" :aria-label="t('Back')" @click="goBack">
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: locale === 'ar' ? 'rotate(180deg)' : '' }">

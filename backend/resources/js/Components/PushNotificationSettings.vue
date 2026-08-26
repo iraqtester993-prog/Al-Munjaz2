@@ -6,11 +6,11 @@ const status = ref('loading')
 const message = ref('')
 const config = ref(null)
 
-const supported = computed(() => typeof window !== 'undefined'
+const notificationSupported = computed(() => typeof window !== 'undefined' && 'Notification' in window)
+const pushSupported = computed(() => notificationSupported.value
     && 'serviceWorker' in navigator
-    && 'PushManager' in window
-    && 'Notification' in window)
-const permission = computed(() => supported.value ? Notification.permission : 'unsupported')
+    && 'PushManager' in window)
+const permission = computed(() => notificationSupported.value ? Notification.permission : 'unsupported')
 
 function base64UrlToUint8Array(value) {
     const padding = '='.repeat((4 - (value.length % 4)) % 4)
@@ -20,8 +20,20 @@ function base64UrlToUint8Array(value) {
 }
 
 async function load() {
-    if (!supported.value) {
+    if (!notificationSupported.value) {
         status.value = 'unsupported'
+        return
+    }
+
+    if (permission.value === 'denied') {
+        status.value = 'denied'
+        return
+    }
+
+    // Permission belongs to the device and can be granted even while the
+    // optional push delivery service is still being configured.
+    if (!pushSupported.value) {
+        status.value = permission.value === 'granted' ? 'permission-granted' : 'idle'
         return
     }
 
@@ -30,21 +42,21 @@ async function load() {
         config.value = response.data
 
         if (!config.value?.enabled || !config.value.publicKey) {
-            status.value = 'unavailable'
+            status.value = permission.value === 'granted' ? 'permission-granted' : 'idle'
             return
         }
 
         const registration = await navigator.serviceWorker.ready
         const subscription = await registration.pushManager.getSubscription()
-        status.value = subscription && permission.value === 'granted' ? 'enabled' : 'idle'
+        status.value = subscription && permission.value === 'granted' ? 'enabled' : (permission.value === 'granted' ? 'permission-granted' : 'idle')
     } catch (_) {
-        status.value = 'unavailable'
+        status.value = permission.value === 'granted' ? 'permission-granted' : 'idle'
     }
 }
 
 async function enable() {
     message.value = ''
-    if (!supported.value) {
+    if (!notificationSupported.value) {
         status.value = 'unsupported'
         return
     }
@@ -56,9 +68,17 @@ async function enable() {
             return
         }
 
+        if (!pushSupported.value) {
+            status.value = 'permission-granted'
+            return
+        }
+
         status.value = 'saving'
         if (!config.value?.enabled || !config.value.publicKey) await load()
-        if (!config.value?.enabled || !config.value.publicKey) return
+        if (!config.value?.enabled || !config.value.publicKey) {
+            status.value = 'permission-granted'
+            return
+        }
 
         const registration = await navigator.serviceWorker.ready
         let subscription = await registration.pushManager.getSubscription()
@@ -78,7 +98,8 @@ async function enable() {
         status.value = 'enabled'
     } catch (_) {
         status.value = 'error'
-        message.value = t('Could not enable notifications. Please try again.')
+        message.value = window.t?.('Could not enable notifications. Please try again.')
+            || 'Could not enable notifications. Please try again.'
     }
 }
 
@@ -93,7 +114,8 @@ async function disable() {
         status.value = 'idle'
     } catch (_) {
         status.value = 'error'
-        message.value = t('Could not change notification settings. Please try again.')
+        message.value = window.t?.('Could not change notification settings. Please try again.')
+            || 'Could not change notification settings. Please try again.'
     }
 }
 
@@ -106,14 +128,15 @@ onMounted(load)
         <div class="push-setting-copy">
             <b>{{ t('Phone notifications') }}</b>
             <small v-if="status === 'enabled'">{{ t('Notifications are enabled on this device.') }}</small>
+            <small v-else-if="status === 'permission-granted'">{{ t('Notifications are allowed on this device. Push delivery will start when it is available.') }}</small>
             <small v-else-if="status === 'denied'">{{ t('Allow notifications from the browser settings to receive alerts.') }}</small>
-            <small v-else-if="status === 'unsupported'">{{ t('This browser does not support push notifications.') }}</small>
-            <small v-else-if="status === 'unavailable'">{{ t('Push notifications are being prepared. Try again shortly.') }}</small>
+            <small v-else-if="status === 'unsupported'">{{ t('Notifications are not available on this device.') }}</small>
             <small v-else>{{ t('Receive a banner and the device notification sound for new updates.') }}</small>
             <small v-if="message" class="push-error">{{ message }}</small>
         </div>
         <button v-if="status === 'enabled'" type="button" class="push-toggle active" @click="disable">{{ t('On') }}</button>
-        <button v-else-if="status !== 'loading' && status !== 'saving' && status !== 'unsupported' && status !== 'unavailable'" type="button" class="push-toggle" @click="enable">{{ t('Enable') }}</button>
+        <button v-else-if="status === 'permission-granted'" type="button" class="push-toggle active" @click="load">{{ t('On') }}</button>
+        <button v-else-if="status !== 'loading' && status !== 'saving' && status !== 'unsupported'" type="button" class="push-toggle" @click="enable">{{ t('Enable') }}</button>
         <span v-else class="push-state">{{ status === 'saving' ? t('Saving…') : t('…') }}</span>
     </section>
 </template>

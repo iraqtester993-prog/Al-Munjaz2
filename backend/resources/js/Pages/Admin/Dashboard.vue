@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
@@ -15,14 +15,22 @@ const props = defineProps({
     recentOrders: { type: Array, default: () => [] },
     recentNotifs: { type: Array, default: () => [] },
     topMerchants: { type: Array, default: () => [] },
+    // A collection of last-known pins only. The server intentionally never
+    // exposes route/location-history data to this dashboard.
+    courierLocations: { type: Array, default: () => [] },
 })
 
 const page = usePage()
 const locale = computed(() => page.props.locale || 'ar')
 const lastRefresh = ref(new Date())
 const heroSlideIndex = ref(0)
+const selectedCourierId = ref(null)
 let refreshTimer
 let heroTimer
+
+const selectedCourier = computed(() => props.courierLocations.find((courier) => courier.id === selectedCourierId.value)
+    || props.courierLocations[0]
+    || null)
 
 const primaryKpis = computed(() => [
     { icon: 'box', label: t('Orders'), value: props.kpis.orders, tint: 'var(--primary-tint)', color: 'var(--primary-strong)' },
@@ -191,6 +199,51 @@ function refreshedAt() {
     return lastRefresh.value.toLocaleTimeString(language)
 }
 
+function courierRoleLabel(role) {
+    return {
+        courier: t('Courier'),
+        pickup_courier: t('Pickup courier'),
+        delivery_courier: t('Delivery courier'),
+        transporter: t('Transporter'),
+    }[role] || role
+}
+
+function locationUpdatedAt(courier) {
+    if (!courier?.updated_at) return '—'
+
+    try {
+        const language = { ar: 'ar-IQ', en: 'en-US', ku: 'ku-IQ' }[locale.value] || 'ar-IQ'
+        return new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(courier.updated_at))
+    } catch (_) {
+        return courier.updated_at
+    }
+}
+
+function mapEmbedUrl(courier) {
+    if (!courier) return ''
+
+    const latitude = Number(courier.latitude)
+    const longitude = Number(courier.longitude)
+    const spread = 0.009
+    const bbox = [longitude - spread, latitude - spread, longitude + spread, latitude + spread].join(',')
+    const marker = `${latitude},${longitude}`
+
+    return `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${encodeURIComponent(marker)}`
+}
+
+function mapPageUrl(courier) {
+    if (!courier) return '#'
+
+    const latitude = Number(courier.latitude)
+    const longitude = Number(courier.longitude)
+    return `https://www.openstreetmap.org/?mlat=${encodeURIComponent(latitude)}&mlon=${encodeURIComponent(longitude)}#map=16/${latitude}/${longitude}`
+}
+
+function locationAccuracy(courier) {
+    if (courier?.accuracy_meters === null || courier?.accuracy_meters === undefined) return t('Not specified')
+    return `${fmt(courier.accuracy_meters)} ${t('meters')}`
+}
+
 function startHeroTimer() {
     window.clearInterval(heroTimer)
     heroTimer = window.setInterval(() => {
@@ -200,7 +253,7 @@ function startHeroTimer() {
 
 function refreshOverview() {
     router.reload({
-        only: ['kpis', 'operations', 'financials', 'statusCounts', 'week', 'recentOrders', 'recentNotifs', 'topMerchants'],
+        only: ['kpis', 'operations', 'financials', 'statusCounts', 'week', 'recentOrders', 'recentNotifs', 'topMerchants', 'courierLocations'],
         preserveScroll: true,
         preserveState: true,
         onSuccess: () => { lastRefresh.value = new Date() },
@@ -216,6 +269,12 @@ onBeforeUnmount(() => {
     window.clearInterval(refreshTimer)
     window.clearInterval(heroTimer)
 })
+
+watch(() => props.courierLocations, (rows) => {
+    if (!rows.some((courier) => courier.id === selectedCourierId.value)) {
+        selectedCourierId.value = rows[0]?.id || null
+    }
+}, { immediate: true })
 </script>
 
 <template>
@@ -281,6 +340,58 @@ onBeforeUnmount(() => {
                 </div>
             </div>
         </div>
+
+        <section class="panel courier-location-panel">
+            <div class="panel-head courier-location-head">
+                <div>
+                    <h3>{{ t('Courier locations') }}</h3>
+                    <small>{{ t('Last known positions only — no route history is recorded.') }}</small>
+                </div>
+                <span class="source-pill">{{ courierLocations.length }} {{ t('Couriers') }}</span>
+            </div>
+
+            <div v-if="courierLocations.length && selectedCourier" class="courier-location-layout">
+                <div class="courier-location-list" :aria-label="t('Courier locations')">
+                    <button
+                        v-for="courier in courierLocations"
+                        :key="courier.id"
+                        type="button"
+                        class="courier-location-row"
+                        :class="{ active: selectedCourier?.id === courier.id }"
+                        @click="selectedCourierId = courier.id"
+                    >
+                        <span class="courier-location-avatar">{{ courier.name?.slice(0, 1) }}</span>
+                        <span class="courier-location-copy">
+                            <b>{{ courier.name }}</b>
+                            <small>{{ courierRoleLabel(courier.role) }} · {{ locationUpdatedAt(courier) }}</small>
+                        </span>
+                        <span class="courier-location-presence" :class="{ online: courier.is_online }" :title="courier.is_online ? t('Online') : t('Offline')" />
+                    </button>
+                </div>
+
+                <div class="courier-location-map-wrap">
+                    <iframe
+                        class="courier-location-map"
+                        :src="mapEmbedUrl(selectedCourier)"
+                        :title="`${t('Courier locations')} — ${selectedCourier.name}`"
+                        loading="lazy"
+                        referrerpolicy="no-referrer"
+                    />
+                    <div class="courier-location-map-info">
+                        <div>
+                            <b>{{ selectedCourier.name }}</b>
+                            <small>{{ t('Last update') }}: {{ locationUpdatedAt(selectedCourier) }} · {{ t('Accuracy') }}: {{ locationAccuracy(selectedCourier) }}</small>
+                        </div>
+                        <a :href="mapPageUrl(selectedCourier)" target="_blank" rel="noopener noreferrer">{{ t('Open map') }}</a>
+                    </div>
+                </div>
+            </div>
+
+            <div v-else class="courier-location-empty">
+                <span aria-hidden="true">⌖</span>
+                <div><b>{{ t('No courier location is available yet.') }}</b><small>{{ t('A courier appears here only after they enable location sharing from their account.') }}</small></div>
+            </div>
+        </section>
 
         <div class="overview-grid">
             <section class="panel distribution-panel">
@@ -395,8 +506,9 @@ onBeforeUnmount(() => {
 .hero-orbit{position:absolute;border:1px solid rgba(255,255,255,.18);border-radius:50%;pointer-events:none}.hero-orbit-one{width:250px;height:250px;inset-inline-end:-54px;top:-82px}.hero-orbit-two{width:165px;height:165px;inset-inline-end:88px;bottom:-102px;border-color:rgba(255,255,255,.13)}
 .hero-arrow{position:absolute;z-index:3;top:50%;display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;cursor:pointer;transform:translateY(-50%);transition:background .15s ease}.hero-arrow:hover{background:rgba(255,255,255,.3)}.hero-prev{left:14px}.hero-next{right:14px}.hero-dots{position:absolute;z-index:3;right:28px;bottom:15px;display:flex;gap:6px}.hero-dot{width:7px;height:7px;padding:0;border:0;border-radius:999px;background:rgba(255,255,255,.42);cursor:pointer;transition:width .2s ease,background .2s ease}.hero-dot.active{width:22px;background:#fff}
 .dashboard-kpis{grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:18px}.overview-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr);gap:18px}.merchant-row{grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr)}.distribution-layout{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:16px;align-items:center}.status-distribution{display:grid;gap:13px}.distribution-row{display:grid;grid-template-columns:90px minmax(44px,1fr) 24px;align-items:center;gap:9px;font-size:11px}.distribution-label{color:var(--ink-soft);font-weight:800}.distribution-track{height:7px;background:var(--surface-2);border-radius:20px;overflow:hidden}.distribution-track i{display:block;height:100%;border-radius:20px;min-width:3px}.distribution-row b{font-size:11px;text-align:end}.donut-wrap{min-width:0}.source-pill,.weekly-total{padding:3px 8px;border-radius:8px;background:var(--surface-2);color:var(--ink-soft);font-size:10px;font-weight:800}.link-button{border:0;background:transparent;font:inherit;font-size:11px;font-weight:800}
+.courier-location-panel{margin-bottom:18px;overflow:hidden}.courier-location-head{align-items:flex-start}.courier-location-head h3{margin:0}.courier-location-head small{display:block;max-width:500px;margin-top:4px;color:var(--ink-faint);font-size:10px;font-weight:700;line-height:1.5}.courier-location-layout{display:grid;grid-template-columns:minmax(220px,.56fr) minmax(0,1.44fr);min-height:328px;border-top:1px solid var(--border)}.courier-location-list{display:grid;align-content:start;max-height:328px;overflow:auto;border-inline-end:1px solid var(--border)}.courier-location-row{display:flex;align-items:center;gap:10px;width:100%;min-width:0;padding:12px 14px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--ink);font:inherit;text-align:start;cursor:pointer;transition:background .15s}.courier-location-row:hover,.courier-location-row.active{background:var(--primary-tint)}.courier-location-avatar{display:grid;place-items:center;width:33px;height:33px;border-radius:11px;background:var(--surface-2);color:var(--primary-strong);font-size:12px;font-weight:950;flex:none}.courier-location-row.active .courier-location-avatar{background:var(--primary);color:#fff}.courier-location-copy{display:grid;min-width:0;flex:1;gap:2px}.courier-location-copy b,.courier-location-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.courier-location-copy b{font-size:11.5px;font-weight:900}.courier-location-copy small{color:var(--ink-faint);font-size:9.5px;font-weight:700}.courier-location-presence{width:9px;height:9px;border-radius:50%;background:var(--ink-faint);box-shadow:0 0 0 4px var(--surface-2);flex:none}.courier-location-presence.online{background:var(--success);box-shadow:0 0 0 4px var(--success-tint)}.courier-location-map-wrap{position:relative;min-width:0;background:var(--surface-2)}.courier-location-map{display:block;width:100%;height:328px;border:0;background:var(--surface-2)}.courier-location-map-info{position:absolute;z-index:2;right:12px;bottom:12px;left:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 11px;border:1px solid color-mix(in srgb,var(--border) 88%,transparent);border-radius:11px;background:color-mix(in srgb,var(--surface) 93%,transparent);box-shadow:0 8px 22px rgba(0,0,0,.16);backdrop-filter:blur(8px)}.courier-location-map-info div{display:grid;min-width:0;gap:2px}.courier-location-map-info b,.courier-location-map-info small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.courier-location-map-info b{font-size:11px;font-weight:950}.courier-location-map-info small{color:var(--ink-soft);font-size:9px;font-weight:700}.courier-location-map-info a{flex:none;padding:7px 9px;border-radius:8px;background:var(--primary);color:#fff;font-size:9.5px;font-weight:900;text-decoration:none}.courier-location-empty{display:flex;align-items:center;gap:12px;padding:30px 18px;color:var(--ink-soft)}.courier-location-empty>span{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:var(--primary-tint);color:var(--primary-strong);font-size:24px}.courier-location-empty div{display:grid;gap:3px}.courier-location-empty b{font-size:12px;color:var(--ink)}.courier-location-empty small{font-size:10px;line-height:1.6}
 .financial-list{padding:3px 18px}.financial-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;border-bottom:1px solid var(--border);font-size:11.5px;font-weight:700;color:var(--ink-soft)}.financial-row:last-child{border-bottom:0}.financial-row b{font-size:12.5px;color:var(--ink)}.financial-row b.positive{color:var(--success)}.financial-row b.accent{color:var(--accent)}.table-wrap{overflow-x:auto}.merchant-cell{display:flex;align-items:center;gap:9px;min-width:175px}.merchant-avatar{display:grid;place-items:center;width:31px;height:31px;border-radius:11px;background:var(--primary-tint);color:var(--primary-strong);font-size:12px;font-weight:950}.merchant-cell b,.merchant-cell small{display:block}.merchant-cell small{margin-top:2px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-faint);font-size:10px}.positive{color:var(--success)}.text-muted{color:var(--ink-faint)}.notification-list{min-height:183px}.notification-list .notif-item{padding:13px 16px}.notif-body{min-width:0}.notif-body b,.notif-body span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.notif-body span{margin-top:3px;color:var(--ink-soft);font-size:10.5px}.notif-time{margin-inline-start:auto;white-space:nowrap;color:var(--ink-faint);font-size:9.5px}.weekly-panel{margin-top:0}.week-chart{height:135px;gap:13px;padding:6px 8px 0}.week-col{position:relative;display:flex;flex:1;min-width:30px;height:100%;align-items:center;flex-direction:column;justify-content:flex-end;gap:7px}.week-rail{position:relative;display:flex;width:100%;height:86px;align-items:flex-end;border-radius:7px;background:var(--surface-2);overflow:hidden}.week-bar{width:100%;border-radius:7px 7px 0 0;background:linear-gradient(180deg,var(--primary),var(--primary-strong))}.week-value{font-size:10px;color:var(--ink-soft)}.week-label{font-size:10px;color:var(--ink-faint);font-weight:800}.tracking{color:var(--primary-strong);font-weight:900}.tbl td small{display:block;margin-top:3px;font-size:10px}.tbl td{white-space:nowrap}
-@media(max-width:1180px){.dashboard-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.overview-grid,.merchant-row{grid-template-columns:1fr}.distribution-layout{grid-template-columns:minmax(0,1fr) 180px}}
+@media(max-width:1180px){.dashboard-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.overview-grid,.merchant-row{grid-template-columns:1fr}.distribution-layout{grid-template-columns:minmax(0,1fr) 180px}.courier-location-layout{grid-template-columns:250px minmax(0,1fr)}}
 @media(max-width:760px){.dashboard-hero-slide{padding-inline:52px 52px}.dashboard-hero-metric{min-width:112px;min-height:102px}.dashboard-hero-metric strong{font-size:25px}.dashboard-hero-copy h2{font-size:19px}}
-@media(max-width:650px){.dashboard-hero-carousel{height:200px;margin-inline:-2px;border-radius:17px}.dashboard-hero-slide{padding:23px 20px 25px}.dashboard-hero-copy{max-width:100%}.dashboard-hero-copy h2{font-size:19px}.dashboard-hero-copy p{max-width:310px;font-size:10.5px}.dashboard-hero-action{margin-top:12px;padding:7px 10px}.dashboard-hero-metric{display:none}.hero-arrow{display:none}.hero-dots{right:20px;bottom:13px}.distribution-layout{grid-template-columns:1fr}.donut-wrap{max-width:180px;margin:auto}.financial-list{padding-inline:15px}.week-chart{gap:7px;padding-inline:0}.week-label{font-size:8.5px}.dashboard-kpis{gap:10px}.tbl th,.tbl td{padding:10px}}
+@media(max-width:650px){.dashboard-hero-carousel{height:200px;margin-inline:-2px;border-radius:17px}.dashboard-hero-slide{padding:23px 20px 25px}.dashboard-hero-copy{max-width:100%}.dashboard-hero-copy h2{font-size:19px}.dashboard-hero-copy p{max-width:310px;font-size:10.5px}.dashboard-hero-action{margin-top:12px;padding:7px 10px}.dashboard-hero-metric{display:none}.hero-arrow{display:none}.hero-dots{right:20px;bottom:13px}.distribution-layout{grid-template-columns:1fr}.donut-wrap{max-width:180px;margin:auto}.financial-list{padding-inline:15px}.week-chart{gap:7px;padding-inline:0}.week-label{font-size:8.5px}.dashboard-kpis{gap:10px}.tbl th,.tbl td{padding:10px}.courier-location-layout{grid-template-columns:1fr}.courier-location-list{display:flex;max-height:none;overflow:auto;border-inline-end:0;border-bottom:1px solid var(--border)}.courier-location-row{min-width:200px;border-bottom:0;border-inline-end:1px solid var(--border)}.courier-location-map,.courier-location-layout{min-height:295px}.courier-location-map{height:295px}.courier-location-map-info{right:9px;bottom:9px;left:9px}.courier-location-map-info small{max-width:190px}}
 </style>

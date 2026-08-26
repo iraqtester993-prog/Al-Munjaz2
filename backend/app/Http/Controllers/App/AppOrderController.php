@@ -107,6 +107,9 @@ class AppOrderController extends Controller
             'phone2' => $o->phone2,
             'address_ar' => $o->address_ar,
             'address_en' => $o->address_en,
+            'pickup_latitude' => $o->pickup_latitude === null ? null : (float) $o->pickup_latitude,
+            'pickup_longitude' => $o->pickup_longitude === null ? null : (float) $o->pickup_longitude,
+            'pickup_location_label' => $o->pickup_location_label,
             'order_type' => $o->order_type,
             'delivery_vehicle' => $o->delivery_vehicle,
             'weight_grams' => (int) ($o->weight_grams ?? 0),
@@ -166,11 +169,19 @@ class AppOrderController extends Controller
 
     public function store(Request $request)
     {
+        $user = $request->user();
+        abort_unless($user?->role === 'merchant', 403, 'إنشاء الطلبات متاح للتاجر فقط.');
+
         $data = $request->validate([
             'customer_name_ar' => ['required', 'string', 'max:120'],
             'phone' => ['required', 'string', 'max:30'],
             'phone2' => ['nullable', 'string', 'max:30'],
             'address_ar' => ['required', 'string', 'max:255'],
+            // A courier must always know where to collect a merchant order.
+            // Require the whole pickup tuple server-side, not just in the UI.
+            'pickup_latitude' => ['required', 'numeric', 'between:-90,90'],
+            'pickup_longitude' => ['required', 'numeric', 'between:-180,180'],
+            'pickup_location_label' => ['required', 'string', 'max:255'],
             'order_type' => ['nullable', 'string', 'max:60'],
             'delivery_vehicle' => ['required', Rule::in(['normal', 'bike', 'sedan', 'suv', 'truck'])],
             'weight_grams' => ['nullable', 'integer', 'min:0', 'max:1000000'],
@@ -181,7 +192,6 @@ class AppOrderController extends Controller
         ]);
 
         $tenant = TenantContext::tenant();
-        $user = $request->user();
 
         abort_unless(
             $user->provinces()->whereKey($data['province_id'])->exists(),
@@ -250,6 +260,9 @@ class AppOrderController extends Controller
             'phone' => ['required', 'string', 'max:30'],
             'phone2' => ['nullable', 'string', 'max:30'],
             'address_ar' => ['required', 'string', 'max:255'],
+            'pickup_latitude' => ['required', 'numeric', 'between:-90,90'],
+            'pickup_longitude' => ['required', 'numeric', 'between:-180,180'],
+            'pickup_location_label' => ['required', 'string', 'max:255'],
             'order_type' => ['nullable', 'string', 'max:60'],
             'delivery_vehicle' => ['required', Rule::in(['normal', 'bike', 'sedan', 'suv', 'truck'])],
             'weight_grams' => ['nullable', 'integer', 'min:0', 'max:1000000'],

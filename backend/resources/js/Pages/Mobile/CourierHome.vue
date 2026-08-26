@@ -6,6 +6,7 @@ import AppShell from '../../Components/AppShell.vue'
 import HeroSlider from '../../Components/HeroSlider.vue'
 import SheetModal from '../../Components/SheetModal.vue'
 import StatusBadge from '../../Components/StatusBadge.vue'
+import { hasPickupLocation, pickupLocationLabel, pickupNavigationHref } from '../../Utils/pickupLocation'
 
 const props = defineProps({
     stats: { type: Object, required: true },
@@ -230,6 +231,21 @@ onUnmounted(() => window.clearInterval(ticker))
                 <div class="detail-row"><span class="text-muted">{{ t('Available Budget') }}</span><b class="mono">{{ fmt(stats.budget) }} {{ t('IQD') }}</b></div>
                 <div v-if="selected.pickup_deadline_at" class="detail-row"><span class="text-muted">{{ t('Time to reach the merchant') }}</span><b class="mono" :style="{ color: countdownColor(selected) }">{{ remainingText(selected) }}</b></div>
 
+                <section v-if="hasPickupLocation(selected)" class="courier-pickup-location-card">
+                    <div class="courier-pickup-location-head">
+                        <span class="courier-pickup-location-icon" aria-hidden="true">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 5.2-8 11-8 11S4 15.2 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" /></svg>
+                        </span>
+                        <span><small>{{ t('Merchant pickup location') }}</small><b>{{ pickupLocationLabel(selected, t('Merchant pickup location')) }}</b></span>
+                    </div>
+                    <p>{{ t('The merchant saved this pickup point with the order.') }}</p>
+                    <a v-if="selected.courier_id" class="courier-pickup-location-action" :href="pickupNavigationHref(selected)">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 3-7.5 18-3.7-7.8L2 9.5 21 3Z" /><path d="m9.8 13.2 4.4-4.4" /></svg>
+                        {{ t('Open navigation apps') }}
+                    </a>
+                    <span v-else class="courier-pickup-location-locked">{{ t('Accept the order to open navigation.') }}</span>
+                </section>
+
                 <section v-if="selected.merchant" class="courier-merchant-card">
                     <span class="merchant-card-label">{{ t('Merchant') }}</span>
                     <div class="merchant-card-profile">
@@ -300,6 +316,7 @@ onUnmounted(() => window.clearInterval(ticker))
 .courier-assigned-row small { display:block; margin-top:1px; color:var(--ink-faint); font-size:10px; }
 .order-end :deep(.badge) { margin-top:5px; }
 .detail-note { align-items:flex-start; }
+.courier-pickup-location-card{display:grid;gap:8px;margin-top:14px;padding:13px;border:1.5px solid color-mix(in srgb,var(--success) 42%,var(--border));border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--success-tint) 74%,var(--surface)),var(--surface))}.courier-pickup-location-head{display:flex;align-items:center;gap:9px}.courier-pickup-location-icon{display:grid;place-items:center;width:37px;height:37px;flex:none;border-radius:11px;color:#fff;background:var(--success)}.courier-pickup-location-head span:last-child{display:grid;gap:2px;min-width:0}.courier-pickup-location-head small{color:var(--ink-faint);font-size:9.5px;font-weight:800}.courier-pickup-location-head b{overflow:hidden;color:var(--ink);font-size:12px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.courier-pickup-location-card p{margin:0;color:var(--ink-soft);font-size:10px;font-weight:700;line-height:1.55}.courier-pickup-location-action{display:flex;align-items:center;justify-content:center;gap:6px;min-height:37px;border-radius:10px;color:#fff;background:var(--primary);font-size:10.5px;font-weight:900;text-decoration:none;box-shadow:0 4px 10px rgba(11,110,104,.16)}.courier-pickup-location-locked{display:block;padding:8px 9px;border-radius:9px;color:var(--ink-soft);background:var(--surface-2);font-size:9.5px;font-weight:800;text-align:center}
 .courier-merchant-card { margin-top:14px; padding:13px; border:1.5px solid color-mix(in srgb, var(--primary) 25%, transparent); border-radius:14px; background:var(--primary-tint); }
 .merchant-card-label { display:block; margin-bottom:9px; color:var(--primary-strong); font-size:11px; font-weight:900; }
 .merchant-card-profile { display:flex; align-items:center; gap:9px; }

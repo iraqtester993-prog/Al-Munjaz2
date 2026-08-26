@@ -281,6 +281,9 @@ class AdminOrderController extends Controller
             'customer_name_ar' => $order->customer_name_ar,
             'phone' => $order->phone,
             'address_ar' => $order->address_ar,
+            'pickup_latitude' => $order->pickup_latitude === null ? null : (float) $order->pickup_latitude,
+            'pickup_longitude' => $order->pickup_longitude === null ? null : (float) $order->pickup_longitude,
+            'pickup_location_label' => $order->pickup_location_label,
             'price' => (int) $order->price,
             'fee' => $fee,
             // The pricing quote is immutable; the applied amount is written

@@ -13,6 +13,10 @@ const emit = defineEmits(['close', 'saved'])
 
 const submitting = ref(false)
 const vehiclePickerOpen = ref(false)
+const pickupLocationBusy = ref(false)
+const pickupLocationMessage = ref('')
+const pickupLocationError = ref('')
+const manualCoordinatesOpen = ref(false)
 const page = usePage()
 const provinces = computed(() => page.props.auth?.provinces || [])
 const locale = computed(() => page.props.locale || 'ar')
@@ -41,6 +45,9 @@ const form = useForm({
     phone2: '',
     address_ar: '',
     address_en: '',
+    pickup_latitude: '',
+    pickup_longitude: '',
+    pickup_location_label: '',
     order_type: '',
     delivery_vehicle: 'normal',
     vehicle_note: '',
@@ -70,6 +77,28 @@ const customerAddress = computed({
     },
 })
 
+const hasPickupCoordinates = computed(() => {
+    if (String(form.pickup_latitude ?? '').trim() === '' || String(form.pickup_longitude ?? '').trim() === '') {
+        return false
+    }
+
+    const latitude = Number(form.pickup_latitude)
+    const longitude = Number(form.pickup_longitude)
+
+    return Number.isFinite(latitude)
+        && Number.isFinite(longitude)
+        && latitude >= -90
+        && latitude <= 90
+        && longitude >= -180
+        && longitude <= 180
+})
+
+const pickupCoordinates = computed(() => {
+    if (!hasPickupCoordinates.value) return ''
+
+    return `${Number(form.pickup_latitude).toFixed(6)}, ${Number(form.pickup_longitude).toFixed(6)}`
+})
+
 function provinceName(province) {
     const preferred = locale.value === 'en' ? 'en' : locale.value === 'ku' ? 'ku' : 'ar'
 
@@ -92,6 +121,9 @@ watch(
                 phone2: props.order.phone2 || '',
                 address_ar: props.order.address_ar || '',
                 address_en: props.order.address_en || '',
+                pickup_latitude: props.order.pickup_latitude ?? '',
+                pickup_longitude: props.order.pickup_longitude ?? '',
+                pickup_location_label: props.order.pickup_location_label || '',
                 order_type: props.order.order_type || '',
                 delivery_vehicle: props.order.delivery_vehicle || 'normal',
                 vehicle_note: props.order.vehicle_note || '',
@@ -105,6 +137,9 @@ watch(
             form.province_id = provinces.value[0]?.id || ''
         }
         vehiclePickerOpen.value = false
+        manualCoordinatesOpen.value = false
+        pickupLocationMessage.value = ''
+        pickupLocationError.value = ''
     }
 )
 
@@ -113,13 +148,78 @@ function chooseVehicle(value) {
     vehiclePickerOpen.value = false
 }
 
+function defaultPickupLabel() {
+    const shopName = page.props.auth?.user?.shop_name || page.props.auth?.user?.name
+
+    return shopName ? `${shopName} — ${t('Current location')}` : t('Merchant pickup location')
+}
+
+function locationFailureMessage(error) {
+    if (error?.code === error?.PERMISSION_DENIED || error?.code === 1) {
+        return t('Allow location from your device settings, then return here.')
+    }
+
+    if (error?.code === error?.TIMEOUT || error?.code === 3) {
+        return t('Location request timed out. Move to an open area and try again.')
+    }
+
+    return t('Could not access your location. Check your device settings and try again.')
+}
+
+function capturePickupLocation() {
+    pickupLocationError.value = ''
+    pickupLocationMessage.value = ''
+
+    if (typeof window === 'undefined' || !('geolocation' in navigator)) {
+        pickupLocationError.value = t('Location access is not available on this device.')
+        return
+    }
+
+    if (!window.isSecureContext) {
+        pickupLocationError.value = t('Location access requires a secure connection.')
+        return
+    }
+
+    pickupLocationBusy.value = true
+    navigator.geolocation.getCurrentPosition(
+        (position) => {
+            form.pickup_latitude = Number(position.coords.latitude.toFixed(7))
+            form.pickup_longitude = Number(position.coords.longitude.toFixed(7))
+            form.pickup_location_label = String(form.pickup_location_label || '').trim() || defaultPickupLabel()
+            form.clearErrors('pickup_latitude', 'pickup_longitude', 'pickup_location_label')
+            pickupLocationMessage.value = t('Pickup location captured. You can edit its label before saving.')
+            pickupLocationBusy.value = false
+        },
+        (error) => {
+            pickupLocationError.value = locationFailureMessage(error)
+            pickupLocationBusy.value = false
+        },
+        {
+            enableHighAccuracy: true,
+            timeout: 18000,
+            maximumAge: 60000,
+        },
+    )
+}
+
+function clearPickupLocation() {
+    form.pickup_latitude = ''
+    form.pickup_longitude = ''
+    form.pickup_location_label = ''
+    form.clearErrors('pickup_latitude', 'pickup_longitude', 'pickup_location_label')
+    pickupLocationMessage.value = ''
+    pickupLocationError.value = ''
+}
+
 function submit() {
-    if (!form.customer_name_ar || !form.phone || !form.address_ar || !form.price) {
+    if (!form.customer_name_ar || !form.phone || !form.address_ar || !form.price || !hasPickupCoordinates.value || !String(form.pickup_location_label || '').trim()) {
         form.setError({
             customer_name_ar: !form.customer_name_ar ? t('This field is required') : '',
             phone: !form.phone ? t('This field is required') : '',
             address_ar: !form.address_ar ? t('This field is required') : '',
             price: !form.price ? t('This field is required') : '',
+            pickup_latitude: !hasPickupCoordinates.value ? t('Pickup location is required before saving the order.') : '',
+            pickup_location_label: !String(form.pickup_location_label || '').trim() ? t('Enter a clear pickup location label.') : '',
         })
         return
     }
@@ -131,6 +231,9 @@ function submit() {
         phone2: form.phone2,
         address_ar: form.address_ar,
         address_en: form.address_en,
+        pickup_latitude: Number(form.pickup_latitude),
+        pickup_longitude: Number(form.pickup_longitude),
+        pickup_location_label: String(form.pickup_location_label).trim(),
         order_type: form.order_type,
         delivery_vehicle: form.delivery_vehicle,
         vehicle_note: form.vehicle_note,
@@ -200,6 +303,47 @@ function submit() {
                 <input v-model="customerAddress" :placeholder="t('Address')" />
                 <span v-if="form.errors.address_ar" class="field-error">{{ form.errors.address_ar }}</span>
             </div>
+            <section class="pickup-location-picker" :class="{ captured: hasPickupCoordinates, 'has-error': form.errors.pickup_latitude || form.errors.pickup_location_label }">
+                <div class="pickup-location-head">
+                    <span class="pickup-location-icon" aria-hidden="true">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 5.2-8 11-8 11S4 15.2 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" /></svg>
+                    </span>
+                    <span class="pickup-location-copy">
+                        <b>{{ t('Merchant pickup location') }}</b>
+                        <small v-if="hasPickupCoordinates">{{ pickupCoordinates }}</small>
+                        <small v-else>{{ t('Save the merchant location with this order so the courier can open it in their preferred navigation app.') }}</small>
+                    </span>
+                    <button type="button" class="pickup-location-action" :disabled="pickupLocationBusy" @click="capturePickupLocation">
+                        <span v-if="pickupLocationBusy" class="loader"></span>
+                        <span v-else>{{ hasPickupCoordinates ? t('Update location') : t('Use current location') }}</span>
+                    </button>
+                </div>
+
+                <div v-if="hasPickupCoordinates" class="pickup-location-details">
+                    <div class="field pickup-location-label-field" :class="{ 'has-error': form.errors.pickup_location_label }">
+                        <label>{{ t('Pickup location label') }}</label>
+                        <input v-model="form.pickup_location_label" :placeholder="t('Example: Al-Munjaz store — Karrada')" maxlength="255" />
+                        <span v-if="form.errors.pickup_location_label" class="field-error">{{ form.errors.pickup_location_label }}</span>
+                    </div>
+                    <button type="button" class="pickup-location-clear" @click="clearPickupLocation">{{ t('Clear location') }}</button>
+                </div>
+
+                <button type="button" class="pickup-location-manual" @click="manualCoordinatesOpen = !manualCoordinatesOpen">
+                    {{ manualCoordinatesOpen ? t('Hide manual coordinates') : t('Enter coordinates manually') }}
+                </button>
+                <div v-if="manualCoordinatesOpen" class="pickup-coordinate-grid">
+                    <div class="field">
+                        <label>{{ t('Latitude') }}</label>
+                        <input v-model="form.pickup_latitude" inputmode="decimal" dir="ltr" :placeholder="t('Latitude')" />
+                    </div>
+                    <div class="field">
+                        <label>{{ t('Longitude') }}</label>
+                        <input v-model="form.pickup_longitude" inputmode="decimal" dir="ltr" :placeholder="t('Longitude')" />
+                    </div>
+                </div>
+                <small v-if="pickupLocationMessage" class="pickup-location-message success">{{ pickupLocationMessage }}</small>
+                <small v-if="pickupLocationError || form.errors.pickup_latitude" class="pickup-location-message error">{{ pickupLocationError || form.errors.pickup_latitude }}</small>
+            </section>
             <div class="field" :class="{ 'has-error': form.errors.province_id }">
                 <label>{{ t('Delivery Governorate') }}</label>
                 <select v-model="form.province_id" required>
@@ -261,5 +405,6 @@ function submit() {
 
 <style scoped>
 .order-track-card{display:flex;align-items:center;gap:9px;margin-bottom:14px;padding:10px 12px;border-radius:11px;background:var(--primary-tint);color:var(--primary-strong)}.order-track-icon{display:grid;width:29px;height:29px;place-items:center;flex:none;border-radius:8px;background:var(--primary);color:#fff}.order-track-copy{display:grid;gap:2px;min-width:0}.order-track-copy small{color:var(--ink-soft);font-size:10px;font-weight:700}.order-track-copy strong{font-size:13px;font-weight:900;letter-spacing:.3px}.order-track-hint{margin-inline-start:auto;max-width:122px;color:var(--ink-soft);font-size:9px;font-weight:700;line-height:1.45;text-align:end}
+.pickup-location-picker{display:grid;gap:10px;margin:12px 0;padding:12px;border:1.5px solid color-mix(in srgb,var(--primary) 26%,var(--border));border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--primary-tint) 68%,var(--surface)),var(--surface));transition:border-color .18s,background .18s}.pickup-location-picker.captured{border-color:color-mix(in srgb,var(--success) 50%,var(--border));background:linear-gradient(135deg,color-mix(in srgb,var(--success-tint) 64%,var(--surface)),var(--surface))}.pickup-location-picker.has-error{border-color:var(--danger)}.pickup-location-head{display:flex;align-items:center;gap:9px}.pickup-location-icon{display:grid;place-items:center;width:38px;height:38px;flex:none;border-radius:11px;background:var(--primary);color:#fff}.pickup-location-picker.captured .pickup-location-icon{background:var(--success)}.pickup-location-copy{display:grid;min-width:0;flex:1;gap:2px}.pickup-location-copy b{color:var(--ink);font-size:11.5px;font-weight:900}.pickup-location-copy small{color:var(--ink-soft);font-size:9.5px;font-weight:700;line-height:1.45}.pickup-location-action{min-height:35px;display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:none;padding:8px 10px;border:0;border-radius:9px;background:var(--primary);color:#fff;font:inherit;font-size:9.5px;font-weight:900;cursor:pointer}.pickup-location-action:disabled{cursor:wait;opacity:.72}.pickup-location-action .loader{width:13px;height:13px;border-width:2px}.pickup-location-details{display:flex;align-items:end;gap:9px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--primary) 18%,var(--border))}.pickup-location-label-field{flex:1;margin:0}.pickup-location-label-field input{min-height:39px}.pickup-location-clear,.pickup-location-manual{border:0;color:var(--primary-strong);background:transparent;font:inherit;font-size:9.5px;font-weight:850;cursor:pointer}.pickup-location-clear{min-height:39px;padding:0 2px;color:var(--danger)}.pickup-location-manual{justify-self:start;padding:0;text-decoration:underline;text-underline-offset:3px}.pickup-coordinate-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pickup-coordinate-grid .field{margin:0}.pickup-coordinate-grid input{min-height:39px}.pickup-location-message{display:block;margin-top:-3px;font-size:9.5px;font-weight:750;line-height:1.55}.pickup-location-message.success{color:var(--success)}.pickup-location-message.error{color:var(--danger)}
 .delivery-vehicle-picker{position:relative}.delivery-vehicle-trigger{width:100%;display:flex;align-items:center;gap:11px;padding:12px;border:1.5px solid var(--primary);border-radius:13px;background:var(--primary-tint);color:var(--ink);font:inherit;text-align:start;cursor:pointer;transition:.18s ease}.delivery-vehicle-trigger.open{background:var(--surface);box-shadow:0 5px 16px rgba(11,110,104,.14)}.vehicle-choice-icon{width:38px;height:38px;border-radius:11px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;flex:none}.vehicle-choice-copy{flex:1;min-width:0}.vehicle-choice-copy small{display:block;margin-bottom:3px;color:var(--ink-soft);font-size:10px;font-weight:700}.vehicle-choice-copy strong{display:block;color:var(--primary-strong);font-size:15px;font-weight:900}.vehicle-choice-chev{color:var(--primary-strong);display:flex;transition:transform .18s}.delivery-vehicle-trigger.open .vehicle-choice-chev{transform:rotate(180deg)}.delivery-vehicle-menu{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:0;opacity:0;overflow:hidden;margin-top:0;transition:max-height .25s ease,opacity .18s ease,margin-top .25s ease}.delivery-vehicle-menu.open{max-height:300px;opacity:1;margin-top:9px}.delivery-vehicle-option{display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border);border-radius:11px;background:var(--surface);color:var(--ink);font:inherit;text-align:start;cursor:pointer;transition:.15s ease}.delivery-vehicle-option:hover,.delivery-vehicle-option.selected{border-color:var(--primary);background:var(--primary-tint);box-shadow:0 3px 10px rgba(11,110,104,.1)}.option-icon{width:29px;height:29px;border-radius:9px;background:var(--surface-2);color:var(--primary-strong);display:flex;align-items:center;justify-content:center;flex:none}.delivery-vehicle-option.selected .option-icon{background:var(--primary);color:#fff}.delivery-vehicle-option span:last-child{font-size:12px;font-weight:800}@media(max-width:360px){.delivery-vehicle-menu{grid-template-columns:1fr}.delivery-vehicle-menu.open{max-height:360px}}
 </style>

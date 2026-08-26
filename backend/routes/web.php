@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Admin\AdminBranchTransferController;
 use App\Http\Controllers\Admin\AdminCashboxController;
+use App\Http\Controllers\Admin\AdminCourierLocationController;
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminFinanceController;
 use App\Http\Controllers\Admin\AdminNotificationController;
@@ -18,6 +19,7 @@ use App\Http\Controllers\App\AppProfileController;
 use App\Http\Controllers\App\AppReportController;
 use App\Http\Controllers\App\AppWalletController;
 use App\Http\Controllers\App\ChatController;
+use App\Http\Controllers\App\CourierLocationController;
 use App\Http\Controllers\App\DashboardController;
 use App\Http\Controllers\App\NotificationController;
 use App\Http\Controllers\App\PushSubscriptionController;
@@ -132,6 +134,15 @@ Route::middleware(['auth', 'active'])->group(function () {
     */
     Route::prefix('app')->middleware('role:merchant,courier,pickup_courier,delivery_courier,transporter')->group(function () {
         Route::post('duty', [DashboardController::class, 'duty'])->name('app.duty');
+        // The phone asks the operating system for location permission. This
+        // endpoint only receives the current, consented position and replaces
+        // the prior one; it never stores a courier route history.
+        Route::post('location', [CourierLocationController::class, 'store'])
+            ->middleware(['role:courier,pickup_courier,delivery_courier,transporter', 'throttle:120,1'])
+            ->name('app.location.update');
+        Route::delete('location', [CourierLocationController::class, 'destroy'])
+            ->middleware('role:courier,pickup_courier,delivery_courier,transporter')
+            ->name('app.location.clear');
         Route::get('orders', [AppOrderController::class, 'index'])->name('app.orders');
         Route::get('reports', [AppReportController::class, 'index'])->name('app.reports')->middleware('role:merchant');
         Route::post('orders', [AppOrderController::class, 'store'])->name('app.orders.store');
@@ -176,6 +187,7 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     Route::post('orders/{order}/branches', [AdminOrderController::class, 'assignBranches'])->name('admin.orders.branches');
     Route::get('merchants', [AdminUserController::class, 'merchants'])->name('admin.merchants');
     Route::get('couriers', [AdminUserController::class, 'couriers'])->name('admin.couriers');
+    Route::get('couriers/locations', [AdminCourierLocationController::class, 'index'])->name('admin.couriers.locations');
     Route::post('users/{user}/status', [AdminUserController::class, 'status'])->name('admin.users.status');
     Route::get('users/{user}/documents/{document}', [AdminUserController::class, 'showDocument'])->name('admin.users.documents.show');
     Route::post('users/{user}/documents/{document}/review', [AdminUserController::class, 'reviewDocument'])->name('admin.users.documents.review');

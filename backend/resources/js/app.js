@@ -30,6 +30,8 @@ const ziggyRoutes = {
     'app.orders.return-to-merchant': { uri: 'app/orders/{order}/return-to-merchant', methods: ['POST'] },
     'app.orders.claim': { uri: 'app/orders/{order}/claim', methods: ['POST'] },
     'app.duty': { uri: 'app/duty', methods: ['POST'] },
+    'app.location.update': { uri: 'app/location', methods: ['POST'] },
+    'app.location.clear': { uri: 'app/location', methods: ['DELETE'] },
     'app.wallet': { uri: 'app/wallet', methods: ['GET', 'HEAD'] },
     'app.wallet.withdraw': { uri: 'app/wallet/withdraw', methods: ['POST'] },
     'app.wallet.handover': { uri: 'app/wallet/handover', methods: ['POST'] },

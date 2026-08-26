@@ -10,6 +10,8 @@ use App\Http\Controllers\Api\V1\OrderController;
 use App\Http\Controllers\Api\V1\ProvinceController;
 use App\Http\Controllers\Api\V1\ReportController;
 use App\Http\Controllers\Api\V1\WalletController;
+use App\Http\Controllers\Admin\AdminCourierLocationController;
+use App\Http\Controllers\App\CourierLocationController;
 use App\Http\Middleware\SetTenantContext;
 use Illuminate\Support\Facades\Route;
 
@@ -21,6 +23,8 @@ Route::prefix('v1')->group(function (): void {
         Route::get('/me', [AuthController::class, 'me']);
         Route::post('/auth/logout', [AuthController::class, 'logout']);
         Route::get('/dashboard', [DashboardController::class, 'show']);
+        Route::post('/courier/location', [CourierLocationController::class, 'store'])->middleware('throttle:120,1');
+        Route::delete('/courier/location', [CourierLocationController::class, 'destroy']);
         Route::get('/wallet', [WalletController::class, 'show']);
         Route::get('/documents', [DocumentController::class, 'index']);
         Route::post('/documents', [DocumentController::class, 'store']);
@@ -45,6 +49,7 @@ Route::prefix('v1')->group(function (): void {
         Route::get('/admin/users', [AdminController::class, 'users']);
         Route::patch('/admin/users/{user}', [AdminController::class, 'updateUser']);
         Route::get('/admin/couriers', [AdminController::class, 'couriers']);
+        Route::get('/admin/couriers/locations', [AdminCourierLocationController::class, 'index']);
         Route::patch('/admin/orders/{order}/courier', [AdminController::class, 'assignCourier']);
         Route::match(['get', 'put'], '/admin/settings', [AdminController::class, 'settings']);
         Route::get('/admin/reports/finance', [ReportController::class, 'finance']);

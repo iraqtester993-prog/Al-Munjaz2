@@ -77,6 +77,11 @@ class OrderController extends Controller
             'phone2' => ['nullable', 'string', 'max:30'],
             'address_ar' => ['required', 'string', 'max:255'],
             'address_en' => ['nullable', 'string', 'max:255'],
+            // The pickup point is part of every merchant order. Keeping this
+            // required in the API prevents a client from bypassing the PWA.
+            'pickup_latitude' => ['required', 'numeric', 'between:-90,90'],
+            'pickup_longitude' => ['required', 'numeric', 'between:-180,180'],
+            'pickup_location_label' => ['required', 'string', 'max:255'],
             'order_type' => ['nullable', 'string', 'max:60'],
             'delivery_vehicle' => ['required', Rule::in(['normal', 'bike', 'sedan', 'suv', 'truck'])],
             'weight_grams' => ['nullable', 'integer', 'min:0', 'max:1000000'],
@@ -362,6 +367,9 @@ class OrderController extends Controller
             'address' => $order->address_ar,
             'address_ar' => $order->address_ar,
             'address_en' => $order->address_en,
+            'pickup_latitude' => $order->pickup_latitude === null ? null : (float) $order->pickup_latitude,
+            'pickup_longitude' => $order->pickup_longitude === null ? null : (float) $order->pickup_longitude,
+            'pickup_location_label' => $order->pickup_location_label,
             'order_type' => $order->order_type,
             'delivery_vehicle' => $order->delivery_vehicle,
             'weight_grams' => (int) ($order->weight_grams ?? 0),

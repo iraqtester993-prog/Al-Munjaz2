@@ -10,12 +10,13 @@ use App\Models\Tenant;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Models\Wallet;
+use App\Services\CourierLocationService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
 class AdminDashboardController extends Controller
 {
-    public function index(Request $request)
+    public function index(Request $request, CourierLocationService $locations)
     {
         $today = today();
         // The platform dashboard is intentionally cross-tenant.  Be
@@ -167,6 +168,9 @@ class AdminDashboardController extends Controller
             'recentOrders' => $recentOrders,
             'recentNotifs' => $recentNotifs,
             'topMerchants' => $topMerchants,
+            // Current map pins only. The location service intentionally
+            // exposes no route history or client/device metadata.
+            'courierLocations' => $locations->dashboardRows(),
         ]);
     }
 

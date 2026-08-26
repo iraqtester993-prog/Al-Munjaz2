@@ -45,6 +45,7 @@ class User extends Authenticatable
         'tenant_id', 'branch_id', 'name', 'username', 'email', 'phone', 'password',
         'role', 'status', 'vehicle', 'shop_name', 'address', 'identity_number', 'theme', 'locale',
         'is_online', 'last_active_at',
+        'current_latitude', 'current_longitude', 'location_accuracy_meters', 'location_updated_at',
     ];
 
     protected $hidden = [
@@ -58,6 +59,10 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'phone_verified_at' => 'datetime',
             'last_active_at' => 'datetime',
+            'location_updated_at' => 'datetime',
+            'current_latitude' => 'decimal:7',
+            'current_longitude' => 'decimal:7',
+            'location_accuracy_meters' => 'integer',
             'identity_number' => 'encrypted',
             'is_online' => 'boolean',
             'password' => 'hashed',
