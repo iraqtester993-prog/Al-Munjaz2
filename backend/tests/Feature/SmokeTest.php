@@ -5,7 +5,10 @@ namespace Tests\Feature;
 use App\Models\Chat;
 use App\Models\Branch;
 use App\Models\Document;
+use App\Models\Notification;
 use App\Models\Order;
+use App\Models\PushSubscription;
+use App\Models\Setting;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -39,11 +42,11 @@ class SmokeTest extends TestCase
         $this->get('/pwa/worker')
             ->assertOk()
             ->assertHeader('content-type', 'application/javascript; charset=utf-8')
-            ->assertSee('almunjaz-shell-v13');
+            ->assertSee('almunjaz-shell-v15');
         $this->get('/sw.js')
             ->assertOk()
             ->assertHeader('content-type', 'application/javascript; charset=utf-8')
-            ->assertSee('almunjaz-shell-v13');
+            ->assertSee('almunjaz-shell-v15');
     }
 
     public function test_translation_dictionary_uses_the_selected_locale_before_the_fallback(): void
@@ -163,6 +166,30 @@ class SmokeTest extends TestCase
             ->assertInertia(fn (Assert $p) => $p->component('Mobile/Wallet'));
     }
 
+    public function test_mobile_notification_feed_returns_new_rows_and_the_total_unread_count(): void
+    {
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+        $notification = Notification::create([
+            'tenant_id' => $merchant->tenant_id,
+            'user_id' => $merchant->id,
+            'type' => 'account',
+            'title_ar' => 'تحديث اختبار',
+            'title_en' => 'Test update',
+            'title_ku' => 'نوێکردنەوەی تاقیکاری',
+            'body_ar' => 'ظهر الإشعار الجديد في صندوق الوارد.',
+        ]);
+
+        $response = $this->actingAs($merchant)
+            ->getJson('/app/notifications/feed?after='.($notification->id - 1))
+            ->assertOk()
+            ->assertJsonPath('latest_id', $notification->id)
+            ->assertJsonPath('notifications.0.id', $notification->id)
+            ->assertJsonPath('notifications.0.read', false)
+            ->assertJsonStructure(['notifications', 'unread', 'latest_id']);
+
+        $this->assertGreaterThanOrEqual(1, $response->json('unread'));
+    }
+
     public function test_admin_flow(): void
     {
         $admin = User::where('role', 'admin')->first();
@@ -195,6 +222,105 @@ class SmokeTest extends TestCase
         $this->actingAs($admin)->get('/dashboard/chat')
             ->assertOk()
             ->assertInertia(fn (Assert $p) => $p->component('Admin/Chat'));
+
+        $this->actingAs($admin)->get('/dashboard/settings')
+            ->assertOk()
+            ->assertInertia(fn (Assert $p) => $p->component('Admin/Settings'));
+    }
+
+    public function test_admin_can_save_branding_and_send_general_or_targeted_notifications(): void
+    {
+        $admin = User::where('role', 'admin')->firstOrFail();
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+
+        $this->actingAs($admin)->post('/dashboard/settings', [
+            'brand_name' => 'المنجز السريع',
+            'brand_tagline' => 'منصة توصيل متكاملة',
+            'support_phone' => '07700000000',
+            'support_email' => 'support@our-qiq.com',
+            'currency' => 'IQD',
+            'delivery_fee' => 3500,
+            'order_expiry_minutes' => 30,
+            'pickup_eta_minutes' => 20,
+        ])->assertRedirect();
+
+        $this->assertSame('المنجز السريع', Setting::branding()['name']);
+        $this->assertSame(3500, (int) Setting::get('delivery_fee'));
+
+        $this->actingAs($admin)->post('/dashboard/notifications', [
+            'audience' => 'user',
+            'target_user_id' => $merchant->id,
+            'type' => 'announcement',
+            'title_ar' => 'إشعار اختبار',
+            'title_en' => 'Test announcement',
+            'title_ku' => 'ئاگادارکردنەوەی تاقیکاری',
+            'body_ar' => 'وصل إشعار الإدارة إلى صندوق الوارد.',
+            'body_en' => 'The dashboard delivered an inbox notification.',
+            'body_ku' => 'ئاگادارکردنەوەکە گەیشتە ناو سندووقی هاتووەکان.',
+        ])->assertRedirect();
+
+        $this->assertDatabaseHas('notification_campaigns', [
+            'audience' => 'user',
+            'target_user_id' => $merchant->id,
+            'recipient_count' => 1,
+            'title_ar' => 'إشعار اختبار',
+        ]);
+        $this->assertDatabaseHas('notifications', [
+            'user_id' => $merchant->id,
+            'title_ar' => 'إشعار اختبار',
+        ]);
+    }
+
+    public function test_mobile_user_can_store_a_browser_push_subscription_when_vapid_is_configured(): void
+    {
+        config([
+            'services.web_push.subject' => 'https://our-qiq.com',
+            'services.web_push.public_key' => 'test-public-key',
+            'services.web_push.private_key' => 'test-private-key',
+        ]);
+
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+
+        $this->actingAs($merchant)->getJson('/app/push/config')
+            ->assertOk()
+            ->assertJsonPath('enabled', true)
+            ->assertJsonPath('publicKey', 'test-public-key');
+
+        $this->actingAs($merchant)->postJson('/app/push/subscriptions', [
+            'endpoint' => 'https://push.example.test/subscription-1',
+            'keys' => ['p256dh' => 'public-device-key', 'auth' => 'auth-device-key'],
+            'locale' => 'ar',
+        ])->assertOk()->assertJsonPath('data.enabled', true);
+
+        $this->assertDatabaseHas('push_subscriptions', [
+            'user_id' => $merchant->id,
+            'endpoint' => 'https://push.example.test/subscription-1',
+            'locale' => 'ar',
+        ]);
+        $this->assertSame(1, PushSubscription::where('user_id', $merchant->id)->count());
+    }
+
+    public function test_new_orders_use_the_administrator_fee_and_availability_window(): void
+    {
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+        $province = $merchant->provinces()->firstOrFail();
+        Setting::set('delivery_fee', 4750);
+        Setting::set('order_expiry_minutes', 45);
+        $startedAt = now();
+
+        $this->actingAs($merchant)->post('/app/orders', [
+            'customer_name_ar' => 'عميل إعدادات',
+            'phone' => '07710009999',
+            'address_ar' => 'بغداد — الكرادة',
+            'province_id' => $province->id,
+            'delivery_vehicle' => 'normal',
+            'price' => 22000,
+        ])->assertRedirect();
+
+        $order = Order::query()->where('customer_name_ar', 'عميل إعدادات')->latest('id')->firstOrFail();
+        $this->assertSame(4750, (int) $order->fee);
+        $this->assertGreaterThanOrEqual($startedAt->copy()->addMinutes(44)->timestamp, $order->pickup_deadline_at->timestamp);
+        $this->assertLessThanOrEqual($startedAt->copy()->addMinutes(46)->timestamp, $order->pickup_deadline_at->timestamp);
     }
 
     public function test_order_status_transition(): void
@@ -391,6 +517,57 @@ class SmokeTest extends TestCase
         $this->assertSame('active', $user->status);
         $this->assertNotNull($user->phone_verified_at);
         $this->assertAuthenticatedAs($user);
+    }
+
+    public function test_courier_registration_accepts_safe_documents_and_starts_otp_activation(): void
+    {
+        Storage::fake('public');
+        $province = \App\Models\Province::query()->whereNull('tenant_id')->firstOrFail();
+
+        $this->post('/register', [
+            'role' => 'courier',
+            'name' => 'مندوب وثائق',
+            'address' => 'بغداد — الكرادة',
+            'vehicle' => 'bike',
+            'province_id' => $province->id,
+            'phone' => '07900001235',
+            'password' => 'temporary-pass-123',
+            'password_confirmation' => 'temporary-pass-123',
+            'residence_document' => UploadedFile::fake()->image('residence.jpg'),
+            'id_front_document' => UploadedFile::fake()->image('id-front.jpg'),
+            'id_back_document' => UploadedFile::fake()->image('id-back.jpg'),
+            'license_front_document' => UploadedFile::fake()->image('license-front.jpg'),
+            'license_back_document' => UploadedFile::fake()->image('license-back.jpg'),
+        ])->assertRedirect('/verify-otp');
+
+        $courier = User::where('phone', '07900001235')->firstOrFail();
+        $this->assertSame('pending', $courier->status);
+        $this->assertSame(5, Document::where('user_id', $courier->id)->count());
+    }
+
+    public function test_courier_registration_rejects_a_document_bundle_above_the_safe_request_limit(): void
+    {
+        $province = \App\Models\Province::query()->whereNull('tenant_id')->firstOrFail();
+
+        $this->post('/register', [
+            'role' => 'courier',
+            'name' => 'مندوب كبير',
+            'address' => 'بغداد — الكرادة',
+            'vehicle' => 'bike',
+            'province_id' => $province->id,
+            'phone' => '07900001236',
+            'password' => 'temporary-pass-123',
+            'password_confirmation' => 'temporary-pass-123',
+            // Each document is permitted individually (0.9 MB), but their
+            // combined body would cross a typical shared-hosting limit.
+            'residence_document' => UploadedFile::fake()->create('residence.pdf', 900, 'application/pdf'),
+            'id_front_document' => UploadedFile::fake()->create('id-front.pdf', 900, 'application/pdf'),
+            'id_back_document' => UploadedFile::fake()->create('id-back.pdf', 900, 'application/pdf'),
+            'license_front_document' => UploadedFile::fake()->create('license-front.pdf', 900, 'application/pdf'),
+            'license_back_document' => UploadedFile::fake()->create('license-back.pdf', 900, 'application/pdf'),
+        ])->assertSessionHasErrors('documents');
+
+        $this->assertDatabaseMissing('users', ['phone' => '07900001236']);
     }
 
     public function test_chat_messages_endpoint_refreshes_messages_for_the_other_party(): void

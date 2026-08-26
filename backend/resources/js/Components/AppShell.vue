@@ -1,8 +1,9 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import Flash from './Flash.vue'
+import LiveNotificationBridge from './LiveNotificationBridge.vue'
 
 const props = defineProps({
     title: { type: String, default: '' },
@@ -10,7 +11,10 @@ const props = defineProps({
     back: { type: Boolean, default: false },
     backUrl: { type: String, default: '' },
     hideTabs: { type: Boolean, default: false },
+    // `notifBadge` is retained for the chat tab.  Notification counts are
+    // shared independently so the bell never accidentally shows chat data.
     notifBadge: { type: Number, default: 0 },
+    notificationBadge: { type: Number, default: null },
     showNotif: { type: Boolean, default: true },
 })
 
@@ -19,6 +23,13 @@ const user = computed(() => page.props.auth?.user)
 const isCourier = computed(() => user.value?.role === 'courier')
 const locale = computed(() => page.props.locale || 'ar')
 const theme = ref(user.value?.theme || document.body?.dataset.theme || 'light')
+const liveNotificationUnread = ref(Number(page.props.notificationUnread || 0))
+const notificationUnread = computed(() => {
+    const override = props.notificationBadge
+    if (Number.isFinite(override)) return Math.max(0, override)
+
+    return Math.max(0, Number(liveNotificationUnread.value || 0))
+})
 
 const tabs = computed(() => {
     const base = [
@@ -59,7 +70,19 @@ function goBack() {
     router.visit(route('app'))
 }
 
-onMounted(() => applyTheme(theme.value))
+function syncLiveNotificationCount(event) {
+    const unread = Number(event.detail?.unread)
+    if (Number.isFinite(unread)) liveNotificationUnread.value = Math.max(0, unread)
+}
+
+onMounted(() => {
+    applyTheme(theme.value)
+    window.addEventListener('almunjaz:notification-count', syncLiveNotificationCount)
+})
+
+onBeforeUnmount(() => {
+    window.removeEventListener('almunjaz:notification-count', syncLiveNotificationCount)
+})
 
 // Profile settings may update the shared Inertia user object without
 // recreating this shell.  Keep the visual preference in sync in that case.
@@ -68,6 +91,11 @@ watch(() => user.value?.theme, (value) => {
         theme.value = value
         applyTheme(value)
     }
+})
+
+watch(() => page.props.notificationUnread, (value) => {
+    const unread = Number(value)
+    if (Number.isFinite(unread)) liveNotificationUnread.value = Math.max(0, unread)
 })
 
 function icon(name) {
@@ -89,6 +117,7 @@ function icon(name) {
     <div class="app-stage">
         <div class="app-shell">
             <Flash />
+            <LiveNotificationBridge />
             <header class="app-topbar">
                 <button v-if="back" class="tb-icon-btn" type="button" :aria-label="t('Back')" @click="goBack">
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: locale === 'ar' ? 'rotate(180deg)' : '' }">
@@ -104,7 +133,7 @@ function icon(name) {
                         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path :d="icon('bell')" />
                         </svg>
-                        <span v-if="notifBadge > 0" class="notif-badge">{{ notifBadge > 99 ? '99+' : notifBadge }}</span>
+                        <span v-if="notificationUnread > 0" class="notif-badge">{{ notificationUnread > 99 ? '99+' : notificationUnread }}</span>
                     </a>
                     <button class="tb-icon-btn" type="button" :aria-label="theme === 'dark' ? t('Enable light mode') : t('Enable dark mode')" @click="toggleTheme">
                         <svg v-if="theme !== 'dark'" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">

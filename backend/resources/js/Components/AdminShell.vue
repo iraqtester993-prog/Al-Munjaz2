@@ -12,6 +12,11 @@ const user = computed(() => page.props.auth?.user)
 const theme = ref(user.value?.theme === 'dark' ? 'dark' : 'light')
 const locale = ref(page.props.locale || user.value?.locale || 'ar')
 const currentPath = computed(() => new URL(page.url, window.location.origin).pathname.replace(/\/$/, ''))
+const branding = computed(() => page.props.branding || {
+    name: t('Al-Munjaz Al-Saree'),
+    tagline: t('Admin Dashboard'),
+    logo_url: '/logo.png',
+})
 
 const localeNames = {
     ar: { ar: 'العربية', en: 'Arabic', ku: 'عەرەبی' },
@@ -38,6 +43,7 @@ const nav = computed(() => [
     { label: t('Finance'), icon: 'card', route: 'admin.finance' },
     { label: t('Chat'), icon: 'chat', route: 'admin.chat' },
     { label: t('Notifications'), icon: 'bell', route: 'admin.notifications' },
+    { label: t('Settings'), icon: 'settings', route: 'admin.settings' },
 ].map((item) => ({ ...item, url: route(item.route) })))
 
 function localized(key) {
@@ -119,6 +125,7 @@ function icon(name) {
         card: 'M3 6h18v12H3zM3 10h18M7 15h4',
         chat: 'M21 12a8 8 0 0 1-8 8H4l1.5-3.5A8 8 0 1 1 21 12Z',
         bell: 'M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6Zm5 11a2 2 0 0 0 4 0',
+        settings: 'M12 15.25A3.25 3.25 0 1 0 12 8.75a3.25 3.25 0 0 0 0 6.5Zm0-12.25v2m0 14v2m9-9h-2M5 12H3m15.36-6.36-1.42 1.42M7.06 16.94l-1.42 1.42m12.72 0-1.42-1.42M7.06 7.06 5.64 5.64',
         menu: 'M4 7h16M4 12h16M4 17h16',
         logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9',
     }
@@ -156,17 +163,10 @@ onMounted(() => {
 
         <aside class="dashboard-sidebar">
             <div class="dashboard-brand">
-                <div class="dashboard-brand-mark" aria-hidden="true">
-                    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="3" y="3" width="7.5" height="7.5" rx="1.5" />
-                        <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" />
-                        <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" />
-                        <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" />
-                    </svg>
-                </div>
+                <div class="dashboard-brand-mark" aria-hidden="true"><img :src="branding.logo_url" alt="" /></div>
                 <div>
-                    <b>{{ t('Al-Munjaz Al-Saree') }}</b>
-                    <span>{{ t('Admin Dashboard') }}</span>
+                    <b>{{ branding.name }}</b>
+                    <span>{{ branding.tagline || t('Admin Dashboard') }}</span>
                 </div>
             </div>
 
@@ -365,8 +365,17 @@ onMounted(() => {
     place-items: center;
     flex: none;
     border-radius: 12px;
+    overflow: hidden;
     color: #062033;
-    background: linear-gradient(135deg, var(--primary), #0ea5e9);
+    background: #fff;
+}
+
+.dashboard-brand-mark img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
+    padding: 3px;
 }
 
 .dashboard-brand b,

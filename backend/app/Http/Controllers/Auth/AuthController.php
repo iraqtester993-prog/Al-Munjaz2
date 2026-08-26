@@ -12,12 +12,22 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 
 class AuthController extends Controller
 {
     private const OTP_SESSION_KEY = 'registration_otp';
+
+    /** @var array<string, string> */
+    private const COURIER_DOCUMENT_TYPES = [
+        'residence_document' => 'residence',
+        'id_front_document' => 'id_front',
+        'id_back_document' => 'id_back',
+        'license_front_document' => 'license_front',
+        'license_back_document' => 'license_back',
+    ];
 
     public function loginForm()
     {
@@ -90,6 +100,7 @@ class AuthController extends Controller
         return Inertia::render('Auth/Register', [
             'role' => $role,
             'provinces' => Province::query()->whereNull('tenant_id')->orderBy('sort_order')->get(['id', 'name_ar', 'name_en', 'name_ku']),
+            'courierUploadLimits' => $this->courierUploadLimits(),
             'vehicles' => [
                 'bike' => ['ar' => 'دراجة نارية', 'en' => 'Motorcycle', 'ku' => 'ماتۆڕسکلێت'],
                 'sedan' => ['ar' => 'سيارة صالون', 'en' => 'Sedan', 'ku' => 'ئوتومۆبیلی بچووک'],
@@ -102,8 +113,10 @@ class AuthController extends Controller
     public function register(Request $request)
     {
         $isCourier = $request->input('role') === 'courier';
+        $uploadLimits = $this->courierUploadLimits();
+        $documentRules = [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:'.$uploadLimits['maxFileKilobytes']];
 
-        $data = $request->validate([
+        $validator = Validator::make($request->all(), [
             'role' => ['required', 'in:merchant,courier'],
             'name' => ['required', 'string', 'max:120'],
             'phone' => ['required', 'string', 'max:30', 'unique:users,phone'],
@@ -112,12 +125,29 @@ class AuthController extends Controller
             'address' => ['required', 'string', 'max:255'],
             'vehicle' => ['nullable', 'string', 'in:bike,sedan,suv,truck'],
             'province_id' => ['required', 'integer', 'exists:provinces,id'],
-            'residence_document' => [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
-            'id_front_document' => [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
-            'id_back_document' => [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
-            'license_front_document' => [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
-            'license_back_document' => [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
-        ]);
+            'residence_document' => $documentRules,
+            'id_front_document' => $documentRules,
+            'id_back_document' => $documentRules,
+            'license_front_document' => $documentRules,
+            'license_back_document' => $documentRules,
+        ], $this->courierDocumentMessages($uploadLimits));
+
+        $validator->after(function ($validator) use ($request, $isCourier, $uploadLimits): void {
+            if (! $isCourier) {
+                return;
+            }
+
+            $totalBytes = collect(array_keys(self::COURIER_DOCUMENT_TYPES))
+                ->sum(fn (string $input): int => (int) ($request->file($input)?->getSize() ?? 0));
+
+            if ($totalBytes > $uploadLimits['maxTotalKilobytes'] * 1024) {
+                $validator->errors()->add('documents', __('auth.courier_documents_total_too_large', [
+                    'max' => $this->megabyteLabel($uploadLimits['maxTotalKilobytes']),
+                ]));
+            }
+        });
+
+        $data = $validator->validate();
 
         $user = DB::transaction(function () use ($data, $isCourier, $request): User {
             $tenant = Tenant::create([
@@ -145,13 +175,7 @@ class AuthController extends Controller
             $user->provinces()->attach($data['province_id'], ['is_primary' => true]);
 
             if ($isCourier) {
-                foreach ([
-                    'residence_document' => 'residence',
-                    'id_front_document' => 'id_front',
-                    'id_back_document' => 'id_back',
-                    'license_front_document' => 'license_front',
-                    'license_back_document' => 'license_back',
-                ] as $input => $type) {
+                foreach (self::COURIER_DOCUMENT_TYPES as $input => $type) {
                     $path = $request->file($input)->store("documents/{$user->id}", 'public');
                     Document::create(['user_id' => $user->id, 'type' => $type, 'path' => $path, 'status' => 'pending']);
                 }
@@ -349,5 +373,47 @@ class AuthController extends Controller
     private function otpResendCooldownSeconds(): int
     {
         return max(15, min((int) config('services.temporary_otp.resend_cooldown_seconds', 60), 300));
+    }
+
+    /** @return array{maxFileKilobytes: int, maxTotalKilobytes: int, targetImageKilobytes: int} */
+    private function courierUploadLimits(): array
+    {
+        $maxFileKilobytes = max(256, min((int) config('registration.courier_documents.max_file_kilobytes', 1024), 2048));
+        $maxTotalKilobytes = max($maxFileKilobytes, min((int) config('registration.courier_documents.max_total_kilobytes', 4096), 8192));
+        $targetImageKilobytes = max(256, min((int) config('registration.courier_documents.target_image_kilobytes', 700), $maxFileKilobytes));
+
+        return compact('maxFileKilobytes', 'maxTotalKilobytes', 'targetImageKilobytes');
+    }
+
+    /** @param array{maxFileKilobytes: int, maxTotalKilobytes: int, targetImageKilobytes: int} $limits */
+    private function courierDocumentMessages(array $limits): array
+    {
+        $labels = [
+            'residence_document' => __('auth.residence_document'),
+            'id_front_document' => __('auth.id_front_document'),
+            'id_back_document' => __('auth.id_back_document'),
+            'license_front_document' => __('auth.license_front_document'),
+            'license_back_document' => __('auth.license_back_document'),
+        ];
+
+        $messages = [];
+        foreach ($labels as $input => $label) {
+            $messages[$input.'.required'] = __('auth.courier_document_required', ['document' => $label]);
+            $messages[$input.'.mimes'] = __('auth.courier_document_invalid', ['document' => $label]);
+            $messages[$input.'.file'] = __('auth.courier_document_invalid', ['document' => $label]);
+            $messages[$input.'.max'] = __('auth.courier_document_too_large', [
+                'document' => $label,
+                'max' => $this->megabyteLabel($limits['maxFileKilobytes']),
+            ]);
+        }
+
+        return $messages;
+    }
+
+    private function megabyteLabel(int $kilobytes): string
+    {
+        $megabytes = $kilobytes / 1024;
+
+        return rtrim(rtrim(number_format($megabytes, 1, '.', ''), '0'), '.');
     }
 }

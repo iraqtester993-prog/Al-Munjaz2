@@ -53,4 +53,19 @@ return [
         'show_code_hint' => env('TEMPORARY_OTP_SHOW_CODE_HINT', true),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Web Push (PWA)
+    |--------------------------------------------------------------------------
+    |
+    | The private key stays only in the server environment. The public key is
+    | returned to an authenticated mobile user while enabling notifications.
+    |
+    */
+    'web_push' => [
+        'subject' => env('VAPID_SUBJECT', 'https://our-qiq.com'),
+        'public_key' => env('VAPID_PUBLIC_KEY'),
+        'private_key' => env('VAPID_PRIVATE_KEY'),
+    ],
+
 ];

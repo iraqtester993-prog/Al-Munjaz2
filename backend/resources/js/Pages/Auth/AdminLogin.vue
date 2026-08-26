@@ -6,6 +6,11 @@ import Flash from '../../Components/Flash.vue'
 const page = usePage()
 const errors = computed(() => page.props.errors || {})
 const form = useForm({ username: '', password: '' })
+const branding = computed(() => page.props.branding || {
+    name: t('Al-Munjaz Al-Saree'),
+    tagline: t('Platform management'),
+    logo_url: '/logo.png',
+})
 
 const appLoginUrl = computed(() => {
     const host = window.location.hostname.replace(/^(?:admin|dashboard)\./, 'mobile.')
@@ -27,17 +32,11 @@ function submit() {
         <section class="dash-login-card" aria-labelledby="dashboard-login-title">
             <Flash />
 
-            <div class="dash-login-mark" aria-hidden="true">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="3" y="3" width="7.5" height="7.5" rx="1.5" />
-                    <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" />
-                    <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" />
-                    <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" />
-                </svg>
-            </div>
+            <div class="dash-login-mark" aria-hidden="true"><img :src="branding.logo_url" alt="" /></div>
 
-            <h1 id="dashboard-login-title">{{ t('Admin Dashboard') }}</h1>
-            <p class="dash-login-lead">{{ t('Platform management') }}</p>
+            <h1 id="dashboard-login-title">{{ branding.name }}</h1>
+            <p class="dash-login-lead">{{ branding.tagline || t('Platform management') }}</p>
+            <p class="dash-login-description">{{ t('Access platform management for orders, couriers, finance, and unified chat.') }}</p>
 
             <div v-if="loginError" class="dash-login-error" role="alert">
                 {{ loginError }}
@@ -118,9 +117,18 @@ function submit() {
     place-items: center;
     margin: 0 auto 16px;
     border-radius: 16px;
+    overflow: hidden;
     color: #062033;
-    background: linear-gradient(135deg, var(--login-primary), var(--login-primary-2));
+    background: #fff;
     box-shadow: 0 12px 28px rgba(14, 165, 233, .22);
+}
+
+.dash-login-mark img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
+    padding: 4px;
 }
 
 .dash-login-card h1 {
@@ -132,11 +140,21 @@ function submit() {
 }
 
 .dash-login-lead {
-    margin: 5px auto 27px;
+    margin: 5px auto 4px;
     color: var(--login-soft);
     font-size: 12.5px;
     font-weight: 600;
     line-height: 1.8;
+    text-align: center;
+}
+
+.dash-login-description {
+    max-width: 315px;
+    margin: 0 auto 27px;
+    color: var(--login-soft);
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 1.85;
     text-align: center;
 }
 

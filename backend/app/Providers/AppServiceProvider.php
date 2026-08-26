@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Models\Notification;
+use App\Observers\NotificationPushObserver;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Schema;
@@ -56,5 +58,9 @@ class AppServiceProvider extends ServiceProvider
         View::composer('app', function ($view) {
             $view->with('translations', app('translations'));
         });
+
+        // The observer keeps browser push aligned with every committed inbox
+        // record, without relying on a queue daemon on shared hosting.
+        Notification::observe(NotificationPushObserver::class);
     }
 }

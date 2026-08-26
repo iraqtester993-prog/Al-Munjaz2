@@ -1,8 +1,10 @@
 <?php
 
 use App\Http\Controllers\Admin\AdminDashboardController;
+use App\Http\Controllers\Admin\AdminNotificationController;
 use App\Http\Controllers\Admin\AdminOrderController;
 use App\Http\Controllers\Admin\AdminPreferencesController;
+use App\Http\Controllers\Admin\AdminSettingsController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\BranchController;
 use App\Http\Controllers\App\AppOrderController;
@@ -12,6 +14,7 @@ use App\Http\Controllers\App\AppWalletController;
 use App\Http\Controllers\App\ChatController;
 use App\Http\Controllers\App\DashboardController;
 use App\Http\Controllers\App\NotificationController;
+use App\Http\Controllers\App\PushSubscriptionController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\LocaleController;
 use App\Models\Order;
@@ -126,7 +129,11 @@ Route::middleware(['auth', 'active'])->group(function () {
         Route::post('chats/{chat}/send', [ChatController::class, 'send'])->name('app.chats.send');
         Route::post('chats/open', [ChatController::class, 'open'])->name('app.chats.open');
         Route::get('notifications', [NotificationController::class, 'index'])->name('app.notifications');
+        Route::get('notifications/feed', [NotificationController::class, 'feed'])->name('app.notifications.feed');
         Route::post('notifications/read-all', [NotificationController::class, 'readAll'])->name('app.notifications.read-all');
+        Route::get('push/config', [PushSubscriptionController::class, 'config'])->name('app.push.config');
+        Route::post('push/subscriptions', [PushSubscriptionController::class, 'store'])->name('app.push.subscribe');
+        Route::delete('push/subscriptions', [PushSubscriptionController::class, 'destroy'])->name('app.push.unsubscribe');
     });
 });
 
@@ -149,7 +156,10 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     Route::get('users/{user}/documents/{document}', [AdminUserController::class, 'showDocument'])->name('admin.users.documents.show');
     Route::post('users/{user}/documents/{document}/review', [AdminUserController::class, 'reviewDocument'])->name('admin.users.documents.review');
     Route::get('finance', [AdminDashboardController::class, 'finance'])->name('admin.finance');
-    Route::get('notifications', [AdminDashboardController::class, 'notifications'])->name('admin.notifications');
+    Route::get('notifications', [AdminNotificationController::class, 'index'])->name('admin.notifications');
+    Route::post('notifications', [AdminNotificationController::class, 'store'])->name('admin.notifications.store');
+    Route::get('settings', [AdminSettingsController::class, 'index'])->name('admin.settings');
+    Route::post('settings', [AdminSettingsController::class, 'update'])->name('admin.settings.update');
     Route::get('chat', [ChatController::class, 'adminIndex'])->name('admin.chat');
     Route::get('chat/{chat}', [ChatController::class, 'adminShow'])->name('admin.chat.show');
     Route::get('chat/{chat}/messages', [ChatController::class, 'adminMessages'])->name('admin.chat.messages');

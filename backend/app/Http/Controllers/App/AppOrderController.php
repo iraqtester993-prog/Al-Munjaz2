@@ -7,6 +7,7 @@ use App\Models\ActivityLog;
 use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderStatusLog;
+use App\Models\Setting;
 use App\Models\User;
 use App\Services\CourierOrderAccess;
 use App\Services\CourierOrderAssignmentService;
@@ -134,7 +135,11 @@ class AppOrderController extends Controller
         $order->status = 'pending';
         $order->workflow_stage = 'created';
         $order->province_id = $data['province_id'];
-        $order->pickup_deadline_at = now()->addMinutes(30);
+        // These operational defaults are controlled from the dashboard.  A
+        // merchant can never override them in a browser request.
+        $availabilityMinutes = max(1, min((int) Setting::get('order_expiry_minutes', 30), 1440));
+        $order->fee = max(0, min((int) Setting::get('delivery_fee', 0), 1_000_000));
+        $order->pickup_deadline_at = now()->addMinutes($availabilityMinutes);
         $order->merchant_id = $user->id;
         $order->created_by = $user->id;
         $order->save();

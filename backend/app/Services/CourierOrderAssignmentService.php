@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Models\Order;
 use App\Models\Scopes\TenantScope;
+use App\Models\Setting;
 use App\Models\Transaction;
+use App\Models\Notification;
 use App\Models\User;
 use App\Models\Wallet;
 use Illuminate\Support\Facades\DB;
@@ -61,7 +63,14 @@ class CourierOrderAssignmentService
 
             $this->ensure($wallet->budget >= $delivery->price, 'ميزانية المندوب أقل من قيمة الطلب.');
 
-            $delivery->update(['courier_id' => $courier->id]);
+            // A pending order has an availability deadline. Once assigned,
+            // the same field becomes the expected pickup deadline configured
+            // by the administrator.
+            $pickupMinutes = max(5, min((int) Setting::get('pickup_eta_minutes', 30), 240));
+            $delivery->update([
+                'courier_id' => $courier->id,
+                'pickup_deadline_at' => now()->addMinutes($pickupMinutes),
+            ]);
             app(OrderWorkflowService::class)->changeStatus($delivery, 'approved', $actor, $note);
 
             $wallet->decrement('budget', $delivery->price);
@@ -76,6 +85,19 @@ class CourierOrderAssignmentService
                 'order_id' => $delivery->id,
                 'date' => today(),
                 'note' => 'حجز ميزانية لاستلام الطلب',
+            ]);
+
+            Notification::create([
+                'tenant_id' => $courier->tenant_id,
+                'user_id' => $courier->id,
+                'type' => 'order',
+                'title_ar' => 'طلب جديد: '.$delivery->track_no,
+                'title_en' => 'New delivery: '.$delivery->track_no,
+                'title_ku' => 'داواکارییەکی نوێ: '.$delivery->track_no,
+                'body_ar' => 'تم إسناد الطلب إليك. الوصول المتوقع إلى التاجر خلال '.$pickupMinutes.' دقيقة.',
+                'body_en' => 'This order was assigned to you. Expected merchant pickup is within '.$pickupMinutes.' minutes.',
+                'body_ku' => 'ئەم داواکارییە بۆ تۆ دیاری کرا. کاتی چاوەڕێکراوی گەیشتن بە بازرگان '.$pickupMinutes.' خولەکە.',
+                'data' => ['order_id' => $delivery->id, 'status' => 'approved'],
             ]);
         });
     }

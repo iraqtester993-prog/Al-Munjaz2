@@ -2,11 +2,13 @@
 import { computed, ref } from 'vue'
 import { useForm, usePage } from '@inertiajs/vue3'
 import Flash from '../../Components/Flash.vue'
+import { bytesToMegabytes, CourierDocumentError, prepareCourierDocument } from '../../Utils/courierDocuments'
 
 const props = defineProps({
     role: { type: String, required: true },
     vehicles: { type: Object, required: true },
     provinces: { type: Array, required: true },
+    courierUploadLimits: { type: Object, default: () => ({}) },
 })
 
 const isCourier = props.role === 'courier'
@@ -17,6 +19,32 @@ const sending = ref(false)
 const showPassword = ref(false)
 const showConfirmation = ref(false)
 const showVehicles = ref(false)
+const uploadErrors = ref({})
+const uploadInfo = ref({})
+const preparingDocuments = ref({})
+const documentSummaryError = ref('')
+
+const courierDocumentKeys = [
+    'residence_document',
+    'id_front_document',
+    'id_back_document',
+    'license_front_document',
+    'license_back_document',
+]
+
+const courierUploadLimits = computed(() => {
+    const maxFileKilobytes = Number(props.courierUploadLimits.maxFileKilobytes || 1024)
+    const maxTotalKilobytes = Number(props.courierUploadLimits.maxTotalKilobytes || 4096)
+    const targetImageKilobytes = Number(props.courierUploadLimits.targetImageKilobytes || 700)
+
+    return {
+        maxFileBytes: Math.max(256, Math.min(maxFileKilobytes, 2048)) * 1024,
+        maxTotalBytes: Math.max(1024, Math.min(maxTotalKilobytes, 8192)) * 1024,
+        targetImageBytes: Math.max(256, Math.min(targetImageKilobytes, maxFileKilobytes)) * 1024,
+    }
+})
+
+const isPreparingDocuments = computed(() => Object.values(preparingDocuments.value).some(Boolean))
 
 const form = useForm({
     role: props.role,
@@ -58,6 +86,8 @@ const vehicleOptions = computed(() => Object.entries(props.vehicles).map(([key, 
 const selectedVehicle = computed(() => vehicleOptions.value.find((vehicle) => vehicle.key === form.vehicle))
 
 function submitForm() {
+    if (isCourier && !validateCourierDocuments()) return
+
     sending.value = true
     form.post('/register', {
         forceFormData: true,
@@ -66,12 +96,107 @@ function submitForm() {
     })
 }
 
-function chooseFile(event, key) {
-    form[key] = event.target.files?.[0] || null
+async function chooseFile(event, key) {
+    const source = event.target.files?.[0]
+    event.target.value = ''
+    if (!source) return
+
+    clearUploadError(key)
+    documentSummaryError.value = ''
+    preparingDocuments.value[key] = true
+
+    try {
+        const prepared = await prepareCourierDocument(source, courierUploadLimits.value)
+        const nextTotal = courierDocumentTotalBytes(key, prepared.file)
+
+        if (nextTotal > courierUploadLimits.value.maxTotalBytes) {
+            throw new CourierDocumentError('total_too_large')
+        }
+
+        form[key] = prepared.file
+        uploadInfo.value[key] = {
+            optimized: prepared.optimized,
+            size: prepared.file.size,
+        }
+    } catch (error) {
+        form[key] = null
+        delete uploadInfo.value[key]
+        uploadErrors.value[key] = documentErrorMessage(error)
+        if (error instanceof CourierDocumentError && error.code === 'total_too_large') {
+            documentSummaryError.value = uploadErrors.value[key]
+        }
+    } finally {
+        preparingDocuments.value[key] = false
+    }
 }
 
 function fileLabel(key, fallback) {
     return form[key]?.name || fallback
+}
+
+function fileInfo(key) {
+    const info = uploadInfo.value[key]
+    if (!info) return ''
+
+    const suffix = info.optimized ? ` · ${t('Optimized')}` : ''
+    return `${bytesToMegabytes(info.size)} MB${suffix}`
+}
+
+function uploadError(key) {
+    return uploadErrors.value[key] || form.errors[key]
+}
+
+function clearUploadError(key) {
+    delete uploadErrors.value[key]
+    form.clearErrors(key)
+}
+
+function courierDocumentTotalBytes(replacementKey = null, replacementFile = null) {
+    return courierDocumentKeys.reduce((total, key) => {
+        const file = key === replacementKey ? replacementFile : form[key]
+        return total + (file?.size || 0)
+    }, 0)
+}
+
+function validateCourierDocuments() {
+    if (isPreparingDocuments.value) {
+        documentSummaryError.value = t('Please wait until image preparation is complete.')
+        return false
+    }
+
+    const missing = courierDocumentKeys.filter((key) => !form[key])
+    if (missing.length) {
+        for (const key of missing) uploadErrors.value[key] = t('This document is required.')
+        documentSummaryError.value = t('All five courier documents are required before creating the account.')
+        return false
+    }
+
+    if (Object.keys(uploadErrors.value).length) {
+        documentSummaryError.value = t('Fix the document errors before creating the account.')
+        return false
+    }
+
+    if (courierDocumentTotalBytes() > courierUploadLimits.value.maxTotalBytes) {
+        documentSummaryError.value = documentErrorMessage(new CourierDocumentError('total_too_large'))
+        return false
+    }
+
+    return true
+}
+
+function documentErrorMessage(error) {
+    const code = error instanceof CourierDocumentError ? error.code : 'cannot_process'
+    const maxFile = bytesToMegabytes(courierUploadLimits.value.maxFileBytes)
+    const maxTotal = bytesToMegabytes(courierUploadLimits.value.maxTotalBytes)
+
+    return {
+        unsupported_type: t('Use JPG, PNG, WebP, or PDF files only.'),
+        source_too_large: t('The original image is too large. Choose an image smaller than :max MB.', { max: 20 }),
+        pdf_too_large: t('A PDF document must not exceed :max MB.', { max: maxFile }),
+        cannot_compress: t('This image could not be optimized enough. Choose a clearer, smaller image.'),
+        total_too_large: t('The five courier documents together must not exceed :max MB.', { max: maxTotal }),
+        cannot_process: t('Unable to process this image. Please choose a JPG, PNG, or WebP image.'),
+    }[code] || t('Unable to process this document. Please choose another file.')
 }
 
 function vehicleIcon(vehicle) {
@@ -177,38 +302,41 @@ function icon(name) {
                     </div>
 
                     <div class="documents">
+                        <p class="document-helper">{{ t('Images are optimized automatically before upload. Use JPG, PNG, WebP, or PDF. Each file and the full request have a safe size limit.') }}</p>
+                        <small v-if="documentSummaryError || form.errors.documents" class="document-error document-summary-error">{{ documentSummaryError || form.errors.documents }}</small>
                         <p>{{ t('Residence Card') }}</p>
-                        <label class="upload-zone" :class="{ uploaded: !!form.residence_document, error: !!form.errors.residence_document }">
-                            <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="chooseFile($event, 'residence_document')">
+                        <label class="upload-zone" :class="{ uploaded: !!form.residence_document, error: !!uploadError('residence_document'), preparing: preparingDocuments.residence_document }">
+                            <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" :disabled="preparingDocuments.residence_document" @change="chooseFile($event, 'residence_document')">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form.residence_document ? icon('check') : icon('upload')" /></svg>
-                            <span>{{ fileLabel('residence_document', t('Tap to upload')) }}</span>
+                            <span>{{ preparingDocuments.residence_document ? t('Preparing image…') : fileLabel('residence_document', t('Tap to upload')) }}</span>
                         </label>
-                        <small v-if="form.errors.residence_document" class="document-error">{{ form.errors.residence_document }}</small>
+                        <small v-if="fileInfo('residence_document')" class="document-info">{{ fileInfo('residence_document') }}</small>
+                        <small v-if="uploadError('residence_document')" class="document-error">{{ uploadError('residence_document') }}</small>
 
                         <p>{{ t('National ID Card') }}</p>
                         <div class="upload-pair">
-                            <label v-for="doc in [['id_front_document', t('Front')], ['id_back_document', t('Back')]]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!form.errors[doc[0]] }">
-                                <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="chooseFile($event, doc[0])">
+                            <label v-for="doc in [['id_front_document', t('Front')], ['id_back_document', t('Back')]]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!uploadError(doc[0]), preparing: preparingDocuments[doc[0]] }">
+                                <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" :disabled="preparingDocuments[doc[0]]" @change="chooseFile($event, doc[0])">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form[doc[0]] ? icon('check') : icon('upload')" /></svg>
-                                <span>{{ fileLabel(doc[0], doc[1]) }}</span>
+                                <span>{{ preparingDocuments[doc[0]] ? t('Preparing image…') : fileLabel(doc[0], doc[1]) }}</span>
                             </label>
                         </div>
-                        <small v-if="form.errors.id_front_document || form.errors.id_back_document" class="document-error">{{ form.errors.id_front_document || form.errors.id_back_document }}</small>
+                        <div class="document-file-details"><small v-for="key in ['id_front_document', 'id_back_document']" :key="key"><template v-if="fileInfo(key)">{{ fileInfo(key) }}</template><template v-else-if="uploadError(key)"><span class="document-error">{{ uploadError(key) }}</span></template></small></div>
 
                         <p>{{ t('Driving License') }}</p>
                         <div class="upload-pair">
-                            <label v-for="doc in [['license_front_document', t('Front')], ['license_back_document', t('Back')]]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!form.errors[doc[0]] }">
-                            <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="chooseFile($event, doc[0])">
+                            <label v-for="doc in [['license_front_document', t('Front')], ['license_back_document', t('Back')]]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!uploadError(doc[0]), preparing: preparingDocuments[doc[0]] }">
+                            <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" :disabled="preparingDocuments[doc[0]]" @change="chooseFile($event, doc[0])">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form[doc[0]] ? icon('check') : icon('upload')" /></svg>
-                            <span>{{ fileLabel(doc[0], doc[1]) }}</span>
+                            <span>{{ preparingDocuments[doc[0]] ? t('Preparing image…') : fileLabel(doc[0], doc[1]) }}</span>
                             </label>
                         </div>
-                        <small v-if="form.errors.license_front_document || form.errors.license_back_document" class="document-error">{{ form.errors.license_front_document || form.errors.license_back_document }}</small>
+                        <div class="document-file-details"><small v-for="key in ['license_front_document', 'license_back_document']" :key="key"><template v-if="fileInfo(key)">{{ fileInfo(key) }}</template><template v-else-if="uploadError(key)"><span class="document-error">{{ uploadError(key) }}</span></template></small></div>
                     </div>
                 </template>
 
-                <button type="submit" class="reg-submit" :disabled="sending">
-                    <span v-if="sending" class="loader"></span><span v-else>{{ t('Create Account') }}</span>
+                <button type="submit" class="reg-submit" :disabled="sending || isPreparingDocuments">
+                    <span v-if="sending || isPreparingDocuments" class="loader"></span><span v-else>{{ t('Create Account') }}</span>
                 </button>
             </form>
             <p class="reg-login">{{ t('Already have an account?') }} <a @click="$inertia.visit(route('login'))">{{ t('Sign In') }}</a></p>
@@ -254,13 +382,20 @@ function icon(name) {
 .documents { margin-top:16px; }
 .documents > p { margin:14px 0 7px; color:rgba(255,255,255,.86); font-size:11px; font-weight:900; }
 .documents > p:first-child { margin-top:0; }
+.documents > .document-helper { margin:0 0 10px; padding:9px 10px; border:1px solid rgba(255,255,255,.16); border-radius:10px; background:rgba(2,48,45,.2); color:rgba(255,255,255,.76); font-size:9.5px; line-height:1.65; font-weight:650; }
 .upload-zone { min-height:46px; display:flex; align-items:center; gap:9px; margin-top:7px; padding:8px 10px; color:rgba(255,255,255,.83); border:1px dashed rgba(255,255,255,.38); border-radius:11px; background:rgba(255,255,255,.07); font-size:10px; font-weight:700; cursor:pointer; }
 .upload-zone input { display:none; }
 .upload-zone.uploaded { border-style:solid; border-color:#a3f2ca; background:rgba(86, 212, 139, .16); color:#fff; }
 .upload-zone.error { border-color:#ffd0cb; }
+.upload-zone.preparing { opacity:.72; cursor:progress; }
 .upload-pair { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .upload-pair .upload-zone { justify-content:center; flex-direction:column; min-height:63px; margin-top:0; text-align:center; }
 .document-error { display:block; margin-top:4px; color:#ffd0cb; font-size:10px; font-weight:800; }
+.document-summary-error { margin-bottom:3px; padding:8px 10px; border:1px solid rgba(255,208,203,.45); border-radius:9px; background:rgba(156,44,37,.16); line-height:1.5; }
+.document-info { display:block; margin-top:4px; color:#b9f7d3; font-size:9px; font-weight:800; }
+.document-file-details { display:grid; grid-template-columns:1fr 1fr; gap:8px; min-height:0; }
+.document-file-details > small { min-width:0; color:#b9f7d3; font-size:9px; font-weight:800; line-height:1.4; overflow-wrap:anywhere; }
+.reg-submit:disabled { opacity:.72; cursor:not-allowed; }
 .reg-submit { width:100%; min-height:46px; margin-top:19px; border-radius:12px; background:#fff; color:var(--primary-strong); font:inherit; font-size:13px; font-weight:900; box-shadow:0 8px 20px -6px rgba(0,0,0,.28); }
 .reg-login { margin:15px 0 0; text-align:center; color:rgba(255,255,255,.76); font-size:11px; font-weight:600; }
 .reg-login a { color:#fff; font-weight:900; text-decoration:underline; cursor:pointer; }

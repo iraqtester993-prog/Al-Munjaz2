@@ -13,6 +13,53 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// A Web Push event is delivered by the browser even when the PWA has no open
+// window.  Android/iOS decide the audible alert from the user's device and
+// notification settings; `silent: false` explicitly asks the platform not to
+// suppress that normal system alert.
+self.addEventListener('push', (event) => {
+  let payload = {};
+
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch (_) {
+    payload = { body: event.data ? event.data.text() : '' };
+  }
+
+  const data = payload.data || {};
+  const url = data.url || payload.url || '/app/notifications';
+
+  event.waitUntil(self.registration.showNotification(payload.title || 'المنجز السريع', {
+    body: payload.body || '',
+    icon: payload.icon || '/assets/icon-192.png',
+    badge: payload.badge || '/assets/icon-192.png',
+    tag: payload.tag || `almunjaz-${Date.now()}`,
+    data: { ...data, url },
+    renotify: true,
+    silent: false,
+    vibrate: [180, 80, 180],
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const url = event.notification.data?.url || '/app/notifications';
+
+  event.waitUntil((async () => {
+    const windows = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const existing = windows.find((client) => new URL(client.url).origin === self.location.origin);
+
+    if (existing) {
+      await existing.focus();
+      if ('navigate' in existing) await existing.navigate(url);
+      return;
+    }
+
+    await clients.openWindow(url);
+  })());
+});
+
 // Navigation and API responses are never cached. This prevents an installed
 // app from reopening a stale login or authorization response after deployment.
 self.addEventListener('fetch', (event) => {

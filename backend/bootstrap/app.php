@@ -3,6 +3,8 @@
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Exceptions\PostTooLargeException;
+use Illuminate\Http\Request;
 use App\Http\Middleware\ActiveUserMiddleware;
 use App\Http\Middleware\EnsureDashboardHost;
 use App\Http\Middleware\HandleInertiaRequests;
@@ -56,5 +58,16 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        // A PHP-level post_max_size rejection happens before the registration
+        // controller can validate the individual courier documents.  Convert
+        // it to the same useful form error instead of a generic server page.
+        // (A reverse-proxy 413 is prevented by browser-side image preparation.)
+        $exceptions->render(function (PostTooLargeException $exception, Request $request) {
+            if (! $request->is('register')) {
+                return null;
+            }
+
+            return redirect()->route('register', ['role' => 'courier'])
+                ->withErrors(['documents' => __('auth.courier_upload_request_too_large')]);
+        });
     })->create();
