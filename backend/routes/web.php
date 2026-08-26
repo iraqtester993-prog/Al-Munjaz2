@@ -5,6 +5,9 @@ use App\Http\Controllers\Admin\AdminCashboxController;
 use App\Http\Controllers\Admin\AdminCourierLocationController;
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminFinanceController;
+use App\Http\Controllers\Admin\AdminMobileContentController;
+use App\Http\Controllers\Admin\AdminLoyaltyController;
+use App\Http\Controllers\Admin\BranchPortalController;
 use App\Http\Controllers\Admin\AdminNotificationController;
 use App\Http\Controllers\Admin\AdminOrderController;
 use App\Http\Controllers\Admin\AdminPlatformController;
@@ -182,6 +185,7 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     Route::post('branches', [BranchController::class, 'store'])->name('admin.branches.store');
     Route::put('branches/{branch}', [BranchController::class, 'update'])->name('admin.branches.update');
     Route::patch('branches/{branch}/status', [BranchController::class, 'status'])->name('admin.branches.status');
+    Route::post('branches/{branch}/access', [BranchController::class, 'storeAccess'])->name('admin.branches.access.store');
     Route::post('orders/{order}/status', [AdminOrderController::class, 'status'])->name('admin.orders.status');
     Route::post('orders/{order}/courier', [AdminOrderController::class, 'assignCourier'])->name('admin.orders.courier');
     Route::post('orders/{order}/branches', [AdminOrderController::class, 'assignBranches'])->name('admin.orders.branches');
@@ -219,6 +223,13 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     Route::post('notifications', [AdminNotificationController::class, 'store'])->name('admin.notifications.store');
     Route::get('settings', [AdminSettingsController::class, 'index'])->name('admin.settings');
     Route::post('settings', [AdminSettingsController::class, 'update'])->name('admin.settings.update');
+    Route::get('content', [AdminMobileContentController::class, 'index'])->name('admin.content');
+    Route::post('content', [AdminMobileContentController::class, 'store'])->name('admin.content.store');
+    Route::put('content/{mobileSlide}', [AdminMobileContentController::class, 'update'])->name('admin.content.update');
+    Route::delete('content/{mobileSlide}', [AdminMobileContentController::class, 'destroy'])->name('admin.content.destroy');
+    Route::get('loyalty', [AdminLoyaltyController::class, 'index'])->name('admin.loyalty');
+    Route::post('loyalty/settings', [AdminLoyaltyController::class, 'store'])->name('admin.loyalty.settings');
+    Route::post('loyalty/adjust', [AdminLoyaltyController::class, 'adjust'])->name('admin.loyalty.adjust');
     Route::get('chat', [ChatController::class, 'adminIndex'])->name('admin.chat');
     Route::get('chat/{chat}', [ChatController::class, 'adminShow'])->name('admin.chat.show');
     Route::get('chat/{chat}/messages', [ChatController::class, 'adminMessages'])->name('admin.chat.messages');
@@ -234,5 +245,17 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     Route::post('transfers/{transfer}/dispatch', [AdminBranchTransferController::class, 'dispatch'])->name('admin.transfers.dispatch');
     Route::post('transfers/{transfer}/receive', [AdminBranchTransferController::class, 'receive'])->name('admin.transfers.receive');
 });
+
+// Branch owners and managers use the same secure dashboard host and sign-in
+// page, but never inherit the platform administrator navigation or data.
+Route::get('/dashboard/branch', [BranchPortalController::class, 'index'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.portal');
+Route::post('/dashboard/branch/preferences/theme', [AdminPreferencesController::class, 'theme'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.preferences.theme');
+Route::post('/dashboard/branch/preferences/locale', [AdminPreferencesController::class, 'locale'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.preferences.locale');
 
 Route::get('/admin', fn () => redirect()->route('admin.dashboard'))->middleware(['dashboard.host', 'auth', 'active', 'role:admin']);

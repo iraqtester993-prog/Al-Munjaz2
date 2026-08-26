@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useForm, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import SheetModal from './SheetModal.vue'
+import OrderMapPicker from './OrderMapPicker.vue'
 
 const props = defineProps({
     open: { type: Boolean, default: false },
@@ -16,7 +17,6 @@ const vehiclePickerOpen = ref(false)
 const pickupLocationBusy = ref(false)
 const pickupLocationMessage = ref('')
 const pickupLocationError = ref('')
-const manualCoordinatesOpen = ref(false)
 const page = usePage()
 const provinces = computed(() => page.props.auth?.provinces || [])
 const locale = computed(() => page.props.locale || 'ar')
@@ -137,7 +137,6 @@ watch(
             form.province_id = provinces.value[0]?.id || ''
         }
         vehiclePickerOpen.value = false
-        manualCoordinatesOpen.value = false
         pickupLocationMessage.value = ''
         pickupLocationError.value = ''
     }
@@ -209,6 +208,15 @@ function clearPickupLocation() {
     form.clearErrors('pickup_latitude', 'pickup_longitude', 'pickup_location_label')
     pickupLocationMessage.value = ''
     pickupLocationError.value = ''
+}
+
+function selectPickupFromMap(location) {
+    form.pickup_latitude = Number(location.latitude).toFixed(7)
+    form.pickup_longitude = Number(location.longitude).toFixed(7)
+    form.pickup_location_label = String(location.label || '').trim() || defaultPickupLabel()
+    form.clearErrors('pickup_latitude', 'pickup_longitude', 'pickup_location_label')
+    pickupLocationError.value = ''
+    pickupLocationMessage.value = t('Pickup location selected on the map. You can edit its label before saving.')
 }
 
 function submit() {
@@ -328,19 +336,14 @@ function submit() {
                     <button type="button" class="pickup-location-clear" @click="clearPickupLocation">{{ t('Clear location') }}</button>
                 </div>
 
-                <button type="button" class="pickup-location-manual" @click="manualCoordinatesOpen = !manualCoordinatesOpen">
-                    {{ manualCoordinatesOpen ? t('Hide manual coordinates') : t('Enter coordinates manually') }}
-                </button>
-                <div v-if="manualCoordinatesOpen" class="pickup-coordinate-grid">
-                    <div class="field">
-                        <label>{{ t('Latitude') }}</label>
-                        <input v-model="form.pickup_latitude" inputmode="decimal" dir="ltr" :placeholder="t('Latitude')" />
-                    </div>
-                    <div class="field">
-                        <label>{{ t('Longitude') }}</label>
-                        <input v-model="form.pickup_longitude" inputmode="decimal" dir="ltr" :placeholder="t('Longitude')" />
-                    </div>
-                </div>
+                <OrderMapPicker
+                    :latitude="form.pickup_latitude"
+                    :longitude="form.pickup_longitude"
+                    :label="form.pickup_location_label"
+                    :locale="locale"
+                    @selected="selectPickupFromMap"
+                    @cleared="clearPickupLocation"
+                />
                 <small v-if="pickupLocationMessage" class="pickup-location-message success">{{ pickupLocationMessage }}</small>
                 <small v-if="pickupLocationError || form.errors.pickup_latitude" class="pickup-location-message error">{{ pickupLocationError || form.errors.pickup_latitude }}</small>
             </section>

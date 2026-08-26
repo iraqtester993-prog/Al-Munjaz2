@@ -26,6 +26,14 @@ class RoleMiddleware
             return redirect()->away($this->productScheme($request).'://'.config('app.product_admin_host').'/dashboard/login');
         }
 
+        if (in_array(Auth::user()->role, ['owner', 'branch_manager'], true) && in_array('merchant', $roles, true)) {
+            return redirect()->away($this->productScheme($request).'://'.config('app.product_admin_host').'/dashboard/branch');
+        }
+
+        if (in_array(Auth::user()->role, ['owner', 'branch_manager'], true) && in_array('admin', $roles, true)) {
+            return redirect()->away($this->productScheme($request).'://'.config('app.product_admin_host').'/dashboard/branch');
+        }
+
         if (in_array('admin', $roles, true)) {
             return redirect()->away($this->productScheme($request).'://'.config('app.product_mobile_host').'/login');
         }

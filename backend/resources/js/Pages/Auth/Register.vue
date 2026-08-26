@@ -14,6 +14,10 @@ const props = defineProps({
 const isCourier = props.role === 'courier'
 const page = usePage()
 const locale = computed(() => page.props.locale || 'ar')
+const branding = computed(() => page.props.branding || {
+    name: t('Al-Munjaz Al-Saree'),
+    logo_url: '/logo.png',
+})
 const direction = computed(() => locale.value === 'en' ? 'ltr' : 'rtl')
 const sending = ref(false)
 const showPassword = ref(false)
@@ -234,7 +238,7 @@ function icon(name) {
             <button class="reg-back" type="button" :aria-label="t('Back')" @click="$inertia.visit(route('login'))">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path :d="icon('back')" /></svg>
             </button>
-            <div class="reg-brand"><span><img src="/logo.png" :alt="t('Al-Munjaz Al-Saree')"></span><b>{{ t('Al-Munjaz Al-Saree') }}</b></div>
+            <div class="reg-brand"><span><img :src="branding.logo_url" :alt="branding.name"></span><b>{{ branding.name }}</b></div>
             <span class="reg-spacer"></span>
         </header>
 

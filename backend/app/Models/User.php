@@ -79,9 +79,41 @@ class User extends Authenticatable
         return $this->belongsTo(Branch::class);
     }
 
+    /**
+     * The operational branches this dashboard account may open.  This is
+     * deliberately a separate relation from the historical `branch_id`
+     * column: an owner can be responsible for several branches without
+     * turning one mutable profile field into an authorisation boundary.
+     */
+    public function managedBranches(): BelongsToMany
+    {
+        return $this->belongsToMany(Branch::class, 'branch_memberships')
+            ->withoutGlobalScope(\App\Models\Scopes\TenantScope::class)
+            ->withPivot('access_role')
+            ->withTimestamps();
+    }
+
+    /**
+     * Exposes the explicit access grants for auditing and safe portal
+     * scoping.  Callers should use `managedBranches()` when they need the
+     * related branch records themselves.
+     */
+    public function branchMemberships(): HasMany
+    {
+        return $this->hasMany(BranchMembership::class);
+    }
+
     public function wallet(): HasOne
     {
         return $this->hasOne(Wallet::class);
+    }
+
+    /**
+     * Loyalty points remain deliberately separate from monetary wallets.
+     */
+    public function loyaltyAccount(): HasOne
+    {
+        return $this->hasOne(LoyaltyAccount::class);
     }
 
     public function orders(): HasMany

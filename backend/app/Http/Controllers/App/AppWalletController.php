@@ -74,6 +74,18 @@ class AppWalletController extends Controller
                 ])
             : collect();
 
+        $loyaltyAccount = $user->loyaltyAccount;
+        $loyaltyEntries = $loyaltyAccount
+            ? $loyaltyAccount->entries()->limit(8)->get()->map(fn ($entry) => [
+                'id' => $entry->id,
+                'points' => (int) $entry->points,
+                'balance_after' => (int) $entry->balance_after,
+                'type' => $entry->type,
+                'note' => $entry->note,
+                'created_at' => $entry->created_at?->toIso8601String(),
+            ])->values()
+            : collect();
+
         return Inertia::render('Mobile/Wallet', [
             'isCourier' => $isCourier,
             // A courier's cash position is derived from delivered orders and
@@ -83,6 +95,12 @@ class AppWalletController extends Controller
             'transactions' => $transactions,
             'requests' => $requests,
             'branches' => $branches,
+            // Loyalty is intentionally a separate, non-monetary balance. It
+            // is never added to the cash wallet or finance request totals.
+            'loyalty' => [
+                'balance' => (int) ($loyaltyAccount?->balance ?? 0),
+                'entries' => $loyaltyEntries,
+            ],
             'summary' => $isCourier
                 ? $this->courierSummary($user, $finance)
                 : $this->merchantSummary($ledger, $wallet),

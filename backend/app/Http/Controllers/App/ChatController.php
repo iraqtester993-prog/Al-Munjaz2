@@ -5,6 +5,7 @@ namespace App\Http\Controllers\App;
 use App\Http\Controllers\Controller;
 use App\Models\Chat;
 use App\Models\ChatMessage;
+use App\Models\Notification;
 use App\Models\Order;
 use App\Models\Scopes\TenantScope;
 use App\Models\User;
@@ -76,6 +77,7 @@ class ChatController extends Controller
             'last_at' => now(),
         ]);
         $this->markRead($chat, $request->user());
+        $this->notifyMessageRecipients($chat, $request->user());
 
         return response()->json([
             'id' => $message->id,
@@ -95,10 +97,19 @@ class ChatController extends Controller
         $this->ensureParticipant($request, $chat);
         $this->markRead($chat, $request->user());
 
-        return response()->json([
-            'messages' => $this->messagesFor($chat, $request->user()),
-            'unread' => $this->unreadFor($chat, $request->user()),
+        $data = $request->validate([
+            'after_id' => ['nullable', 'integer', 'min:0'],
         ]);
+        $messages = $this->messagesFor($chat, $request->user(), $data['after_id'] ?? null);
+
+        return response()->json([
+            'messages' => $messages,
+            // Use the last message actually returned, not a new row that
+            // might have arrived between the incremental query and this JSON
+            // response. Advancing past an unseen ID would silently skip it.
+            'last_id' => (int) (data_get($messages->last(), 'id') ?? ($data['after_id'] ?? 0)),
+            'unread' => $this->unreadFor($chat, $request->user()),
+        ], 200, ['Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0']);
     }
 
     public function open(Request $request)
@@ -113,10 +124,11 @@ class ChatController extends Controller
             $order = Order::withoutGlobalScope(TenantScope::class)->findOrFail($data['order_id']);
             $this->ensureOrderChatAccess($order, $user);
 
-            // Once an order has an assigned courier, the merchant and that
-            // courier share one real conversation.  It is deliberately tied
-            // to the order instead of to whichever party opened it first.
-            if ($order->courier_id) {
+            // An order may have a pickup courier and a delivery courier. Each
+            // one receives an isolated direct conversation with the merchant;
+            // a courier always opens their own conversation, while the
+            // merchant opens the current operational courier by default.
+            if ($courierId = $this->directCourierIdFor($order, $user)) {
                 $merchantId = $this->merchantIdForOrder($order, $user);
                 abort_unless($merchantId, 422, 'لا يوجد حساب تاجر صالح لهذه الطلبية.');
 
@@ -125,10 +137,10 @@ class ChatController extends Controller
                         'tenant_id' => $order->tenant_id,
                         'counterparty_type' => 'order_chat',
                         'order_id' => $order->id,
+                        'counterparty_id' => $courierId,
                     ],
                     [
                         'user_id' => $merchantId,
-                        'counterparty_id' => $order->courier_id,
                         'title_ar' => 'محادثة الطلب — '.$order->track_no,
                         'title_en' => 'Order chat — '.$order->track_no,
                         'last_message' => '',
@@ -136,11 +148,12 @@ class ChatController extends Controller
                     ]
                 );
 
-                // A reassignment must revoke the previous courier's access
-                // and make the new assigned courier the conversation party.
+                // Keep the merchant identity and title current without
+                // changing the counterparty of an existing chat. Changing a
+                // counterparty would expose an old courier's history to a new
+                // courier; reassignment creates a separate direct chat.
                 $chat->fill([
                     'user_id' => $merchantId,
-                    'counterparty_id' => $order->courier_id,
                     'title_ar' => 'محادثة الطلب — '.$order->track_no,
                     'title_en' => 'Order chat — '.$order->track_no,
                 ]);
@@ -251,6 +264,7 @@ class ChatController extends Controller
             'last_at' => now(),
         ]);
         $this->markRead($chat, $request->user());
+        $this->notifyMessageRecipients($chat, $request->user());
 
         return response()->json([
             'id' => $message->id,
@@ -264,10 +278,16 @@ class ChatController extends Controller
     {
         $this->markRead($chat, $request->user());
 
-        return response()->json([
-            'messages' => $this->messagesFor($chat, $request->user()),
-            'unread' => $this->unreadFor($chat, $request->user()),
+        $data = $request->validate([
+            'after_id' => ['nullable', 'integer', 'min:0'],
         ]);
+        $messages = $this->messagesFor($chat, $request->user(), $data['after_id'] ?? null);
+
+        return response()->json([
+            'messages' => $messages,
+            'last_id' => (int) (data_get($messages->last(), 'id') ?? ($data['after_id'] ?? 0)),
+            'unread' => $this->unreadFor($chat, $request->user()),
+        ], 200, ['Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0']);
     }
 
     private function ensureParticipant(Request $request, Chat $chat): void
@@ -280,7 +300,8 @@ class ChatController extends Controller
 
         $isAssignedCourier = $chat->counterparty_type === 'order_chat'
             && $chat->counterparty_id === $user->id
-            && $chat->order?->courier_id === $user->id;
+            && $chat->order
+            && app(CourierOrderAccess::class)->assigned($user)->whereKey($chat->order->id)->exists();
 
         abort_unless($isAssignedCourier, 403);
     }
@@ -301,15 +322,65 @@ class ChatController extends Controller
             ->count();
     }
 
-    private function messagesFor(Chat $chat, $user)
+    private function messagesFor(Chat $chat, $user, ?int $afterId = null)
     {
-        return $chat->messages()->orderBy('id')->get()->map(fn (ChatMessage $message) => [
+        return $chat->messages()
+            ->when($afterId !== null && $afterId > 0, fn (Builder $messages) => $messages->where('id', '>', $afterId))
+            ->orderBy('id')
+            ->get()
+            ->map(fn (ChatMessage $message) => [
             'id' => $message->id,
             'sender_id' => $message->sender_id,
             'from_me' => $message->sender_id === $user->id,
             'text' => $message->text,
             'time' => $message->created_at->format('H:i'),
         ])->values();
+    }
+
+    /**
+     * A direct order conversation has two real participants. A reply by one
+     * participant reaches the other, while an administrator reply reaches
+     * both mobile participants. Support conversations remain private to the
+     * originating user and are never broadcast to every operator.
+     */
+    private function notifyMessageRecipients(Chat $chat, User $sender): void
+    {
+        $recipientIds = [];
+
+        if ($chat->counterparty_type === 'order_chat') {
+            $recipientIds = [$chat->user_id, $chat->counterparty_id];
+        } elseif ($sender->isAdmin() && $chat->user_id && $chat->user_id !== $sender->id) {
+            $recipientIds = [$chat->user_id];
+        }
+
+        $recipientIds = collect($recipientIds)
+            ->filter(fn ($id) => $id && (int) $id !== (int) $sender->id)
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($recipientIds->isEmpty()) {
+            return;
+        }
+
+        User::query()
+            ->whereIn('id', $recipientIds)
+            ->where('status', 'active')
+            ->get()
+            ->each(function (User $recipient) use ($chat): void {
+                Notification::create([
+                    'tenant_id' => $recipient->tenant_id,
+                    'user_id' => $recipient->id,
+                    'type' => 'chat',
+                    'title_ar' => 'رسالة جديدة',
+                    'title_en' => 'New message',
+                    'title_ku' => 'نامەیەکی نوێ',
+                    'body_ar' => 'لديك رسالة جديدة في محادثة الطلب.',
+                    'body_en' => 'You have a new message in an order conversation.',
+                    'body_ku' => 'نامەیەکی نوێت لە گفتوگۆی داواکارییەکەدا هەیە.',
+                    'data' => ['url' => '/app/chats/'.$chat->id, 'chat_id' => $chat->id],
+                ]);
+            });
     }
 
     /**
@@ -359,6 +430,32 @@ class ChatController extends Controller
                 && app(CourierOrderAccess::class)->assigned($user)->whereKey($order->id)->exists(),
             403,
         );
+    }
+
+    /** @return array<int, int> */
+    private function assignedCourierIds(Order $order): array
+    {
+        return collect([
+            $order->courier_id,
+            $order->delivery_courier_id,
+            $order->pickup_courier_id,
+        ])
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function directCourierIdFor(Order $order, User $actor): ?int
+    {
+        $courierIds = $this->assignedCourierIds($order);
+
+        if ($actor->isCourierRole() && in_array((int) $actor->id, $courierIds, true)) {
+            return (int) $actor->id;
+        }
+
+        return $courierIds[0] ?? null;
     }
 
     private function merchantIdForOrder(Order $order, User $actor): ?int

@@ -19,6 +19,7 @@ const chatSubtitle = computed(() => isOrderConversation.value ? t('Order convers
 const sending = ref(false)
 const msgs = ref([...props.messages])
 const threadEl = ref(null)
+const lastMessageId = ref(Math.max(0, ...msgs.value.map((message) => Number(message?.id) || 0)))
 let pollTimer = null
 let refreshing = false
 
@@ -28,7 +29,7 @@ async function send() {
     sending.value = true
     try {
         const { data } = await axios.post(route('app.chats.send', props.chat.id), { text: value })
-        mergeMessages([...msgs.value, data])
+        mergeMessages([data])
         text.value = ''
     } catch (e) {
         // keep message for retry
@@ -38,12 +39,13 @@ async function send() {
     }
 }
 
-function mergeMessages(messages) {
-    const byId = new Map()
+function mergeMessages(messages, { replace = false } = {}) {
+    const byId = new Map(replace ? [] : msgs.value.map((message) => [message.id, message]))
     for (const message of messages || []) {
         if (message?.id) byId.set(message.id, message)
     }
     msgs.value = [...byId.values()].sort((a, b) => Number(a.id) - Number(b.id))
+    lastMessageId.value = Math.max(lastMessageId.value, ...msgs.value.map((message) => Number(message?.id) || 0))
     scrollDown()
 }
 
@@ -51,8 +53,11 @@ async function refreshMessages() {
     if (refreshing || document.hidden) return
     refreshing = true
     try {
-        const { data } = await axios.get(route('app.chats.messages', props.chat.id))
+        const { data } = await axios.get(route('app.chats.messages', props.chat.id), {
+            params: { after_id: lastMessageId.value },
+        })
         mergeMessages(data.messages)
+        lastMessageId.value = Math.max(lastMessageId.value, Number(data.last_id || 0))
     } catch (_) {
         // A temporary network failure must never clear the on-screen thread.
     } finally {
@@ -73,11 +78,21 @@ function onEnter(e) {
     }
 }
 
+function replaceMessages(messages) {
+    msgs.value = []
+    lastMessageId.value = 0
+    mergeMessages(messages, { replace: true })
+}
+
 watch(() => props.messages, (messages) => mergeMessages(messages), { deep: true })
+watch(() => props.chat?.id, () => replaceMessages(props.messages))
 
 onMounted(() => {
     scrollDown()
-    pollTimer = window.setInterval(refreshMessages, 4000)
+    // Shared hosting cannot keep a Reverb worker alive reliably. Incremental
+    // 2-second polling gives an open conversation near-instant feedback while
+    // downloading only messages newer than the last known ID.
+    pollTimer = window.setInterval(refreshMessages, 2000)
     document.addEventListener('visibilitychange', refreshMessages)
 })
 

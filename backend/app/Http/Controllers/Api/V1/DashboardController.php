@@ -16,7 +16,14 @@ class DashboardController extends Controller
     public function show(Request $request): JsonResponse
     {
         $user = $request->user();
-        abort_unless($user?->isActiveUser(), 403);
+        // Defence in depth: this endpoint must stay safe even if its route
+        // middleware is changed later. Branch-dashboard users have their own
+        // scoped browser portal and never use the mobile API surface.
+        abort_unless(
+            $user?->isActiveUser()
+                && ($user->isAdmin() || $user->role === 'merchant' || $user->isCourierRole()),
+            403,
+        );
 
         // Platform administrators see the cross-tenant operating picture.
         // Merchants and couriers are intentionally narrowed to their own

@@ -154,6 +154,9 @@ class AppOrderController extends Controller
                 'courier' => (clone $baseQuery)->where('status', 'courier')->count(),
                 'delivered' => (clone $baseQuery)->where('status', 'delivered')->count(),
                 'returned' => (clone $baseQuery)->where('status', 'returned')->count(),
+                'cancelled' => (clone $baseQuery)->where('status', 'cancelled')->count(),
+                'damaged' => (clone $baseQuery)->where('status', 'damaged')->count(),
+                'rejected' => (clone $baseQuery)->where('status', 'rejected')->count(),
             ]
             : $this->counts();
 
@@ -523,6 +526,9 @@ class AppOrderController extends Controller
             'courier' => Order::query()->where('status', 'courier')->count(),
             'delivered' => Order::query()->where('status', 'delivered')->count(),
             'returned' => Order::query()->where('status', 'returned')->count(),
+            'cancelled' => Order::query()->where('status', 'cancelled')->count(),
+            'damaged' => Order::query()->where('status', 'damaged')->count(),
+            'rejected' => Order::query()->where('status', 'rejected')->count(),
         ];
     }
 

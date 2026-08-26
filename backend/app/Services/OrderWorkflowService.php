@@ -149,6 +149,10 @@ class OrderWorkflowService
             // safe; it can never credit a wallet twice.
             if ($status === 'delivered') {
                 $this->postDeliveredSettlement($order);
+                // Points are an auditable, non-monetary reward. The service
+                // has a source lock, so an HTTP retry can never award a
+                // courier twice for the same completed delivery.
+                app(LoyaltyPointService::class)->creditForDelivery($order);
             }
 
             // A courier's order-value reservation must be released for every

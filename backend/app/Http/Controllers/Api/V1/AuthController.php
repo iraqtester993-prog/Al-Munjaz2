@@ -29,6 +29,14 @@ class AuthController extends Controller
             throw ValidationException::withMessages(['username' => [__('auth.pending_review')]]);
         }
 
+        // Owner and branch-manager credentials are intentionally browser
+        // dashboard credentials only. They must never mint a mobile API token
+        // that could bypass the branch-membership authorisation boundary.
+        abort_unless(
+            $user->isAdmin() || $user->role === 'merchant' || $user->isCourierRole(),
+            403,
+        );
+
         $user->tokens()->where('name', $data['device_name'])->delete();
         $token = $user->createToken($data['device_name'], ['platform:read', 'platform:write'])->plainTextToken;
         // Availability is controlled explicitly through the courier duty

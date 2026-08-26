@@ -54,6 +54,8 @@ const fallbackLabels = {
     'Reports': { ar: 'التقارير والتحليلات', en: 'Reports & analytics', ku: 'ڕاپۆرت و شیکاری' },
     'Operational Team': { ar: 'الفريق والصلاحيات', en: 'Operational team', ku: 'تیمی کارپێکردن' },
     'Platform Control': { ar: 'إدارة المنصة', en: 'Platform control', ku: 'بەڕێوەبردنی پلاتفۆرم' },
+    'Mobile Content': { ar: 'محتوى التطبيق', en: 'Mobile content', ku: 'ناوەڕۆکی ئەپ' },
+    'Loyalty Points': { ar: 'نقاط الولاء', en: 'Loyalty points', ku: 'خاڵەکانی دڵسۆزی' },
 }
 
 const availableLocales = computed(() => (page.props.locales?.length ? page.props.locales : ['ar', 'en', 'ku']))
@@ -75,6 +77,8 @@ const nav = computed(() => [
     { label: localized('Reports'), icon: 'chart', route: 'admin.reports' },
     { label: t('Chat'), icon: 'chat', route: 'admin.chat', badge: adminBadges.value.chat },
     { label: t('Notifications'), icon: 'bell', route: 'admin.notifications', badge: adminBadges.value.notifications },
+    { label: localized('Mobile Content'), icon: 'image', route: 'admin.content' },
+    { label: localized('Loyalty Points'), icon: 'star', route: 'admin.loyalty' },
     { label: t('Settings'), icon: 'settings', route: 'admin.settings' },
 ].map((item) => ({ ...item, url: route(item.route) })))
 
@@ -164,6 +168,8 @@ function icon(name) {
         card: 'M3 6h18v12H3zM3 10h18M7 15h4',
         chat: 'M21 12a8 8 0 0 1-8 8H4l1.5-3.5A8 8 0 1 1 21 12Z',
         bell: 'M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6Zm5 11a2 2 0 0 0 4 0',
+        image: 'M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5v-13ZM7 16l3.3-3.3a1.3 1.3 0 0 1 1.8 0l1.9 1.9 1.5-1.5a1.3 1.3 0 0 1 1.8 0L20 16M9 9h.01',
+        star: 'm12 3 2.75 5.57 6.15.9-4.45 4.34 1.05 6.13L12 17.05 6.5 19.94l1.05-6.13L3.1 9.47l6.15-.9L12 3Z',
         settings: 'M12 15.25A3.25 3.25 0 1 0 12 8.75a3.25 3.25 0 0 0 0 6.5Zm0-12.25v2m0 14v2m9-9h-2M5 12H3m15.36-6.36-1.42 1.42M7.06 16.94l-1.42 1.42m12.72 0-1.42-1.42M7.06 7.06 5.64 5.64',
         menu: 'M4 7h16M4 12h16M4 17h16',
         logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9',

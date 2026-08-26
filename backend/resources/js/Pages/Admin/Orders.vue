@@ -109,6 +109,24 @@ function tStage(stage) {
     return t(labels[stage] || stage || 'Not specified')
 }
 
+function hasPickupPoint(order) {
+    const latitude = Number(order?.pickup_latitude)
+    const longitude = Number(order?.pickup_longitude)
+
+    return Number.isFinite(latitude) && Number.isFinite(longitude)
+        && latitude >= -90 && latitude <= 90
+        && longitude >= -180 && longitude <= 180
+}
+
+function pickupMapUrl(order) {
+    if (!hasPickupPoint(order)) return '#'
+
+    const latitude = Number(order.pickup_latitude).toFixed(6)
+    const longitude = Number(order.pickup_longitude).toFixed(6)
+
+    return `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=16/${latitude}/${longitude}`
+}
+
 function apply() {
     router.get(route('admin.orders'), { filter: active.value, q: query.value }, { preserveState: true, replace: true })
 }
@@ -408,6 +426,15 @@ function provinceName(province) {
                     </div>
                 </section>
 
+                <section v-if="hasPickupPoint(detailsFor)" class="order-detail-section pickup-point-section">
+                    <h4>{{ t('Merchant pickup location') }}</h4>
+                    <div class="pickup-point-card">
+                        <span class="pickup-point-icon" aria-hidden="true">⌖</span>
+                        <div><b>{{ detailsFor.pickup_location_label || t('Merchant pickup location') }}</b><small class="mono">{{ Number(detailsFor.pickup_latitude).toFixed(6) }}, {{ Number(detailsFor.pickup_longitude).toFixed(6) }}</small></div>
+                        <a :href="pickupMapUrl(detailsFor)" target="_blank" rel="noopener noreferrer">{{ t('Open navigation apps') }}</a>
+                    </div>
+                </section>
+
                 <section class="order-detail-section">
                     <h4>{{ t('Operational Details') }}</h4>
                     <div class="order-detail-grid">
@@ -540,6 +567,7 @@ function provinceName(province) {
 .order-timeline-copy p, .order-timeline-copy time { display: block; margin: 3px 0 0; color: var(--ink-faint); font-size: 10.5px; font-weight: 700; line-height: 1.5; }
 .order-detail-note { margin: 0; color: var(--ink-soft); font-size: 11.5px; font-weight: 700; line-height: 1.8; }
 .order-detail-note + .order-detail-note { margin-top: 8px; }
+.pickup-point-section{border-color:color-mix(in srgb,var(--primary) 32%,var(--border));background:linear-gradient(135deg,color-mix(in srgb,var(--primary-tint) 64%,var(--surface)),var(--surface))}.pickup-point-card{display:flex;align-items:center;gap:10px}.pickup-point-icon{width:35px;height:35px;display:grid;place-items:center;flex:none;border-radius:10px;color:#062033;background:var(--primary);font-size:19px;font-weight:900}.pickup-point-card>div{display:grid;min-width:0;flex:1;gap:3px}.pickup-point-card b{overflow:hidden;margin:0;text-overflow:ellipsis;white-space:nowrap}.pickup-point-card small{color:var(--ink-faint);font-size:9.5px;font-weight:750}.pickup-point-card a{display:inline-flex;align-items:center;justify-content:center;min-height:33px;padding:0 9px;border-radius:8px;color:#062033;background:var(--primary);font-size:9.5px;font-weight:900;text-decoration:none;white-space:nowrap}
 .assign-help { margin: 6px 0 0; color: var(--ink-faint); font-size: 10px; font-weight: 700; line-height: 1.55; }
 
 @media (max-width: 620px) {

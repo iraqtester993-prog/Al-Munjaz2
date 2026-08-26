@@ -67,7 +67,6 @@ class EnsureDashboardHost
             || $request->is('app')
             || $request->is('app/*')
             || $request->is('profile/*')
-            || $request->is('logout')
             || $request->is('pwa/manifest')
             || $request->is('pwa/worker')
             || $request->is('manifest.json')

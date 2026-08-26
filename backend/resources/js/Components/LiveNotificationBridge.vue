@@ -95,7 +95,10 @@ onMounted(() => {
     window.addEventListener('keydown', unlockTone, true)
     document.addEventListener('visibilitychange', refreshOnVisible)
     poll()
-    pollTimer = window.setInterval(poll, 12_000)
+    // The feed is incremental (`after`), therefore a short visible-session
+    // interval has a small payload and feels immediate without pretending a
+    // shared-host deployment has a permanent websocket process.
+    pollTimer = window.setInterval(poll, 5000)
 })
 
 onBeforeUnmount(() => {

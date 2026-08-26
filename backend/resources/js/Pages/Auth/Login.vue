@@ -12,6 +12,10 @@ const dark = ref(false)
 const showPassword = ref(false)
 
 const locale = computed(() => page.props.locale || 'ar')
+const branding = computed(() => page.props.branding || {
+    name: t('Al-Munjaz Al-Saree'),
+    logo_url: '/logo.png',
+})
 const roles = computed(() => [
     { key: 'merchant', label: t('Merchant App'), desc: t('My orders, statement, wallet'), icon: 'shop' },
     { key: 'courier', label: t('Courier App'), desc: t('My deliveries, collections, wallet'), icon: 'bike' },
@@ -71,8 +75,8 @@ function icon(name) {
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="icon(dark ? 'moon' : 'sun')" /></svg>
             </button>
             <div class="reference-brand">
-                <span class="brand-mark"><img src="/logo.png" :alt="t('Al-Munjaz Al-Saree')"></span>
-                <b>{{ t('Al-Munjaz Al-Saree') }}</b>
+                <span class="brand-mark"><img :src="branding.logo_url" :alt="branding.name"></span>
+                <b>{{ branding.name }}</b>
             </div>
             <div class="auth-header-actions">
                 <button class="auth-icon auth-language" type="button" :aria-label="t('Language')" @click="cycleLocale">{{ locale.toUpperCase() }}</button>

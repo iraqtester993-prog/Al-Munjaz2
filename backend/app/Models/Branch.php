@@ -6,6 +6,7 @@ use App\Models\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -34,6 +35,23 @@ class Branch extends Model
     public function users(): HasMany
     {
         return $this->hasMany(User::class);
+    }
+
+    /**
+     * Explicit dashboard access grants.  `users()` remains the legacy
+     * one-branch operational assignment relation and must not be used as the
+     * authorisation source for the branch portal.
+     */
+    public function members(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'branch_memberships')
+            ->withPivot('access_role')
+            ->withTimestamps();
+    }
+
+    public function memberships(): HasMany
+    {
+        return $this->hasMany(BranchMembership::class);
     }
 
     public function originOrders(): HasMany

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\App;
 
 use App\Http\Controllers\Controller;
+use App\Models\MobileSlide;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\CourierOrderAccess;
@@ -165,18 +166,31 @@ class DashboardController extends Controller
 
     protected function heroSlides(bool $isCourier): array
     {
+        $publishedSlides = MobileSlide::query()
+            ->publishedFor($isCourier ? 'courier' : 'merchant')
+            ->get()
+            ->map(fn (MobileSlide $slide) => $slide->mobilePayload())
+            ->values()
+            ->all();
+
+        // New installations still have a useful, local-first hero area
+        // before the operator publishes the first campaign. As soon as one
+        // slide is created, the dashboard-controlled content is the only
+        // source shown to the selected audience.
+        if ($publishedSlides !== []) {
+            return $publishedSlides;
+        }
+
         if ($isCourier) {
             return [
-                ['title_ar' => 'فعّل GPS لتوصيل أدق', 'title_en' => 'Enable GPS for accurate delivery', 'title_ku' => 'GPS چالاک بکە بۆ گەیاندنی وردتر', 'body_ar' => 'يساعد الفرع على تتبع رحلتك لحظياً', 'body_en' => 'Helps the branch track your trip live', 'body_ku' => 'یارمەتی لقەکە دەدات گەشتەکەت بە ڕاستەوخۆ بەدواداچوون بکات', 'tag_ar' => 'تطبيق المندوب', 'tag_en' => 'Courier App', 'tag_ku' => 'ئەپی گەیەنەر', 'accent' => true, 'image_url' => 'https://picsum.photos/seed/masar-c1/800/300'],
-                ['title_ar' => 'أعلى تحصيل لك هذا الأسبوع', 'title_en' => 'Your best collection week yet', 'title_ku' => 'باشترین کۆکراوەت لەم هەفتەیە', 'body_ar' => '700,000 د.ع يوم الخميس — استمر بنفس الأداء', 'body_en' => '700,000 IQD on Thursday — keep it up', 'body_ku' => '٧٠٠,٠٠٠ د.ع ڕۆژی پێنجشەممە — بەردەوام بە هەمان ئەدا', 'tag_ar' => 'تطبيق المندوب', 'tag_en' => 'Courier App', 'tag_ku' => 'ئەپی گەیەنەر', 'accent' => true, 'image_url' => 'https://picsum.photos/seed/masar-c2/800/300'],
-                ['title_ar' => 'سلّم النقدية قبل الساعة 6', 'title_en' => 'Hand over cash before 6 PM', 'title_ku' => 'پارەی نەقد پێش کاتژمێر ٦ تەسلیم بکە', 'body_ar' => 'لضمان إقفال صندوق الفرع بالوقت المحدد', 'body_en' => 'To ensure the branch cashbox closes on time', 'body_ku' => 'بۆ دڵنیابوون لە داخستنی سندوقی لق لە کاتی دیاریکراو', 'tag_ar' => 'تطبيق المندوب', 'tag_en' => 'Courier App', 'tag_ku' => 'ئەپی گەیەنەر', 'accent' => true, 'image_url' => 'https://picsum.photos/seed/masar-c3/800/300'],
+                ['title_ar' => 'فعّل GPS لتوصيل أدق', 'title_en' => 'Enable GPS for accurate delivery', 'title_ku' => 'GPS چالاک بکە بۆ گەیاندنی وردتر', 'body_ar' => 'يساعد الفرع على معرفة آخر موقع تشاركه بموافقتك.', 'body_en' => 'It lets your branch use the last location you share with consent.', 'body_ku' => 'یارمەتی لقەکە دەدات گەشتەکەت بە ڕاستەوخۆ بەدواداچوون بکات', 'tag_ar' => 'تطبيق المندوب', 'tag_en' => 'Courier App', 'tag_ku' => 'ئەپی گەیەنەر', 'accent' => true, 'image_url' => null],
+                ['title_ar' => 'أعلى تحصيل لك هذا الأسبوع', 'title_en' => 'Your best collection week yet', 'title_ku' => 'باشترین کۆکراوەت لەم هەفتەیە', 'body_ar' => 'تابع ميزانيتك وطلباتك من المحفظة والتقارير.', 'body_en' => 'Review your budget and jobs from Wallet and Reports.', 'body_ku' => 'بودجە و کارەکانت لە جزدان و ڕاپۆرتەکانەوە بەدواداچوون بکە.', 'tag_ar' => 'تطبيق المندوب', 'tag_en' => 'Courier App', 'tag_ku' => 'ئەپی گەیەنەر', 'accent' => true, 'image_url' => null],
             ];
         }
 
         return [
-            ['title_ar' => 'تتبّع كل طلب لحظة بلحظة', 'title_en' => 'Track every order in real time', 'title_ku' => 'هەر داواکارییەک بە ڕاستەوخۆ بەدواداچوون بکە', 'body_ar' => 'اعرف مكان طلبك بالضبط من لوحة الطلبات', 'body_en' => 'Know exactly where your order is from the orders tab', 'body_ku' => 'لە تەبی داواکارییەکان شوێنی ڕاستەقینەی داواکارییەکەت بزانە', 'tag_ar' => 'تطبيق التاجر', 'tag_en' => 'Merchant App', 'tag_ku' => 'ئەپی بازرگان', 'accent' => false, 'image_url' => 'https://picsum.photos/seed/masar-t1/800/300'],
-            ['title_ar' => 'عمولة أقل على الطلبات الكبيرة', 'title_en' => 'Lower fees on bulk orders', 'title_ku' => 'کرێی کەمتر بۆ داواکارییە زۆرەکان', 'body_ar' => 'أضف 20 طلب أو أكثر شهرياً واحصل على خصم تلقائي', 'body_en' => 'Add 20+ orders monthly and get an automatic discount', 'body_ku' => 'لە مانگێکدا ٢٠ داواکاری یان زیاتر زیاد بکە و داشکاندنی خۆکار وەر بگرە', 'tag_ar' => 'تطبيق التاجر', 'tag_en' => 'Merchant App', 'tag_ku' => 'ئەپی بازرگان', 'accent' => false, 'image_url' => 'https://picsum.photos/seed/masar-t2/800/300'],
-            ['title_ar' => 'نسبة تسليمك 96% هذا الشهر', 'title_en' => 'Your delivery rate is 96% this month', 'title_ku' => 'ڕێژەی گەیاندنت ئەم مانگە ٩٦٪ە', 'body_ar' => 'من أفضل 10% من التجار على المنجز السريع', 'body_en' => "You're in the top 10% of merchants on Al-Munjaz Al-Saree", 'body_ku' => 'تۆ لە باشترین ١٠٪ی بازرگانانی ئەل‌موئەنجەز السەریعدایت', 'tag_ar' => 'تطبيق التاجر', 'tag_en' => 'Merchant App', 'tag_ku' => 'ئەپی بازرگان', 'accent' => false, 'image_url' => 'https://picsum.photos/seed/masar-t3/800/300'],
+            ['title_ar' => 'تابع كل طلب لحظة بلحظة', 'title_en' => 'Track every order in real time', 'title_ku' => 'هەر داواکارییەک بە ڕاستەوخۆ بەدواداچوون بکە', 'body_ar' => 'أضف طلبك وحدد نقطة الاستلام الخاصة به، ثم تابع حالة الطلب.', 'body_en' => 'Create an order, set its pickup point, then follow its status.', 'body_ku' => 'لە تەبی داواکارییەکان شوێنی ڕاستەقینەی داواکارییەکەت بزانە', 'tag_ar' => 'تطبيق التاجر', 'tag_en' => 'Merchant App', 'tag_ku' => 'ئەپی بازرگان', 'accent' => false, 'image_url' => null],
+            ['title_ar' => 'إدارة طلباتك من مكان واحد', 'title_en' => 'Manage every order in one place', 'title_ku' => 'هەموو داواکارییەکانت لە یەک شوێن بەڕێوەببە', 'body_ar' => 'راجع الرصيد والتقارير والرسائل من التطبيق.', 'body_en' => 'Review balance, reports, and messages from the app.', 'body_ku' => 'باڵانس، ڕاپۆرت و نامەکانت لە ئەپەکەوە بپشکنە.', 'tag_ar' => 'تطبيق التاجر', 'tag_en' => 'Merchant App', 'tag_ku' => 'ئەپی بازرگان', 'accent' => false, 'image_url' => null],
         ];
     }
 }

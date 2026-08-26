@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\V1\ReportController;
 use App\Http\Controllers\Api\V1\WalletController;
 use App\Http\Controllers\Admin\AdminCourierLocationController;
 use App\Http\Controllers\App\CourierLocationController;
+use App\Http\Middleware\EnsureMobileApiUser;
 use App\Http\Middleware\SetTenantContext;
 use Illuminate\Support\Facades\Route;
 
@@ -19,7 +20,7 @@ Route::prefix('v1')->group(function (): void {
     Route::get('/provinces', [ProvinceController::class, 'index']);
     Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
-    Route::middleware('auth:sanctum')->group(function (): void {
+    Route::middleware(['auth:sanctum', EnsureMobileApiUser::class])->group(function (): void {
         Route::get('/me', [AuthController::class, 'me']);
         Route::post('/auth/logout', [AuthController::class, 'logout']);
         Route::get('/dashboard', [DashboardController::class, 'show']);
@@ -30,6 +31,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/documents', [DocumentController::class, 'store']);
         Route::get('/chats', [ChatController::class, 'index']);
         Route::get('/chats/{chat}', [ChatController::class, 'show']);
+        Route::get('/chats/{chat}/messages', [ChatController::class, 'messages']);
         Route::post('/chats', [ChatController::class, 'store']);
         Route::get('/notifications', [NotificationController::class, 'index']);
         Route::patch('/notifications/{notification}/read', [NotificationController::class, 'markRead']);

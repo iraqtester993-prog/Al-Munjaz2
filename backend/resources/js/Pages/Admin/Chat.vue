@@ -16,16 +16,24 @@ const sending = ref(false)
 const sendError = ref('')
 const msgs = ref([...(props.messages || [])])
 const threadEl = ref(null)
+const lastMessageId = ref(Math.max(0, ...msgs.value.map((message) => Number(message?.id) || 0)))
 let pollTimer = null
 let refreshing = false
 
-function mergeMessages(messages) {
-    const byId = new Map()
+function mergeMessages(messages, { replace = false } = {}) {
+    const byId = new Map(replace ? [] : msgs.value.map((message) => [message.id, message]))
     for (const message of messages || []) {
         if (message?.id) byId.set(message.id, message)
     }
     msgs.value = [...byId.values()].sort((a, b) => Number(a.id) - Number(b.id))
+    lastMessageId.value = Math.max(lastMessageId.value, ...msgs.value.map((message) => Number(message?.id) || 0))
     scrollDown()
+}
+
+function replaceMessages(messages) {
+    msgs.value = []
+    lastMessageId.value = 0
+    mergeMessages(messages, { replace: true })
 }
 
 watch(() => props.messages, (messages) => mergeMessages(messages), { deep: true })
@@ -44,7 +52,7 @@ async function send() {
     sending.value = true
     try {
         const { data } = await axios.post(route('admin.chat.send', props.activeChat.id), { text: value })
-        mergeMessages([...msgs.value, data])
+        mergeMessages([data])
         text.value = ''
     } catch (e) {
         sendError.value = t('Unable to send the message. Please try again.')
@@ -58,8 +66,11 @@ async function refreshMessages() {
     if (!props.activeChat || refreshing || document.hidden) return
     refreshing = true
     try {
-        const { data } = await axios.get(route('admin.chat.messages', props.activeChat.id))
+        const { data } = await axios.get(route('admin.chat.messages', props.activeChat.id), {
+            params: { after_id: lastMessageId.value },
+        })
         mergeMessages(data.messages)
+        lastMessageId.value = Math.max(lastMessageId.value, Number(data.last_id || 0))
     } catch (_) {
         // Keep the thread usable while a short-lived request fails.
     } finally {
@@ -81,13 +92,13 @@ function onEnter(e) {
 }
 
 watch(() => props.activeChat?.id, () => {
-    mergeMessages(props.messages)
+    replaceMessages(props.messages)
     refreshMessages()
 })
 
 onMounted(() => {
     scrollDown()
-    pollTimer = window.setInterval(refreshMessages, 4000)
+    pollTimer = window.setInterval(refreshMessages, 2000)
     document.addEventListener('visibilitychange', refreshMessages)
 })
 

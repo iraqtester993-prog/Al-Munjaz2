@@ -34,9 +34,11 @@ return Application::configure(basePath: dirname(__DIR__))
             ];
         }, subdomains: false);
 
-        $middleware->redirectUsersTo(fn ($request) => $request->user()?->role === 'admin'
-            ? '/dashboard'
-            : '/app');
+        $middleware->redirectUsersTo(fn ($request) => match ($request->user()?->role) {
+            'admin' => '/dashboard',
+            'owner', 'branch_manager' => '/dashboard/branch',
+            default => '/app',
+        });
 
         $middleware->redirectGuestsTo(fn ($request) => $request->is('dashboard*')
             ? '/dashboard/login'

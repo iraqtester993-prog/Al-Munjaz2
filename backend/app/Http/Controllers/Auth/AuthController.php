@@ -85,7 +85,7 @@ class AuthController extends Controller
 
         $user = User::where('username', $credentials['username'])->first();
 
-        if (! $user || $user->role !== 'admin' || ! Hash::check($credentials['password'], $user->password)) {
+        if (! $user || ! in_array($user->role, ['admin', 'owner', 'branch_manager'], true) || ! Hash::check($credentials['password'], $user->password)) {
             return back()->withErrors(['username' => __('auth.failed')]);
         }
 
@@ -96,7 +96,7 @@ class AuthController extends Controller
         Auth::login($user, true);
         $request->session()->regenerate();
 
-        return redirect()->intended('/dashboard');
+        return redirect()->intended($this->homeFor($user));
     }
 
     public function registerForm(string $role)
@@ -307,7 +307,7 @@ class AuthController extends Controller
         $redirect = '/login';
 
         if ($user = $request->user()) {
-            $redirect = $user->role === 'admin' ? '/dashboard/login' : $redirect;
+            $redirect = in_array($user->role, ['admin', 'owner', 'branch_manager'], true) ? '/dashboard/login' : $redirect;
             $user->forceFill(['is_online' => false])->saveQuietly();
         }
 
@@ -323,6 +323,7 @@ class AuthController extends Controller
     {
         return match ($user->role) {
             'admin' => '/dashboard',
+            'owner', 'branch_manager' => '/dashboard/branch',
             'merchant', 'courier', 'pickup_courier', 'delivery_courier', 'transporter' => '/app',
             default => '/login',
         };

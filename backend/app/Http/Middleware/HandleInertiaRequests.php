@@ -40,6 +40,10 @@ class HandleInertiaRequests extends Middleware
                 // the server only keeps its hash, so it cannot be recovered
                 // from the database after the administrator leaves the page.
                 'invite_link' => fn () => $request->session()->get('invite_link'),
+                // New branch account credentials are intentionally a one-time
+                // flash value. Only the encrypted password hash remains in
+                // the database after the next navigation.
+                'branch_credentials' => fn () => $request->session()->get('branch_credentials'),
             ],
             'auth' => [
                 'user' => $request->user() ? [
@@ -97,7 +101,7 @@ class HandleInertiaRequests extends Middleware
             'adminBadges' => function () use ($request): array {
                 $user = $request->user();
 
-                if (! $user || ! in_array($user->role, ['admin', 'owner'], true)) {
+                if (! $user || ! $user->isAdmin()) {
                     return [];
                 }
 

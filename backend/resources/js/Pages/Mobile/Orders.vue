@@ -36,7 +36,7 @@ let ticker
 
 const filters = computed(() => {
     const list = [{ key: 'all', label: t('All') }]
-    for (const s of ['pending', 'approved', 'courier', 'delivered', 'returned']) {
+    for (const s of ['pending', 'approved', 'courier', 'delivered', 'returned', 'cancelled', 'damaged', 'rejected']) {
         list.push({ key: s, label: tStatus(s) })
     }
     return list
@@ -81,6 +81,7 @@ function tStatus(s) {
         returned: t('Returned'),
         cancelled: t('Cancelled'),
         damaged: t('Damaged'),
+        rejected: t('Rejected'),
     }
     return m[s] || s
 }
