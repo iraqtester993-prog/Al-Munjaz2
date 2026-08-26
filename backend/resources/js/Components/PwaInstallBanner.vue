@@ -49,9 +49,9 @@ onUnmounted(() => {
 <template>
     <aside v-if="!installed" class="pwa-install-banner">
         <span class="install-icon">⇩</span>
-        <p v-if="isIos || showInstructions">{{ isIos ? 'من Safari اضغط مشاركة ثم اختر «إضافة إلى الشاشة الرئيسية».' : 'من قائمة المتصفح اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».' }}</p>
-        <p v-else>أضِف المنجز السريع إلى شاشتك الرئيسية للوصول السريع والعمل دون اتصال جزئياً.</p>
-        <button type="button" :disabled="installing" @click="install">{{ installing ? 'جارٍ التثبيت…' : (deferredPrompt ? 'تثبيت' : 'إرشادات') }}</button>
+        <p v-if="isIos || showInstructions">{{ isIos ? t('Install iOS instructions') : t('Install browser instructions') }}</p>
+        <p v-else>{{ t('Install app description') }}</p>
+        <button type="button" :disabled="installing" @click="install">{{ installing ? t('Installing…') : (deferredPrompt ? t('Install') : t('Instructions')) }}</button>
     </aside>
 </template>
 

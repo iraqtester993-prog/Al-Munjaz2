@@ -27,9 +27,11 @@ function onScroll() {
 function text(slide) {
     const l = page.props.locale || 'ar'
     return {
-        title: slide[`title_${l}`] || slide.title_ar,
-        body: slide[`body_${l}`] || slide.body_ar,
-        tag: slide[`tag_${l}`] || slide.tag_ar,
+        // Content that has not yet been translated to Kurdish should fall back
+        // to English rather than unexpectedly switching the user back to Arabic.
+        title: slide[`title_${l}`] || slide.title_en || slide.title_ar,
+        body: slide[`body_${l}`] || slide.body_en || slide.body_ar,
+        tag: slide[`tag_${l}`] || slide.tag_en || slide.tag_ar,
     }
 }
 

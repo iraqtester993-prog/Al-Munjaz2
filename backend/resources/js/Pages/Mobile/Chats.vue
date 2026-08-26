@@ -9,9 +9,14 @@ const props = defineProps({
 
 const page = usePage()
 const unread = computed(() => props.chats.reduce((s, c) => s + (c.unread || 0), 0))
+const locale = computed(() => page.props.locale || 'ar')
 
 function initials(name) {
     return (name || '؟').trim().charAt(0)
+}
+
+function title(chat) {
+    return chat?.[`title_${locale.value}`] || chat?.title_ar || t('Support')
 }
 </script>
 
@@ -26,9 +31,9 @@ function initials(name) {
 
         <div v-if="chats.length" class="list-card">
             <div v-for="c in chats" :key="c.id" class="chat-row" @click="$inertia.visit(route('app.chats.show', c.id))">
-                <div class="chat-avatar">{{ initials(c.title_ar) }}</div>
+                <div class="chat-avatar">{{ initials(title(c)) }}</div>
                 <div class="chat-mid">
-                    <b>{{ c.title_ar }}</b>
+                    <b>{{ title(c) }}</b>
                     <span>{{ c.last_message || t('No messages yet') }}</span>
                 </div>
                 <div class="chat-end">

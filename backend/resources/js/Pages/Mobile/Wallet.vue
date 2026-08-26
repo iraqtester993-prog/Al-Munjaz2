@@ -81,11 +81,11 @@ function doBudget() {
                 <span class="wc-badge">{{ isCourier ? t('Courier') : t('Merchant') }}</span>
                 <span class="wc-badge">{{ t('Available') }}</span>
             </div>
-            <div class="wc-value mono">{{ fmt(balance) }} <span style="font-size: 15px; font-weight: 700">د.ع</span></div>
+            <div class="wc-value mono">{{ fmt(balance) }} <span style="font-size: 15px; font-weight: 700">{{ t('IQD') }}</span></div>
             <div class="wc-label">{{ t('Total Balance') }}</div>
             <div v-if="isCourier" style="margin-top: 10px; background: rgba(255,255,255,.1); border-radius: 12px; padding: 10px 12px; display: flex; justify-content: space-between; font-size: 11.5px; font-weight: 700">
                 <span>{{ t('Budget') }}</span>
-                <b class="mono">{{ fmt(budget) }} د.ع</b>
+                <b class="mono">{{ fmt(budget) }} {{ t('IQD') }}</b>
             </div>
             <div class="wallet-actions">
                 <button @click="showWithdraw = true">
@@ -136,7 +136,7 @@ function doBudget() {
             </div>
             <div v-if="balance > 0" class="detail-row" style="background: var(--surface-2); border-radius: 10px; padding: 10px 12px">
                 <span class="text-muted">{{ t('Available') }}</span>
-                <b class="mono">{{ fmt(balance) }} د.ع</b>
+                <b class="mono">{{ fmt(balance) }} {{ t('IQD') }}</b>
             </div>
             <button class="btn btn-primary" style="width: 100%; margin-top: 14px" :disabled="busy || !withdrawAmount" @click="doWithdraw">
                 <span v-if="busy" class="loader"></span>

@@ -17,23 +17,34 @@ const props = defineProps({
 const page = usePage()
 const user = computed(() => page.props.auth?.user)
 const tenant = computed(() => page.props.auth?.tenant)
+const locale = computed(() => page.props.locale || 'ar')
 const showOrderForm = ref(false)
 const now = ref(Date.now())
 let ticker
 
 const deliveryRate = computed(() => props.stats.total ? Math.round((props.stats.delivered / props.stats.total) * 100) : 0)
 const statusItems = computed(() => [
-    { label: 'قيد الانتظار', value: props.stats.pending, color: 'var(--st-pending)' },
-    { label: 'تم قبول الطلب', value: props.stats.approved, color: 'var(--st-approved)' },
-    { label: 'بحوزة المندوب', value: props.stats.courier, color: 'var(--st-courier)' },
-    { label: 'تم التسليم', value: props.stats.delivered, color: 'var(--st-delivered)' },
-    { label: 'راجع', value: props.stats.returned, color: 'var(--st-returned)' },
+    { label: t('Pending'), value: props.stats.pending, color: 'var(--st-pending)' },
+    { label: t('Approved'), value: props.stats.approved, color: 'var(--st-approved)' },
+    { label: t('With Courier'), value: props.stats.courier, color: 'var(--st-courier)' },
+    { label: t('Delivered'), value: props.stats.delivered, color: 'var(--st-delivered)' },
+    { label: t('Returned'), value: props.stats.returned, color: 'var(--st-returned)' },
 ])
 
-const greeting = computed(() => {
-    const h = new Date().getHours()
-    return h < 12 ? 'صباح الخير' : 'مساء الله بالخير'
-})
+const greeting = computed(() => t('Good to see you'))
+
+function localizedOrderValue(order, key) {
+    const preferred = locale.value === 'en' ? 'en' : locale.value === 'ku' ? 'ku' : 'ar'
+
+    return order?.[`${key}_${preferred}`]
+        || order?.[`${key}_en`]
+        || order?.[`${key}_ar`]
+        || ''
+}
+
+function customerName(order) {
+    return localizedOrderValue(order, 'customer_name')
+}
 
 function openComplaint(order) {
     router.post(route('app.chats.open'), { order_id: order.id }, { preserveScroll: true })
@@ -52,7 +63,7 @@ function pickupRemainingText(order) {
     const seconds = Math.floor(remaining / 1000)
     const minutes = Math.floor(seconds / 60)
 
-    return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')} د`
+    return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')} ${t('Minutes abbreviation')}`
 }
 
 onMounted(() => {
@@ -66,35 +77,35 @@ onUnmounted(() => window.clearInterval(ticker))
     <AppShell :title="greeting" :subtitle="user?.name">
         <template #title>
             {{ greeting }}
-            <span class="tb-sub">{{ tenant?.name || user?.name || 'حساب التاجر' }}</span>
+            <span class="tb-sub">{{ tenant?.name || user?.name || t('Merchant Account') }}</span>
         </template>
 
         <HeroSlider :slides="heroSlides" />
 
         <button class="home-new-order" @click="showOrderForm = true">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-            إضافة طلب جديد
+            {{ t('Add New Order') }}
         </button>
 
         <div class="hero-card">
-            <div class="hc-label">طلباتي اليوم</div>
+            <div class="hc-label">{{ t('My Orders Today') }}</div>
             <div class="hc-value mono">{{ stats.today }}</div>
             <div class="hc-row">
                 <span class="hc-chip">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
-                    نسبة التسليم: {{ deliveryRate }}%
+                    {{ t('Delivery Rate') }}: {{ deliveryRate }}%
                 </span>
             </div>
         </div>
 
         <div class="chart-card">
-            <div class="chart-card-head"><h4>توزيع حالات الطلبات</h4></div>
+            <div class="chart-card-head"><h4>{{ t('Order Status Distribution') }}</h4></div>
             <DonutChart :items="statusItems" />
         </div>
 
         <div class="section-title">
-            <h3>أحدث الطلبات</h3>
-            <a @click="$inertia.visit(route('app.orders'))">عرض الكل</a>
+            <h3>{{ t('Recent Orders') }}</h3>
+            <a @click="$inertia.visit(route('app.orders'))">{{ t('See all') }}</a>
         </div>
 
         <div v-if="recentOrders.length" class="list-card">
@@ -106,7 +117,7 @@ onUnmounted(() => window.clearInterval(ticker))
                         </svg>
                     </div>
                     <div class="order-mid">
-                        <b>{{ o.customer_name_ar }}</b>
+                        <b>{{ customerName(o) }}</b>
                         <span class="mono">{{ o.track_no }}</span>
                     </div>
                     <div class="order-end">
@@ -115,13 +126,13 @@ onUnmounted(() => window.clearInterval(ticker))
                         <StatusBadge :status="o.status" />
                     </div>
                 </div>
-                <p v-if="o.notes" class="merchant-order-note"><b>ملاحظة الطلب:</b> {{ o.notes }}</p>
+                <p v-if="o.notes" class="merchant-order-note"><b>{{ t('Notes') }}:</b> {{ o.notes }}</p>
                 <div v-if="o.status === 'approved' || o.status === 'courier'" class="merchant-order-tools">
                     <span v-if="o.status === 'approved' && pickupRemainingText(o)" class="merchant-pickup-timer">
-                        <i></i> الوقت المتاح للاستلام: <b class="mono">{{ pickupRemainingText(o) }}</b>
+                        <i></i> {{ t('Time to reach the merchant') }}: <b class="mono">{{ pickupRemainingText(o) }}</b>
                     </span>
-                    <span v-else>الطلب قيد التوصيل</span>
-                    <button type="button" @click.stop="openComplaint(o)">شكوى / تأخر</button>
+                    <span v-else>{{ t('Out for Delivery') }}</span>
+                    <button type="button" @click.stop="openComplaint(o)">{{ t('Contact Support') }}</button>
                 </div>
             </div>
         </div>

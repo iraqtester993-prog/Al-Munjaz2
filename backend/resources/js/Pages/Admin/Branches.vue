@@ -18,33 +18,33 @@ function submit() {
 </script>
 
 <template>
-    <AdminShell title="الفروع">
+    <AdminShell :title="t('Branches')">
         <div class="section-head">
-            <div><h2>الفروع</h2><p>إدارة فروع الشركة وأرصدة صناديقها</p></div>
-            <button class="btn primary" @click="open = true">+ فرع جديد</button>
+            <div><h2>{{ t('Branches') }}</h2><p>{{ t('Manage branches and cashbox balances') }}</p></div>
+            <button class="btn primary" @click="open = true">+ {{ t('New Branch') }}</button>
         </div>
 
         <div class="branch-grid">
             <article v-for="branch in branches" :key="branch.id" class="branch-card">
-                <div class="branch-head"><span class="branch-icon">⌂</span><span class="state" :class="{ off: !branch.is_active }">{{ branch.is_active ? 'نشط' : 'موقوف' }}</span></div>
+                <div class="branch-head"><span class="branch-icon">⌂</span><span class="state" :class="{ off: !branch.is_active }">{{ branch.is_active ? t('Active') : t('Inactive') }}</span></div>
                 <h3>{{ branch.name }}</h3>
                 <p>{{ branch.city }} <span v-if="branch.code">· {{ branch.code }}</span></p>
-                <div class="branch-stats"><span><b>{{ branch.orders_count }}</b> طلب</span><span><b>{{ branch.users_count }}</b> مستخدم</span></div>
-                <div class="cash"><span>رصيد الصندوق</span><b class="mono">{{ fmt(branch.cash_balance) }} د.ع</b></div>
+                <div class="branch-stats"><span><b>{{ branch.orders_count }}</b> {{ t('Orders') }}</span><span><b>{{ branch.users_count }}</b> {{ t('Users') }}</span></div>
+                <div class="cash"><span>{{ t('Cashbox Balance') }}</span><b class="mono">{{ fmt(branch.cash_balance) }} {{ t('IQD') }}</b></div>
             </article>
-            <div v-if="!branches.length" class="panel empty">لا توجد فروع بعد. أضف الفرع الأول لبدء التشغيل.</div>
+            <div v-if="!branches.length" class="panel empty">{{ t('No branches yet. Add your first branch to start operations.') }}</div>
         </div>
 
         <div v-if="open" class="modal-backdrop" @click.self="open = false">
             <form class="branch-modal" @submit.prevent="submit">
-                <header><h3>فرع جديد</h3><button type="button" @click="open = false">×</button></header>
-                <label>رمز الفرع<input v-model="form.code" required placeholder="BGD-HQ" /></label>
-                <label>اسم الفرع<input v-model="form.name_ar" required placeholder="فرع بغداد الرئيسي" /></label>
-                <label>المحافظة / المدينة<input v-model="form.city" required placeholder="بغداد" /></label>
-                <label>الهاتف<input v-model="form.phone" placeholder="07xxxxxxxxx" /></label>
-                <label>العنوان<textarea v-model="form.address" rows="2" /></label>
+                <header><h3>{{ t('New Branch') }}</h3><button type="button" @click="open = false">×</button></header>
+                <label>{{ t('Branch Code') }}<input v-model="form.code" required placeholder="BGD-HQ" /></label>
+                <label>{{ t('Branch Name') }}<input v-model="form.name_ar" required :placeholder="t('Main Baghdad Branch')" /></label>
+                <label>{{ t('Governorate / City') }}<input v-model="form.city" required :placeholder="t('Baghdad')" /></label>
+                <label>{{ t('Phone') }}<input v-model="form.phone" placeholder="07xxxxxxxxx" /></label>
+                <label>{{ t('Address') }}<textarea v-model="form.address" rows="2" /></label>
                 <p v-if="form.errors.code" class="error">{{ form.errors.code }}</p>
-                <button class="btn primary" type="submit" :disabled="form.processing">حفظ الفرع</button>
+                <button class="btn primary" type="submit" :disabled="form.processing">{{ t('Save Branch') }}</button>
             </form>
         </div>
     </AdminShell>

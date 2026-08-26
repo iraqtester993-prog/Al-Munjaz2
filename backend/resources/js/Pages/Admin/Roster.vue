@@ -60,6 +60,19 @@ function openDocument(doc) {
     window.open(doc.url, '_blank', 'noopener')
 }
 
+function documentLabel(type) {
+    const labels = {
+        residence: t('Residence Card'),
+        id_front: `${t('National ID Card')} · ${t('Front')}`,
+        id_back: `${t('National ID Card')} · ${t('Back')}`,
+        license_front: `${t('Driving License')} · ${t('Front')}`,
+        license_back: `${t('Driving License')} · ${t('Back')}`,
+        driving_license: t('Driving License'),
+    }
+
+    return labels[type] || type
+}
+
 const isCourier = computed(() => props.role === 'courier')
 </script>
 
@@ -92,7 +105,7 @@ const isCourier = computed(() => props.role === 'courier')
                     </span>
                     <span>
                         {{ t('Wallet') }}
-                        <label class="mono">{{ fmt(row.wallet_balance) }} د.ع</label>
+                        <label class="mono">{{ fmt(row.wallet_balance) }} {{ t('IQD') }}</label>
                     </span>
                     <span v-if="isCourier">
                         {{ t('Vehicle') }}
@@ -118,7 +131,7 @@ const isCourier = computed(() => props.role === 'courier')
                 </div>
 
                 <div v-if="row.documents?.length" style="display: flex; gap: 8px; flex-wrap: wrap">
-                    <button v-for="doc in row.documents" :key="doc.id" class="fbtn mini" style="border: none" @click="openDocument(doc)">عرض {{ doc.type }}</button>
+                    <button v-for="doc in row.documents" :key="doc.id" class="fbtn mini" style="border: none" @click="openDocument(doc)">{{ t('View Document') }} · {{ documentLabel(doc.type) }}</button>
                 </div>
                 <div v-if="row.docs > 0" style="display: flex; gap: 8px; margin-top: 8px">
                     <button class="fbtn mini" style="background: var(--success-tint); color: var(--success); border: none" @click="reviewDoc(row, 'approved')">{{ t('Approve Docs') }}</button>

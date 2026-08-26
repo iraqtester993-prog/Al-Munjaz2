@@ -16,6 +16,7 @@ const props = defineProps({
 
 const page = usePage()
 const user = computed(() => page.props.auth?.user)
+const locale = computed(() => page.props.locale || 'ar')
 const selected = ref(null)
 const claiming = ref(false)
 const now = ref(Date.now())
@@ -39,7 +40,7 @@ function remainingMs(order) {
 function remainingText(order) {
     const seconds = Math.floor(remainingMs(order) / 1000)
     const minutes = Math.floor(seconds / 60)
-    return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')} د`
+    return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')} ${t('Minutes abbreviation')}`
 }
 
 function progress(order) {
@@ -55,12 +56,29 @@ function countdownColor(order) {
 
 function vehicleLabel(order) {
     return {
-        normal: 'طلب عادي',
-        bike: 'دراجة نارية',
-        sedan: 'سيارة صالون',
-        suv: 'سيارة كبيرة',
-        truck: 'سيارة نقل',
-    }[order.delivery_vehicle] || 'طلب عادي'
+        normal: t('Regular Delivery'),
+        bike: t('Motorcycle'),
+        sedan: t('Sedan'),
+        suv: t('SUV'),
+        truck: t('Van / Truck'),
+    }[order.delivery_vehicle] || t('Regular Delivery')
+}
+
+function localizedOrderValue(order, key) {
+    const preferred = locale.value === 'en' ? 'en' : locale.value === 'ku' ? 'ku' : 'ar'
+
+    return order?.[`${key}_${preferred}`]
+        || order?.[`${key}_en`]
+        || order?.[`${key}_ar`]
+        || ''
+}
+
+function customerName(order) {
+    return localizedOrderValue(order, 'customer_name')
+}
+
+function customerAddress(order) {
+    return localizedOrderValue(order, 'address')
 }
 
 function canClaim(order) {
@@ -101,10 +119,10 @@ onUnmounted(() => window.clearInterval(ticker))
 </script>
 
 <template>
-    <AppShell title="مساء الله بالخير" :subtitle="user?.name">
+    <AppShell :title="t('Good to see you')" :subtitle="user?.name">
         <template #title>
-            مساء الله بالخير
-            <span class="tb-sub">{{ user?.name || 'مندوب توصيل' }}</span>
+            {{ t('Good to see you') }}
+            <span class="tb-sub">{{ user?.name || t('Courier') }}</span>
         </template>
 
         <HeroSlider :slides="heroSlides" />
@@ -112,23 +130,23 @@ onUnmounted(() => window.clearInterval(ticker))
         <section class="courier-collection" :class="{ offline: !stats.onDuty }">
             <span class="collection-orb"></span>
             <div class="collection-copy">
-                <span>المتحصل اليوم</span>
-                <strong class="mono">{{ fmt(stats.collectedToday) }} <small>د.ع</small></strong>
+                <span>{{ t("Today's Collection") }}</span>
+                <strong class="mono">{{ fmt(stats.collectedToday) }} <small>{{ t('IQD') }}</small></strong>
                 <div class="collection-chips">
                     <span class="collection-chip">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="M6 17l4-8h4l3 8M10 9h4M15 6a1.4 1.4 0 1 0 0-2.8A1.4 1.4 0 0 0 15 6Z"/></svg>
-                        توصيلاتي اليوم: {{ stats.deliveredToday }}
+                        {{ t('My Deliveries Today') }}: {{ stats.deliveredToday }}
                     </span>
                     <button class="collection-chip duty-chip" type="button" @click="toggleDuty">
-                        <i :class="{ off: !stats.onDuty }"></i>{{ stats.onDuty ? 'أنا متاح للعمل' : 'غير متاح الآن' }}
+                        <i :class="{ off: !stats.onDuty }"></i>{{ stats.onDuty ? t('Available for Work') : t('Currently Unavailable') }}
                     </button>
                 </div>
             </div>
         </section>
 
         <div class="available-heading">
-            <h3>طلبات جديدة متاحة</h3>
-            <span>الوقت المتاح: 30 دقيقة</span>
+            <h3>{{ t('Available New Orders') }}</h3>
+            <span>{{ t('Time left') }}: 30 {{ t('Minutes') }}</span>
         </div>
 
         <div v-if="visibleAvailableOrders.length" class="available-list">
@@ -136,85 +154,85 @@ onUnmounted(() => window.clearInterval(ticker))
                 <div class="available-order-main">
                     <div class="available-order-head">
                         <div>
-                            <h4>{{ order.customer_name_ar }}</h4>
-                            <p><span class="mono">{{ order.track_no }}</span><b>•</b>{{ order.address_ar }}</p>
+                            <h4>{{ customerName(order) }}</h4>
+                            <p><span class="mono">{{ order.track_no }}</span><b>•</b>{{ customerAddress(order) }}</p>
                         </div>
-                        <span class="new-order-chip">طلب جديد متاح</span>
+                        <span class="new-order-chip">{{ t('Available New Orders') }}</span>
                     </div>
 
                     <div class="available-summary">
-                        <strong class="mono">{{ fmt(order.price) }} <small>د.ع</small></strong>
+                        <strong class="mono">{{ fmt(order.price) }} <small>{{ t('IQD') }}</small></strong>
                         <span class="vehicle-badge">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8"/></svg>
                             {{ vehicleLabel(order) }}
                         </span>
                     </div>
 
-                    <p v-if="order.vehicle_note || order.notes" class="order-note"><b>ملاحظة الطلب:</b> {{ order.vehicle_note || order.notes }}</p>
+                    <p v-if="order.vehicle_note || order.notes" class="order-note"><b>{{ t('Notes') }}:</b> {{ order.vehicle_note || order.notes }}</p>
                     <p v-if="!canClaim(order)" class="availability-warning">
-                        {{ stats.onDuty ? 'لا يمكن أخذ الطلب — الميزانية أقل من قيمته.' : 'فعّل حالة التوفر أولاً لاستلام الطلب.' }}
+                        {{ stats.onDuty ? t('Budget is lower than the order value.') : t('Enable availability before accepting the order.') }}
                     </p>
                 </div>
 
                 <footer class="available-order-footer">
                     <div class="pickup-clock" :style="{ color: countdownColor(order) }">
                         <i :style="{ background: countdownColor(order), boxShadow: `0 0 7px ${countdownColor(order)}` }"></i>
-                        الوقت المتاح للاستلام: <b class="mono">{{ remainingText(order) }}</b>
+                        {{ t('Time to reach the merchant') }}: <b class="mono">{{ remainingText(order) }}</b>
                     </div>
-                    <button v-if="canClaim(order)" type="button" class="view-order" @click.stop="openDetails(order)">عرض التفاصيل</button>
+                    <button v-if="canClaim(order)" type="button" class="view-order" @click.stop="openDetails(order)">{{ t('Order Details') }}</button>
                 </footer>
                 <div class="expiry-track"><i :style="{ width: `${progress(order)}%`, background: countdownColor(order) }"></i></div>
             </article>
         </div>
         <div v-else class="availability-empty">
             <span>✓</span>
-            <b>لا توجد طلبات جديدة حالياً</b>
-            <p>ستظهر الطلبات المطابقة لمحافظتك هنا.</p>
+            <b>{{ t('No orders found') }}</b>
+            <p>{{ t('Available New Orders') }}</p>
         </div>
 
         <section v-if="recentOrders.length" class="assigned-section">
             <div class="section-title">
-                <h3>توصيلاتي الحالية</h3>
-                <a @click="$inertia.visit(route('app.orders'))">عرض الكل</a>
+                <h3>{{ t('Recent Deliveries') }}</h3>
+                <a @click="$inertia.visit(route('app.orders'))">{{ t('See all') }}</a>
             </div>
             <div class="list-card">
                 <button v-for="order in recentOrders" :key="order.id" class="courier-assigned-row" type="button" @click="$inertia.visit(route('app.orders'))">
                     <span class="assigned-icon">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="M6 17l4-8h4l3 8M10 9h4M15 6a1.4 1.4 0 1 0 0-2.8A1.4 1.4 0 0 0 15 6Z"/></svg>
                     </span>
-                    <span class="order-mid"><b>{{ order.customer_name_ar }}</b><small class="mono">{{ order.track_no }}</small></span>
+                    <span class="order-mid"><b>{{ customerName(order) }}</b><small class="mono">{{ order.track_no }}</small></span>
                     <span class="order-end"><b class="mono">{{ fmt(order.price) }}</b><StatusBadge :status="order.status" /></span>
                 </button>
             </div>
         </section>
 
-        <SheetModal :open="!!selected" :title="selected?.track_no" :subtitle="selected?.customer_name_ar" @close="selected = null">
+        <SheetModal :open="!!selected" :title="selected?.track_no" :subtitle="customerName(selected)" @close="selected = null">
             <template v-if="selected">
-                <div class="detail-row"><span class="text-muted">العميل</span><b>{{ selected.customer_name_ar }}</b></div>
-                <div class="detail-row"><span class="text-muted">الهاتف</span><b class="mono">{{ selected.phone }}</b></div>
-                <div class="detail-row"><span class="text-muted">العنوان</span><b>{{ selected.address_ar }}</b></div>
-                <div class="detail-row"><span class="text-muted">قيمة الطلب</span><b class="mono">{{ fmt(selected.price) }} د.ع</b></div>
-                <div class="detail-row"><span class="text-muted">نوع الطلب</span><b>{{ vehicleLabel(selected) }}</b></div>
-                <div v-if="selected.vehicle_note || selected.notes" class="detail-row detail-note"><span class="text-muted">ملاحظة الطلب</span><b>{{ selected.vehicle_note || selected.notes }}</b></div>
-                <div class="detail-row"><span class="text-muted">ميزانيتك المتاحة</span><b class="mono">{{ fmt(stats.budget) }} د.ع</b></div>
-                <div v-if="selected.pickup_deadline_at" class="detail-row"><span class="text-muted">الوقت المتاح للاستلام</span><b class="mono" :style="{ color: countdownColor(selected) }">{{ remainingText(selected) }}</b></div>
+                <div class="detail-row"><span class="text-muted">{{ t('Customer') }}</span><b>{{ customerName(selected) }}</b></div>
+                <div class="detail-row"><span class="text-muted">{{ t('Phone') }}</span><b class="mono">{{ selected.phone }}</b></div>
+                <div class="detail-row"><span class="text-muted">{{ t('Address') }}</span><b>{{ customerAddress(selected) }}</b></div>
+                <div class="detail-row"><span class="text-muted">{{ t('Order amount') }}</span><b class="mono">{{ fmt(selected.price) }} {{ t('IQD') }}</b></div>
+                <div class="detail-row"><span class="text-muted">{{ t('Order Type') }}</span><b>{{ vehicleLabel(selected) }}</b></div>
+                <div v-if="selected.vehicle_note || selected.notes" class="detail-row detail-note"><span class="text-muted">{{ t('Notes') }}</span><b>{{ selected.vehicle_note || selected.notes }}</b></div>
+                <div class="detail-row"><span class="text-muted">{{ t('Available Budget') }}</span><b class="mono">{{ fmt(stats.budget) }} {{ t('IQD') }}</b></div>
+                <div v-if="selected.pickup_deadline_at" class="detail-row"><span class="text-muted">{{ t('Time to reach the merchant') }}</span><b class="mono" :style="{ color: countdownColor(selected) }">{{ remainingText(selected) }}</b></div>
 
                 <section v-if="selected.merchant" class="courier-merchant-card">
-                    <span class="merchant-card-label">التاجر</span>
+                    <span class="merchant-card-label">{{ t('Merchant') }}</span>
                     <div class="merchant-card-profile">
                         <span class="merchant-avatar">{{ selected.merchant.name?.slice(0, 1) }}</span>
                         <span><b>{{ selected.merchant.name }}</b><small v-if="selected.merchant.address">{{ selected.merchant.address }}</small><small v-if="selected.merchant.phone" class="mono">{{ selected.merchant.phone }}</small></span>
                     </div>
                     <div class="merchant-card-actions">
-                        <a v-if="whatsappUrl(selected.merchant.phone)" :href="whatsappUrl(selected.merchant.phone)" target="_blank" rel="noopener">واتساب</a>
-                        <button type="button" @click="openOrderChat(selected)">دردشة</button>
+                        <a v-if="whatsappUrl(selected.merchant.phone)" :href="whatsappUrl(selected.merchant.phone)" target="_blank" rel="noopener">{{ t('WhatsApp') }}</a>
+                        <button type="button" @click="openOrderChat(selected)">{{ t('Chat') }}</button>
                     </div>
                 </section>
 
-                <a v-if="selected.status !== 'pending' && whatsappUrl(selected.phone)" class="customer-whatsapp" :href="whatsappUrl(selected.phone)" target="_blank" rel="noopener">واتساب الزبون</a>
-                <p v-if="!canClaim(selected)" class="claim-explain">{{ stats.onDuty ? 'لا يمكنك أخذ الطلب لأن ميزانيتك الحالية أقل من قيمة الطلب.' : 'فعّل حالة «أنا متاح للعمل» ثم أعد المحاولة.' }}</p>
+                <a v-if="selected.status !== 'pending' && whatsappUrl(selected.phone)" class="customer-whatsapp" :href="whatsappUrl(selected.phone)" target="_blank" rel="noopener">{{ t('Customer WhatsApp') }}</a>
+                <p v-if="!canClaim(selected)" class="claim-explain">{{ stats.onDuty ? t('Budget is lower than the order value.') : t('Enable availability before accepting the order.') }}</p>
                 <button class="btn btn-primary claim-order" type="button" :disabled="!canClaim(selected) || claiming" @click="claim">
-                    <span v-if="claiming" class="loader"></span><span v-else>قبول الطلب</span>
+                    <span v-if="claiming" class="loader"></span><span v-else>{{ t('Accept Order') }}</span>
                 </button>
             </template>
         </SheetModal>

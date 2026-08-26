@@ -8,6 +8,8 @@ use App\Models\Document;
 use App\Models\Order;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -42,6 +44,24 @@ class SmokeTest extends TestCase
             ->assertOk()
             ->assertHeader('content-type', 'application/javascript; charset=utf-8')
             ->assertSee('almunjaz-shell-v13');
+    }
+
+    public function test_translation_dictionary_uses_the_selected_locale_before_the_fallback(): void
+    {
+        $originalLocale = app()->getLocale();
+
+        try {
+            app()->setLocale('ar');
+            $this->assertSame('اضافة طلب جديد', app('translations')['Add New Order']);
+
+            app()->setLocale('en');
+            $this->assertSame('Add New Order', app('translations')['Add New Order']);
+
+            app()->setLocale('ku');
+            $this->assertSame('زیادکردنی داواکاری نوێ', app('translations')['Add New Order']);
+        } finally {
+            app()->setLocale($originalLocale);
+        }
     }
 
     public function test_deployed_hosts_are_canonical_without_proxy_redirect_loops(): void
@@ -340,5 +360,86 @@ class SmokeTest extends TestCase
             ->assertRedirect();
 
         $this->assertDatabaseHas('users', ['id' => $merchant->id, 'status' => 'suspended']);
+    }
+
+    public function test_registration_uses_temporary_otp_then_enters_the_app_without_admin_review(): void
+    {
+        $province = \App\Models\Province::query()->whereNull('tenant_id')->firstOrFail();
+
+        $this->post('/register', [
+            'role' => 'merchant',
+            'name' => 'تاجر OTP',
+            'shop' => 'متجر OTP',
+            'address' => 'بغداد',
+            'province_id' => $province->id,
+            'phone' => '07900001234',
+            'password' => 'temporary-pass-123',
+            'password_confirmation' => 'temporary-pass-123',
+        ])->assertRedirect('/verify-otp');
+
+        $this->get('/verify-otp')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->component('Auth/Otp'));
+
+        $this->post('/verify-otp', ['code' => '000000'])
+            ->assertSessionHasErrors('code');
+
+        $this->post('/verify-otp', ['code' => '123456'])
+            ->assertRedirect('/app');
+
+        $user = User::where('phone', '07900001234')->firstOrFail();
+        $this->assertSame('active', $user->status);
+        $this->assertNotNull($user->phone_verified_at);
+        $this->assertAuthenticatedAs($user);
+    }
+
+    public function test_chat_messages_endpoint_refreshes_messages_for_the_other_party(): void
+    {
+        $admin = User::where('role', 'admin')->firstOrFail();
+        $chat = Chat::query()->with('user')->firstOrFail();
+        $recipient = $chat->user;
+
+        $this->actingAs($admin)->post("/dashboard/chat/{$chat->id}/send", ['text' => 'رسالة تحديث حي'])
+            ->assertOk()
+            ->assertJsonPath('from_me', true);
+
+        $this->actingAs($recipient)->get("/app/chats/{$chat->id}/messages")
+            ->assertOk()
+            ->assertJsonFragment(['text' => 'رسالة تحديث حي', 'from_me' => false]);
+
+        $this->assertNotNull($chat->fresh()->user_read_at);
+    }
+
+    public function test_admin_preference_routes_persist_theme_and_language(): void
+    {
+        $admin = User::where('role', 'admin')->firstOrFail();
+
+        $this->actingAs($admin)->post('/dashboard/preferences/theme', ['theme' => 'dark'])->assertRedirect();
+        $this->actingAs($admin)->post('/dashboard/preferences/locale', ['locale' => 'ku'])->assertRedirect();
+
+        $this->assertDatabaseHas('users', ['id' => $admin->id, 'theme' => 'dark', 'locale' => 'ku']);
+    }
+
+    public function test_merchant_can_submit_profile_verification_without_losing_active_access(): void
+    {
+        Storage::fake('public');
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+
+        $this->actingAs($merchant)->post('/profile/verification', [
+            'name' => 'Merchant Verified',
+            'address' => 'Baghdad — Karrada',
+            'phone' => '07900009991',
+            'identity_number' => 'ID-TEST-123',
+            'id_front_document' => UploadedFile::fake()->image('id-front.jpg'),
+            'id_back_document' => UploadedFile::fake()->image('id-back.jpg'),
+            'residence_document' => UploadedFile::fake()->image('residence-front.jpg'),
+            'residence_back_document' => UploadedFile::fake()->image('residence-back.jpg'),
+        ])->assertRedirect();
+
+        $merchant->refresh();
+        $this->assertSame('active', $merchant->status);
+        $this->assertSame('ID-TEST-123', $merchant->identity_number);
+        $this->assertDatabaseHas('documents', ['user_id' => $merchant->id, 'type' => 'id_front', 'status' => 'pending']);
+        $this->assertDatabaseHas('documents', ['user_id' => $merchant->id, 'type' => 'residence_back', 'status' => 'pending']);
     }
 }

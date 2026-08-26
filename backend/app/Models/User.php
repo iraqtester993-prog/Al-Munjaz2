@@ -21,7 +21,7 @@ class User extends Authenticatable
 
     protected $fillable = [
         'tenant_id', 'branch_id', 'name', 'username', 'email', 'phone', 'password',
-        'role', 'status', 'vehicle', 'shop_name', 'address', 'theme', 'locale',
+        'role', 'status', 'vehicle', 'shop_name', 'address', 'identity_number', 'theme', 'locale',
         'is_online', 'last_active_at',
     ];
 
@@ -36,6 +36,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'phone_verified_at' => 'datetime',
             'last_active_at' => 'datetime',
+            'identity_number' => 'encrypted',
             'is_online' => 'boolean',
             'password' => 'hashed',
         ];

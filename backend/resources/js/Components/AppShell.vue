@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import Flash from './Flash.vue'
@@ -8,6 +8,8 @@ const props = defineProps({
     title: { type: String, default: '' },
     subtitle: { type: String, default: '' },
     back: { type: Boolean, default: false },
+    backUrl: { type: String, default: '' },
+    hideTabs: { type: Boolean, default: false },
     notifBadge: { type: Number, default: 0 },
     showNotif: { type: Boolean, default: true },
 })
@@ -16,7 +18,7 @@ const page = usePage()
 const user = computed(() => page.props.auth?.user)
 const isCourier = computed(() => user.value?.role === 'courier')
 const locale = computed(() => page.props.locale || 'ar')
-const theme = ref(user.value?.theme || 'light')
+const theme = ref(user.value?.theme || document.body?.dataset.theme || 'light')
 
 const tabs = computed(() => {
     const base = [
@@ -39,6 +41,7 @@ function active(tab) {
 
 function applyTheme(value) {
     document.documentElement.dataset.theme = value
+    document.body.dataset.theme = value
 }
 
 function toggleTheme() {
@@ -47,7 +50,25 @@ function toggleTheme() {
     router.post(route('profile.theme'), { theme: theme.value }, { preserveScroll: true, preserveState: true })
 }
 
+function goBack() {
+    if (props.backUrl) {
+        router.visit(props.backUrl)
+        return
+    }
+
+    router.visit(route('app'))
+}
+
 onMounted(() => applyTheme(theme.value))
+
+// Profile settings may update the shared Inertia user object without
+// recreating this shell.  Keep the visual preference in sync in that case.
+watch(() => user.value?.theme, (value) => {
+    if (value && value !== theme.value) {
+        theme.value = value
+        applyTheme(value)
+    }
+})
 
 function icon(name) {
     const paths = {
@@ -69,7 +90,7 @@ function icon(name) {
         <div class="app-shell">
             <Flash />
             <header class="app-topbar">
-                <button v-if="back" class="tb-icon-btn" @click="$inertia.visit(route('app'))">
+                <button v-if="back" class="tb-icon-btn" type="button" :aria-label="t('Back')" @click="goBack">
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: locale === 'ar' ? 'rotate(180deg)' : '' }">
                         <path d="M19 12H5m0 0 6-6m-6 6 6 6" />
                     </svg>
@@ -79,13 +100,13 @@ function icon(name) {
                     <span v-if="subtitle" class="tb-sub">{{ subtitle }}</span>
                 </div>
                 <div class="tb-actions">
-                    <a v-if="showNotif" class="tb-icon-btn" :href="route('app.notifications')" aria-label="الإشعارات">
+                    <a v-if="showNotif" class="tb-icon-btn" :href="route('app.notifications')" :aria-label="t('Notifications')">
                         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path :d="icon('bell')" />
                         </svg>
                         <span v-if="notifBadge > 0" class="notif-badge">{{ notifBadge > 99 ? '99+' : notifBadge }}</span>
                     </a>
-                    <button class="tb-icon-btn" type="button" :aria-label="theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'" @click="toggleTheme">
+                    <button class="tb-icon-btn" type="button" :aria-label="theme === 'dark' ? t('Enable light mode') : t('Enable dark mode')" @click="toggleTheme">
                         <svg v-if="theme !== 'dark'" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                             <circle cx="12" cy="12" r="4.5" /><path d="M12 1.5v2.5M12 20v2.5M4.2 4.2 6 6M18 18l1.8 1.8M1.5 12H4M20 12h2.5M4.2 19.8 6 18M18 6l1.8-1.8" />
                         </svg>
@@ -97,13 +118,13 @@ function icon(name) {
                 <slot name="actions" />
             </header>
 
-            <main class="app-content">
+            <main class="app-content" :class="{ 'without-tabs': hideTabs }">
                 <slot />
             </main>
 
             <slot name="fab" />
 
-            <nav class="bottom-tabs">
+            <nav v-if="!hideTabs" class="bottom-tabs">
                 <button v-for="tab in tabs" :key="tab.route" class="tab-btn" :class="{ active: active(tab) }" @click="$inertia.visit(tab.url)">
                     <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path :d="icon(tab.icon)" />

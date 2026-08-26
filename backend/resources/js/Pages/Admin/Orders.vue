@@ -109,7 +109,7 @@ const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned'
 </script>
 
 <template>
-    <AdminShell title="Orders">
+    <AdminShell :title="t('Orders')">
         <div class="filter-bar">
             <button v-for="f in filters" :key="f.key" class="fbtn" :class="{ active: active === f.key }" @click="active = f.key; apply()">
                 {{ f.label }} <span class="cnt">{{ counts[f.key] ?? 0 }}</span>
@@ -164,7 +164,7 @@ const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned'
                                         <option v-for="s in statusOptions" :key="s" :value="s">{{ tStatus(s) }}</option>
                                     </select>
                                     <button v-if="o.status === 'pending'" class="fbtn mini" @click="openAssign(o)">{{ t('Assign') }}</button>
-                                    <button class="fbtn mini" @click="openBranches(o)">الفروع</button>
+                                    <button class="fbtn mini" @click="openBranches(o)">{{ t('Branches') }}</button>
                                 </div>
                             </td>
                         </tr>
@@ -187,32 +187,32 @@ const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned'
                     <option value="" disabled>{{ t('Select courier') }}</option>
                     <option v-for="c in eligibleCouriers" :key="c.id" :value="c.id">{{ c.name }} — {{ c.phone }}</option>
                 </select>
-                <p v-if="!assignFor?.province_id" class="field-error">لا يمكن التعيين قبل تحديد محافظة الطلب.</p>
-                <p v-else-if="!eligibleCouriers.length" class="field-error">لا يوجد مندوب نشط في محافظة هذا الطلب.</p>
+                <p v-if="!assignFor?.province_id" class="field-error">{{ t('Cannot assign before the order governorate is set.') }}</p>
+                <p v-else-if="!eligibleCouriers.length" class="field-error">{{ t('No active courier is available for this order governorate.') }}</p>
             </div>
             <button class="btn btn-primary" style="width: 100%" :disabled="!assignCourier || busyId" @click="doAssign">
                 {{ t('Confirm') }}
             </button>
         </SheetModal>
 
-        <SheetModal :open="!!branchFor" title="مسار الفروع" :subtitle="branchFor?.track_no" @close="branchFor = null">
-            <p class="text-muted" style="margin: 0 0 14px; font-size: 11px; line-height: 1.8">حدّد فرع استلام الطلب والفرع الذي سيتولى التسليم. تظهر الفروع الخاصة بحساب التاجر فقط.</p>
+        <SheetModal :open="!!branchFor" :title="t('Branch Route')" :subtitle="branchFor?.track_no" @close="branchFor = null">
+            <p class="text-muted" style="margin: 0 0 14px; font-size: 11px; line-height: 1.8">{{ t('Choose the branch receiving the order and the branch responsible for delivery. Only branches belonging to this merchant are shown.') }}</p>
             <div class="field">
-                <label>فرع المصدر / الاستلام</label>
+                <label>{{ t('Origin / pickup branch') }}</label>
                 <select v-model="originBranch">
-                    <option value="">غير محدد</option>
+                    <option value="">{{ t('Not specified') }}</option>
                     <option v-for="branch in eligibleBranches" :key="branch.id" :value="branch.id">{{ branch.name }} — {{ branch.city }}</option>
                 </select>
             </div>
             <div class="field">
-                <label>فرع الوجهة / التسليم</label>
+                <label>{{ t('Destination / delivery branch') }}</label>
                 <select v-model="destinationBranch">
-                    <option value="">غير محدد</option>
+                    <option value="">{{ t('Not specified') }}</option>
                     <option v-for="branch in eligibleBranches" :key="branch.id" :value="branch.id">{{ branch.name }} — {{ branch.city }}</option>
                 </select>
             </div>
-            <p v-if="!eligibleBranches.length" class="field-error">لا توجد فروع نشطة لهذا التاجر بعد.</p>
-            <button class="btn btn-primary" style="width: 100%" :disabled="(!originBranch && !destinationBranch) || busyId" @click="saveBranches">حفظ مسار الفروع</button>
+            <p v-if="!eligibleBranches.length" class="field-error">{{ t('No active branches exist for this merchant yet.') }}</p>
+            <button class="btn btn-primary" style="width: 100%" :disabled="(!originBranch && !destinationBranch) || busyId" @click="saveBranches">{{ t('Save Branch Route') }}</button>
         </SheetModal>
     </AdminShell>
 </template>

@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminOrderController;
+use App\Http\Controllers\Admin\AdminPreferencesController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\BranchController;
 use App\Http\Controllers\App\AppOrderController;
@@ -12,6 +13,7 @@ use App\Http\Controllers\App\ChatController;
 use App\Http\Controllers\App\DashboardController;
 use App\Http\Controllers\App\NotificationController;
 use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\LocaleController;
 use App\Models\Order;
 use App\Models\Scopes\TenantScope;
 use Illuminate\Http\Request;
@@ -71,6 +73,8 @@ Route::get('/', function (Request $request) {
  */
 Route::bind('order', fn (string $value) => Order::withoutGlobalScope(TenantScope::class)->findOrFail($value));
 
+Route::post('/locale', [LocaleController::class, 'update'])->name('locale.set');
+
 Route::middleware('guest')->group(function () {
     Route::get('/login', [AuthController::class, 'loginForm'])->name('login');
     Route::post('/login', [AuthController::class, 'login']);
@@ -79,6 +83,7 @@ Route::middleware('guest')->group(function () {
     Route::get('/register/{role}', [AuthController::class, 'registerForm'])
         ->whereIn('role', ['merchant', 'courier'])->name('register');
     Route::post('/register', [AuthController::class, 'register']);
+    Route::get('/verify-otp', [AuthController::class, 'otpForm'])->name('verify.otp.form');
     Route::post('/verify-otp', [AuthController::class, 'verifyOtp'])->name('verify.otp');
     Route::post('/resend-otp', [AuthController::class, 'resendOtp'])->name('resend.otp');
 });
@@ -97,6 +102,7 @@ Route::middleware(['auth', 'active'])->group(function () {
     Route::post('/profile/update', [AppProfileController::class, 'update'])->name('profile.update');
     Route::post('/profile/theme', [AppProfileController::class, 'theme'])->name('profile.theme');
     Route::post('/profile/locale', [AppProfileController::class, 'locale'])->name('profile.locale');
+    Route::post('/profile/verification', [AppProfileController::class, 'verification'])->name('profile.verification')->middleware('role:merchant');
 
     /*
     |--------------------------------------------------------------------------
@@ -116,6 +122,7 @@ Route::middleware(['auth', 'active'])->group(function () {
         Route::post('wallet/budget', [AppWalletController::class, 'budget'])->name('app.wallet.budget');
         Route::get('chats', [ChatController::class, 'index'])->name('app.chats');
         Route::get('chats/{chat}', [ChatController::class, 'show'])->name('app.chats.show');
+        Route::get('chats/{chat}/messages', [ChatController::class, 'messages'])->name('app.chats.messages');
         Route::post('chats/{chat}/send', [ChatController::class, 'send'])->name('app.chats.send');
         Route::post('chats/open', [ChatController::class, 'open'])->name('app.chats.open');
         Route::get('notifications', [NotificationController::class, 'index'])->name('app.notifications');
@@ -145,7 +152,10 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     Route::get('notifications', [AdminDashboardController::class, 'notifications'])->name('admin.notifications');
     Route::get('chat', [ChatController::class, 'adminIndex'])->name('admin.chat');
     Route::get('chat/{chat}', [ChatController::class, 'adminShow'])->name('admin.chat.show');
+    Route::get('chat/{chat}/messages', [ChatController::class, 'adminMessages'])->name('admin.chat.messages');
     Route::post('chat/{chat}/send', [ChatController::class, 'adminSend'])->name('admin.chat.send');
+    Route::post('preferences/theme', [AdminPreferencesController::class, 'theme'])->name('admin.preferences.theme');
+    Route::post('preferences/locale', [AdminPreferencesController::class, 'locale'])->name('admin.preferences.locale');
 });
 
 Route::get('/admin', fn () => redirect()->route('admin.dashboard'))->middleware(['dashboard.host', 'auth', 'active', 'role:admin']);

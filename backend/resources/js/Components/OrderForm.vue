@@ -14,6 +14,7 @@ const emit = defineEmits(['close', 'saved'])
 const submitting = ref(false)
 const page = usePage()
 const provinces = computed(() => page.props.auth?.provinces || [])
+const locale = computed(() => page.props.locale || 'ar')
 
 const form = useForm({
     customer_name_ar: '',
@@ -30,6 +31,35 @@ const form = useForm({
     notes: '',
     date: '',
 })
+
+const customerName = computed({
+    get: () => locale.value === 'en'
+        ? (form.customer_name_en || form.customer_name_ar)
+        : (form.customer_name_ar || form.customer_name_en),
+    set: (value) => {
+        form.customer_name_ar = value
+        if (locale.value === 'en') form.customer_name_en = value
+    },
+})
+
+const customerAddress = computed({
+    get: () => locale.value === 'en'
+        ? (form.address_en || form.address_ar)
+        : (form.address_ar || form.address_en),
+    set: (value) => {
+        form.address_ar = value
+        if (locale.value === 'en') form.address_en = value
+    },
+})
+
+function provinceName(province) {
+    const preferred = locale.value === 'en' ? 'en' : locale.value === 'ku' ? 'ku' : 'ar'
+
+    return province?.[`name_${preferred}`]
+        || province?.name_en
+        || province?.name_ar
+        || ''
+}
 
 watch(
     () => props.open,
@@ -119,7 +149,7 @@ function submit() {
         <form @submit.prevent="submit">
             <div class="field" :class="{ 'has-error': form.errors.customer_name_ar }">
                 <label>{{ t('Customer') }}</label>
-                <input v-model="form.customer_name_ar" :placeholder="t('Customer')" />
+                <input v-model="customerName" :placeholder="t('Customer')" />
                 <span v-if="form.errors.customer_name_ar" class="field-error">{{ form.errors.customer_name_ar }}</span>
             </div>
             <div class="field" :class="{ 'has-error': form.errors.phone }">
@@ -133,14 +163,14 @@ function submit() {
             </div>
             <div class="field" :class="{ 'has-error': form.errors.address_ar }">
                 <label>{{ t('Address') }}</label>
-                <textarea v-model="form.address_ar" :placeholder="t('Address')"></textarea>
+                <textarea v-model="customerAddress" :placeholder="t('Address')"></textarea>
                 <span v-if="form.errors.address_ar" class="field-error">{{ form.errors.address_ar }}</span>
             </div>
             <div class="field" :class="{ 'has-error': form.errors.province_id }">
-                <label>محافظة التسليم</label>
+                <label>{{ t('Delivery Governorate') }}</label>
                 <select v-model="form.province_id" required>
-                    <option disabled value="">اختر المحافظة</option>
-                    <option v-for="province in provinces" :key="province.id" :value="province.id">{{ province.name_ar }}</option>
+                    <option disabled value="">{{ t('Choose Governorate') }}</option>
+                    <option v-for="province in provinces" :key="province.id" :value="province.id">{{ provinceName(province) }}</option>
                 </select>
                 <span v-if="form.errors.province_id" class="field-error">{{ form.errors.province_id }}</span>
             </div>
@@ -154,18 +184,18 @@ function submit() {
                 <input v-model="form.order_type" :placeholder="t('Order Type')" />
             </div>
             <div class="field">
-                <label>مركبة التوصيل</label>
+                <label>{{ t('Delivery Vehicle') }}</label>
                 <select v-model="form.delivery_vehicle">
-                    <option value="normal">توصيل عادي</option>
-                    <option value="bike">دراجة نارية</option>
-                    <option value="sedan">سيارة صالون</option>
-                    <option value="suv">سيارة كبيرة</option>
-                    <option value="truck">سيارة نقل</option>
+                    <option value="normal">{{ t('Regular Delivery') }}</option>
+                    <option value="bike">{{ t('Motorcycle') }}</option>
+                    <option value="sedan">{{ t('Sedan') }}</option>
+                    <option value="suv">{{ t('SUV') }}</option>
+                    <option value="truck">{{ t('Van / Truck') }}</option>
                 </select>
             </div>
             <div v-if="form.delivery_vehicle !== 'normal'" class="field">
-                <label>ملاحظة المركبة</label>
-                <input v-model="form.vehicle_note" placeholder="مثال: يحتاج صندوقاً أو حمولة أكبر" />
+                <label>{{ t('Vehicle Note') }}</label>
+                <input v-model="form.vehicle_note" :placeholder="t('Example: needs a box or larger load')" />
             </div>
             <div class="field">
                 <label>{{ t('Notes') }}</label>

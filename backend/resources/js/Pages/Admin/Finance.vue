@@ -29,7 +29,7 @@ function meta(type) {
 </script>
 
 <template>
-    <AdminShell title="Finance">
+    <AdminShell :title="t('Finance')">
         <div class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr))">
             <div v-for="c in cards" :key="c.label" class="kpi">
                 <div class="ki" :style="{ background: c.tint, color: c.color }">

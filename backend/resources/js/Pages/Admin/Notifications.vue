@@ -19,7 +19,7 @@ function meta(t) {
 </script>
 
 <template>
-    <AdminShell title="Notifications">
+    <AdminShell :title="t('Notifications')">
         <div class="panel">
             <div class="panel-head">
                 <h3>{{ t('All Notifications') }}</h3>

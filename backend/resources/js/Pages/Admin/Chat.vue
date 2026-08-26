@@ -1,5 +1,5 @@
 <script setup>
-import { ref, nextTick, onMounted, watch } from 'vue'
+import { ref, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
 import axios from 'axios'
 import { router } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
@@ -16,13 +16,19 @@ const sending = ref(false)
 const sendError = ref('')
 const msgs = ref([...(props.messages || [])])
 const threadEl = ref(null)
+let pollTimer = null
+let refreshing = false
 
-watch(() => props.messages, (messages) => {
-    msgs.value = [...(messages || [])]
+function mergeMessages(messages) {
+    const byId = new Map()
+    for (const message of messages || []) {
+        if (message?.id) byId.set(message.id, message)
+    }
+    msgs.value = [...byId.values()].sort((a, b) => Number(a.id) - Number(b.id))
     scrollDown()
-})
+}
 
-onMounted(scrollDown)
+watch(() => props.messages, (messages) => mergeMessages(messages), { deep: true })
 
 function openChat(c) {
     router.visit(route('admin.chat.show', c.id))
@@ -38,13 +44,26 @@ async function send() {
     sending.value = true
     try {
         const { data } = await axios.post(route('admin.chat.send', props.activeChat.id), { text: value })
-        msgs.value.push({ ...data, sender_id: null })
+        mergeMessages([...msgs.value, data])
         text.value = ''
     } catch (e) {
         sendError.value = 'تعذر إرسال الرسالة. حاول مرة أخرى.'
     } finally {
         sending.value = false
         scrollDown()
+    }
+}
+
+async function refreshMessages() {
+    if (!props.activeChat || refreshing || document.hidden) return
+    refreshing = true
+    try {
+        const { data } = await axios.get(route('admin.chat.messages', props.activeChat.id))
+        mergeMessages(data.messages)
+    } catch (_) {
+        // Keep the thread usable while a short-lived request fails.
+    } finally {
+        refreshing = false
     }
 }
 
@@ -60,6 +79,22 @@ function onEnter(e) {
         send()
     }
 }
+
+watch(() => props.activeChat?.id, () => {
+    mergeMessages(props.messages)
+    refreshMessages()
+})
+
+onMounted(() => {
+    scrollDown()
+    pollTimer = window.setInterval(refreshMessages, 4000)
+    document.addEventListener('visibilitychange', refreshMessages)
+})
+
+onBeforeUnmount(() => {
+    if (pollTimer) window.clearInterval(pollTimer)
+    document.removeEventListener('visibilitychange', refreshMessages)
+})
 </script>
 
 <template>

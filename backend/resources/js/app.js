@@ -1,7 +1,7 @@
 import './bootstrap';
 import '../css/app.css';
 import { createApp, h } from 'vue';
-import { createInertiaApp } from '@inertiajs/vue3';
+import { createInertiaApp, router } from '@inertiajs/vue3';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import { ZiggyVue } from 'ziggy-js';
 
@@ -19,6 +19,8 @@ const ziggyRoutes = {
     'profile.update': { uri: 'profile/update', methods: ['POST'] },
     'profile.theme': { uri: 'profile/theme', methods: ['POST'] },
     'profile.locale': { uri: 'profile/locale', methods: ['POST'] },
+    'profile.verification': { uri: 'profile/verification', methods: ['POST'] },
+    'locale.set': { uri: 'locale', methods: ['POST'] },
     'app.orders': { uri: 'app/orders', methods: ['GET', 'HEAD'] },
     'app.reports': { uri: 'app/reports', methods: ['GET', 'HEAD'] },
     'app.orders.store': { uri: 'app/orders', methods: ['POST'] },
@@ -31,6 +33,7 @@ const ziggyRoutes = {
     'app.wallet.budget': { uri: 'app/wallet/budget', methods: ['POST'] },
     'app.chats': { uri: 'app/chats', methods: ['GET', 'HEAD'] },
     'app.chats.show': { uri: 'app/chats/{chat}', methods: ['GET', 'HEAD'] },
+    'app.chats.messages': { uri: 'app/chats/{chat}/messages', methods: ['GET', 'HEAD'] },
     'app.chats.send': { uri: 'app/chats/{chat}/send', methods: ['POST'] },
     'app.chats.open': { uri: 'app/chats/open', methods: ['POST'] },
     'app.notifications': { uri: 'app/notifications', methods: ['GET', 'HEAD'] },
@@ -50,7 +53,10 @@ const ziggyRoutes = {
     'admin.notifications': { uri: 'dashboard/notifications', methods: ['GET', 'HEAD'] },
     'admin.chat': { uri: 'dashboard/chat', methods: ['GET', 'HEAD'] },
     'admin.chat.show': { uri: 'dashboard/chat/{chat}', methods: ['GET', 'HEAD'] },
+    'admin.chat.messages': { uri: 'dashboard/chat/{chat}/messages', methods: ['GET', 'HEAD'] },
     'admin.chat.send': { uri: 'dashboard/chat/{chat}/send', methods: ['POST'] },
+    'admin.preferences.theme': { uri: 'dashboard/preferences/theme', methods: ['POST'] },
+    'admin.preferences.locale': { uri: 'dashboard/preferences/locale', methods: ['POST'] },
 };
 
 window.Ziggy = {
@@ -77,6 +83,22 @@ window.fmt = (n) => {
         return '0';
     }
 };
+
+// Inertia keeps the JavaScript application alive between visits.  Refresh
+// the server-provided dictionary on every successful visit so a user never
+// lands in a partially translated screen after switching language or logging
+// in from a guest page with a different locale.
+router.on('success', (event) => {
+    const nextPage = event.detail?.page;
+    if (!nextPage?.props) return;
+
+    translations = nextPage.props.translations || translations;
+    const nextLocale = nextPage.props.locale;
+    if (nextLocale) {
+        document.documentElement.lang = nextLocale;
+        document.documentElement.dir = nextLocale === 'en' ? 'ltr' : 'rtl';
+    }
+});
 
 createInertiaApp({
     title: (title) => (title ? `${title} — ${translations['Merchant App']}` : translations['Merchant App']),

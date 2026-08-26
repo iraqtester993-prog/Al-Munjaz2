@@ -14,12 +14,15 @@ class Chat extends Model
     protected $fillable = [
         'tenant_id', 'user_id', 'counterparty_type', 'counterparty_id',
         'order_id', 'title_ar', 'title_en', 'last_message', 'last_at', 'unread',
+        'user_read_at', 'admin_read_at',
     ];
 
     protected function casts(): array
     {
         return [
             'last_at' => 'datetime',
+            'user_read_at' => 'datetime',
+            'admin_read_at' => 'datetime',
         ];
     }
 

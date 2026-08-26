@@ -1,5 +1,5 @@
 <script setup>
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
 import axios from 'axios'
 import { route } from 'ziggy-js'
 import { usePage } from '@inertiajs/vue3'
@@ -13,9 +13,12 @@ const props = defineProps({
 const text = ref('')
 const page = usePage()
 const locale = () => page.props.locale || 'ar'
+const chatTitle = () => props.chat?.[`title_${locale()}`] || props.chat?.title_ar || t('Support')
 const sending = ref(false)
 const msgs = ref([...props.messages])
 const threadEl = ref(null)
+let pollTimer = null
+let refreshing = false
 
 async function send() {
     const value = text.value.trim()
@@ -23,13 +26,35 @@ async function send() {
     sending.value = true
     try {
         const { data } = await axios.post(route('app.chats.send', props.chat.id), { text: value })
-        msgs.value.push({ ...data, sender_id: null })
+        mergeMessages([...msgs.value, data])
         text.value = ''
     } catch (e) {
         // keep message for retry
     } finally {
         sending.value = false
         scrollDown()
+    }
+}
+
+function mergeMessages(messages) {
+    const byId = new Map()
+    for (const message of messages || []) {
+        if (message?.id) byId.set(message.id, message)
+    }
+    msgs.value = [...byId.values()].sort((a, b) => Number(a.id) - Number(b.id))
+    scrollDown()
+}
+
+async function refreshMessages() {
+    if (refreshing || document.hidden) return
+    refreshing = true
+    try {
+        const { data } = await axios.get(route('app.chats.messages', props.chat.id))
+        mergeMessages(data.messages)
+    } catch (_) {
+        // A temporary network failure must never clear the on-screen thread.
+    } finally {
+        refreshing = false
     }
 }
 
@@ -45,6 +70,19 @@ function onEnter(e) {
         send()
     }
 }
+
+watch(() => props.messages, (messages) => mergeMessages(messages), { deep: true })
+
+onMounted(() => {
+    scrollDown()
+    pollTimer = window.setInterval(refreshMessages, 4000)
+    document.addEventListener('visibilitychange', refreshMessages)
+})
+
+onBeforeUnmount(() => {
+    if (pollTimer) window.clearInterval(pollTimer)
+    document.removeEventListener('visibilitychange', refreshMessages)
+})
 </script>
 
 <template>
@@ -57,10 +95,10 @@ function onEnter(e) {
                     </svg>
                 </button>
                 <div class="tb-title">
-                    {{ chat.title_ar }}
+                    {{ chatTitle() }}
                     <span class="tb-sub">{{ t('Support') }}</span>
                 </div>
-                <div class="chat-avatar" style="width: 34px; height: 34px; font-size: 13px">{{ chat.title_ar?.charAt(0) }}</div>
+                <div class="chat-avatar" style="width: 34px; height: 34px; font-size: 13px">{{ chatTitle()?.charAt(0) }}</div>
             </header>
 
             <div ref="threadEl" class="thread">

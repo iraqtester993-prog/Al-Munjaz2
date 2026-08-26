@@ -26,7 +26,7 @@ class ChatController extends Controller
                 'title_en' => $chat->title_en,
                 'last_message' => $chat->last_message,
                 'last_at' => $chat->last_at?->diffForHumans(),
-                'unread' => $chat->unread,
+                'unread' => $this->unreadFor($chat, $request->user()),
             ]);
 
         return Inertia::render('Mobile/Chats', ['chats' => $chats]);
@@ -34,17 +34,10 @@ class ChatController extends Controller
 
     public function show(Request $request, Chat $chat)
     {
-        abort_unless($chat->user_id === $request->user()->id || $request->user()->isAdmin(), 403);
+        $this->ensureParticipant($request, $chat);
+        $this->markRead($chat, $request->user());
 
-        $chat->update(['unread' => 0]);
-
-        $messages = $chat->messages()->orderBy('id')->get()->map(fn (ChatMessage $m) => [
-            'id' => $m->id,
-            'sender_id' => $m->sender_id,
-            'from_me' => $request->user()->isAdmin() ? $m->sender_id === $request->user()->id : $m->sender_id === $request->user()->id,
-            'text' => $m->text,
-            'time' => $m->created_at->format('H:i'),
-        ]);
+        $messages = $this->messagesFor($chat, $request->user());
 
         return Inertia::render('Mobile/ChatThread', [
             'chat' => [
@@ -61,7 +54,7 @@ class ChatController extends Controller
     {
         $request->validate(['text' => ['required', 'string', 'max:1000']]);
 
-        abort_unless($chat->user_id === $request->user()->id || $request->user()->isAdmin(), 403);
+        $this->ensureParticipant($request, $chat);
 
         $message = ChatMessage::create([
             'chat_id' => $chat->id,
@@ -73,6 +66,7 @@ class ChatController extends Controller
         $chat->update([
             'last_message' => $request->input('text'),
             'last_at' => now(),
+            'user_read_at' => now(),
         ]);
 
         return response()->json([
@@ -80,6 +74,22 @@ class ChatController extends Controller
             'text' => $message->text,
             'from_me' => true,
             'time' => $message->created_at->format('H:i'),
+        ]);
+    }
+
+    /**
+     * Lightweight polling endpoint.  It deliberately returns JSON only, so
+     * an open conversation updates without re-rendering the entire Inertia
+     * page or moving the user out of the current scroll position.
+     */
+    public function messages(Request $request, Chat $chat)
+    {
+        $this->ensureParticipant($request, $chat);
+        $this->markRead($chat, $request->user());
+
+        return response()->json([
+            'messages' => $this->messagesFor($chat, $request->user()),
+            'unread' => $this->unreadFor($chat, $request->user()),
         ]);
     }
 
@@ -146,7 +156,7 @@ class ChatController extends Controller
                 'title_en' => $chat->title_en,
                 'last_message' => $chat->last_message,
                 'last_at' => $chat->last_at?->diffForHumans(),
-                'unread' => $chat->unread,
+                'unread' => $this->unreadFor($chat, $request->user()),
                 'user' => $chat->user ? ['name' => $chat->user->name, 'phone' => $chat->user->phone] : null,
                 'counterparty_type' => $chat->counterparty_type,
             ]);
@@ -156,15 +166,9 @@ class ChatController extends Controller
 
     public function adminShow(Request $request, Chat $chat)
     {
-        $chat->update(['unread' => 0]);
+        $this->markRead($chat, $request->user());
 
-        $messages = $chat->messages()->orderBy('id')->get()->map(fn (ChatMessage $m) => [
-            'id' => $m->id,
-            'sender_id' => $m->sender_id,
-            'from_me' => $m->sender_id === $request->user()->id,
-            'text' => $m->text,
-            'time' => $m->created_at->format('H:i'),
-        ]);
+        $messages = $this->messagesFor($chat, $request->user());
 
         return Inertia::render('Admin/Chat', [
             'chats' => Chat::query()->with('user:id,name,phone')->orderByDesc('last_at')->get()->map(fn (Chat $c) => [
@@ -173,7 +177,7 @@ class ChatController extends Controller
                 'title_en' => $c->title_en,
                 'last_message' => $c->last_message,
                 'last_at' => $c->last_at?->diffForHumans(),
-                'unread' => $c->unread,
+                'unread' => $this->unreadFor($c, $request->user()),
                 'user' => $c->user ? ['name' => $c->user->name, 'phone' => $c->user->phone] : null,
                 'counterparty_type' => $c->counterparty_type,
             ]),
@@ -201,6 +205,7 @@ class ChatController extends Controller
         $chat->update([
             'last_message' => $request->input('text'),
             'last_at' => now(),
+            'admin_read_at' => now(),
         ]);
 
         return response()->json([
@@ -209,5 +214,47 @@ class ChatController extends Controller
             'from_me' => true,
             'time' => $message->created_at->format('H:i'),
         ]);
+    }
+
+    public function adminMessages(Request $request, Chat $chat)
+    {
+        $this->markRead($chat, $request->user());
+
+        return response()->json([
+            'messages' => $this->messagesFor($chat, $request->user()),
+            'unread' => $this->unreadFor($chat, $request->user()),
+        ]);
+    }
+
+    private function ensureParticipant(Request $request, Chat $chat): void
+    {
+        abort_unless($chat->user_id === $request->user()->id || $request->user()->isAdmin(), 403);
+    }
+
+    private function markRead(Chat $chat, $user): void
+    {
+        $key = $user->isAdmin() ? 'admin_read_at' : 'user_read_at';
+        $chat->forceFill([$key => now(), 'unread' => $user->isAdmin() ? 0 : $chat->unread])->save();
+    }
+
+    private function unreadFor(Chat $chat, $user): int
+    {
+        $readAt = $user->isAdmin() ? $chat->admin_read_at : $chat->user_read_at;
+
+        return $chat->messages()
+            ->where('sender_id', '!=', $user->id)
+            ->when($readAt, fn ($query) => $query->where('created_at', '>', $readAt))
+            ->count();
+    }
+
+    private function messagesFor(Chat $chat, $user)
+    {
+        return $chat->messages()->orderBy('id')->get()->map(fn (ChatMessage $message) => [
+            'id' => $message->id,
+            'sender_id' => $message->sender_id,
+            'from_me' => $message->sender_id === $user->id,
+            'text' => $message->text,
+            'time' => $message->created_at->format('H:i'),
+        ])->values();
     }
 }

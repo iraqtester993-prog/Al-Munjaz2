@@ -35,4 +35,22 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Temporary registration OTP
+    |--------------------------------------------------------------------------
+    |
+    | This short-lived code is intentionally a bridge until an SMS provider is
+    | connected. Keep the code hint enabled only while this temporary flow is
+    | in use, then replace this setting with provider-backed verification.
+    |
+    */
+    'temporary_otp' => [
+        'code' => env('TEMPORARY_OTP_CODE', '123456'),
+        'ttl_seconds' => (int) env('TEMPORARY_OTP_TTL_SECONDS', 600),
+        'max_attempts' => (int) env('TEMPORARY_OTP_MAX_ATTEMPTS', 5),
+        'resend_cooldown_seconds' => (int) env('TEMPORARY_OTP_RESEND_COOLDOWN_SECONDS', 60),
+        'show_code_hint' => env('TEMPORARY_OTP_SHOW_CODE_HINT', true),
+    ],
+
 ];

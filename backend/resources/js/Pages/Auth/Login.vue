@@ -1,6 +1,7 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { useForm, usePage } from '@inertiajs/vue3'
+import { computed, onMounted, ref } from 'vue'
+import { router, useForm, usePage } from '@inertiajs/vue3'
+import { route } from 'ziggy-js'
 import Flash from '../../Components/Flash.vue'
 import PwaInstallBanner from '../../Components/PwaInstallBanner.vue'
 
@@ -10,10 +11,11 @@ const view = ref('start')
 const dark = ref(false)
 const showPassword = ref(false)
 
-const roles = [
-    { key: 'merchant', label: 'تطبيق التاجر', desc: 'طلباتي، كشف حسابي، محفظتي', icon: 'shop' },
-    { key: 'courier', label: 'تطبيق المندوب', desc: 'توصيلاتي، تحصيلاتي، محفظتي', icon: 'bike' },
-]
+const locale = computed(() => page.props.locale || 'ar')
+const roles = computed(() => [
+    { key: 'merchant', label: t('Merchant App'), desc: t('Merchant services'), icon: 'shop' },
+    { key: 'courier', label: t('Courier App'), desc: t('Courier services'), icon: 'bike' },
+])
 
 const form = useForm({ username: '', password: '', role: 'merchant' })
 
@@ -24,8 +26,24 @@ function chooseRole(role) {
 
 function toggleTheme() {
     dark.value = !dark.value
-    document.documentElement.dataset.theme = dark.value ? 'dark' : 'light'
+    const theme = dark.value ? 'dark' : 'light'
+    document.documentElement.dataset.theme = theme
+    document.body.dataset.theme = theme
+    localStorage.setItem('almunjaz-guest-theme', theme)
 }
+
+function cycleLocale() {
+    const locales = ['ar', 'ku', 'en']
+    const next = locales[(locales.indexOf(locale.value) + 1) % locales.length]
+    router.post(route('locale.set'), { locale: next }, { onSuccess: () => window.location.reload() })
+}
+
+onMounted(() => {
+    const theme = localStorage.getItem('almunjaz-guest-theme') || document.body.dataset.theme || 'light'
+    dark.value = theme === 'dark'
+    document.documentElement.dataset.theme = theme
+    document.body.dataset.theme = theme
+})
 
 function submit() {
     form.post('/login', { preserveScroll: true })
@@ -46,20 +64,23 @@ function icon(name) {
 </script>
 
 <template>
-    <main class="reference-auth" :class="{ dark }" dir="rtl">
+    <main class="reference-auth" :class="{ dark }">
         <Flash />
         <header class="reference-auth-header">
-            <button class="auth-icon" type="button" :aria-label="dark ? 'الوضع الفاتح' : 'الوضع الداكن'" @click="toggleTheme">
+            <button class="auth-icon" type="button" :aria-label="dark ? t('Light') : t('Dark')" @click="toggleTheme">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="icon(dark ? 'moon' : 'sun')" /></svg>
             </button>
             <div class="reference-brand">
-                <span class="brand-mark"><img src="/logo.png" alt="شعار المنجز السريع"></span>
-                <b>المنجز السريع</b>
+                <span class="brand-mark"><img src="/logo.png" :alt="t('Al-Munjaz Al-Saree')"></span>
+                <b>{{ t('Al-Munjaz Al-Saree') }}</b>
             </div>
-            <button v-if="view === 'login'" class="auth-icon" type="button" aria-label="رجوع" @click="view = 'start'">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
-            </button>
-            <span v-else class="auth-icon-placeholder"></span>
+            <div class="auth-header-actions">
+                <button class="auth-icon auth-language" type="button" :aria-label="t('Language')" @click="cycleLocale">{{ locale.toUpperCase() }}</button>
+                <button v-if="view === 'login'" class="auth-icon" type="button" :aria-label="t('Back')" @click="view = 'start'">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+                </button>
+                <span v-else class="auth-icon-placeholder"></span>
+            </div>
         </header>
 
         <section v-if="view === 'start'" class="start-pane">
@@ -81,36 +102,36 @@ function icon(name) {
                 <span class="login-role-icon">
                     <svg width="29" height="29" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="icon(form.role === 'courier' ? 'bike' : 'shop')" /></svg>
                 </span>
-                <span class="login-chip">{{ form.role === 'courier' ? 'تطبيق المندوب' : 'تطبيق التاجر' }}</span>
-                <h1>تسجيل الدخول</h1>
-                <p>أدخل بياناتك للدخول إلى حسابك</p>
+                <span class="login-chip">{{ form.role === 'courier' ? t('Courier App') : t('Merchant App') }}</span>
+                <h1>{{ t('Sign In') }}</h1>
+                <p>{{ t('Sign in to your account') }}</p>
             </div>
 
             <form class="login-card-ref" @submit.prevent="submit">
                 <label>
-                    <span>اسم المستخدم أو رقم الهاتف</span>
+                    <span>{{ t('Username or phone') }}</span>
                     <div class="auth-input-wrap">
                         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path :d="icon('user')" /></svg>
-                        <input v-model="form.username" dir="rtl" autocomplete="username" placeholder="أدخل اسم المستخدم أو رقم الهاتف" required>
+                        <input v-model="form.username" autocomplete="username" :placeholder="t('Username or phone')" required>
                     </div>
                     <small v-if="errors.username" class="login-error">{{ errors.username }}</small>
                 </label>
                 <label>
-                    <span>كلمة المرور</span>
+                    <span>{{ t('Password') }}</span>
                     <div class="auth-input-wrap">
                         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="icon('lock')" /></svg>
-                        <input v-model="form.password" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" placeholder="أدخل كلمة المرور" required>
-                        <button class="show-password" type="button" @click="showPassword = !showPassword">{{ showPassword ? 'إخفاء' : 'إظهار' }}</button>
+                        <input v-model="form.password" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" :placeholder="t('Password')" required>
+                        <button class="show-password" type="button" @click="showPassword = !showPassword">{{ showPassword ? t('Hide') : t('Show') }}</button>
                     </div>
                     <small v-if="errors.password" class="login-error">{{ errors.password }}</small>
                 </label>
                 <button class="login-submit" type="submit" :disabled="form.processing">
                     <span v-if="form.processing" class="loader"></span>
-                    <span v-else>تسجيل الدخول</span>
+                    <span v-else>{{ t('Sign In') }}</span>
                 </button>
             </form>
 
-            <p class="register-link-ref">ليس لديك حساب؟ <a @click="$inertia.visit(route('register', form.role))">إنشاء حساب جديد</a></p>
+            <p class="register-link-ref">{{ t('No account yet') }} <a @click="$inertia.visit(route('register', form.role))">{{ t('Create account') }}</a></p>
         </section>
     </main>
 </template>
@@ -118,12 +139,13 @@ function icon(name) {
 <style scoped>
 .reference-auth { min-height:100vh; max-width:460px; margin:0 auto; color:#fff; background:linear-gradient(175deg, var(--primary-strong), var(--primary) 59%, var(--accent)); display:flex; flex-direction:column; overflow:hidden; }
 .reference-auth.dark { background:linear-gradient(175deg, #08312e, #0f5450 59%, #7a4a17); }
-.reference-auth-header { display:grid; grid-template-columns:38px 1fr 38px; align-items:center; padding:18px 18px 8px; }
+.reference-auth-header { display:grid; grid-template-columns:38px 1fr auto; align-items:center; padding:18px 18px 8px; }
 .reference-brand { display:flex; align-items:center; justify-content:center; gap:8px; font-size:14px; font-weight:900; }
 .brand-mark { width:34px; height:34px; border-radius:10px; background:#fff; display:grid; place-items:center; overflow:hidden; box-shadow:0 4px 14px rgba(0,0,0,.16); }
 .brand-mark img { width:100%; height:100%; object-fit:contain; }
 .auth-icon, .auth-icon-placeholder { width:34px; height:34px; border:1px solid rgba(255,255,255,.27); border-radius:10px; background:rgba(255,255,255,.14); color:#fff; display:grid; place-items:center; }
 .auth-icon-placeholder { visibility:hidden; }
+.auth-header-actions{display:flex;gap:5px;justify-content:flex-end}.auth-language{font-size:8px;font-weight:900;letter-spacing:.3px}
 .start-pane, .login-pane { flex:1; display:flex; flex-direction:column; padding:18px 22px 28px; }
 .start-pane { justify-content:center; }
 .role-cards { display:grid; gap:12px; }

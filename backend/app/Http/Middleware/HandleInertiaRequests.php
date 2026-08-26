@@ -12,7 +12,7 @@ class HandleInertiaRequests extends Middleware
 
     public function share(Request $request): array
     {
-        $userLocale = $request->user()?->locale;
+        $userLocale = $request->user()?->locale ?? $request->session()->get('locale');
         if (in_array($userLocale, array_keys(config('app.locales')), true)) {
             App::setLocale($userLocale);
         }
@@ -21,7 +21,10 @@ class HandleInertiaRequests extends Middleware
             ...parent::share($request),
             'name' => config('app.name'),
             'locale' => App::getLocale(),
-            'locales' => array_values(config('app.locales')),
+            // Client controls submit a locale code. Sending the display
+            // metadata objects here made the dashboard select submit JSON
+            // instead of `ar`, `en`, or `ku`.
+            'locales' => array_keys(config('app.locales')),
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),
                 'error' => fn () => $request->session()->get('error'),
@@ -36,6 +39,10 @@ class HandleInertiaRequests extends Middleware
                     'status' => $request->user()->status,
                     'theme' => $request->user()->theme,
                     'locale' => $request->user()->locale,
+                    'shop_name' => $request->user()->shop_name,
+                    'address' => $request->user()->address,
+                    'vehicle' => $request->user()->vehicle,
+                    'phone_verified' => $request->user()->phone_verified_at !== null,
                 ] : null,
                 'tenant' => $request->user()?->tenant_id ? [
                     'id' => $request->user()->tenant_id,

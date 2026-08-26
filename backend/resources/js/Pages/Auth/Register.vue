@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { useForm } from '@inertiajs/vue3'
+import { useForm, usePage } from '@inertiajs/vue3'
 import Flash from '../../Components/Flash.vue'
 
 const props = defineProps({
@@ -10,7 +10,9 @@ const props = defineProps({
 })
 
 const isCourier = props.role === 'courier'
-const step = ref('form')
+const page = usePage()
+const locale = computed(() => page.props.locale || 'ar')
+const direction = computed(() => locale.value === 'en' ? 'ltr' : 'rtl')
 const sending = ref(false)
 const showPassword = ref(false)
 const showConfirmation = ref(false)
@@ -33,9 +35,25 @@ const form = useForm({
     license_back_document: null,
 })
 
+function localizedVehicle(labels, fallback) {
+    return labels?.[locale.value]
+        || labels?.ar
+        || labels?.en
+        || labels?.ku
+        || fallback
+}
+
+function localizedProvince(province) {
+    return province?.[`name_${locale.value}`]
+        || province?.name_ar
+        || province?.name_en
+        || province?.name_ku
+        || ''
+}
+
 const vehicleOptions = computed(() => Object.entries(props.vehicles).map(([key, labels]) => ({
     key,
-    label: labels.ar || key,
+    label: localizedVehicle(labels, key),
 })))
 const selectedVehicle = computed(() => vehicleOptions.value.find((vehicle) => vehicle.key === form.vehicle))
 
@@ -44,7 +62,6 @@ function submitForm() {
     form.post('/register', {
         forceFormData: true,
         preserveScroll: true,
-        onSuccess: () => (step.value = 'pending'),
         onFinish: () => (sending.value = false),
     })
 }
@@ -86,67 +103,67 @@ function icon(name) {
 </script>
 
 <template>
-    <main class="register-reference" dir="rtl">
+    <main class="register-reference" :dir="direction" :lang="locale">
         <Flash />
         <header class="reg-header">
-            <button class="reg-back" type="button" aria-label="رجوع" @click="$inertia.visit(route('login'))">
+            <button class="reg-back" type="button" :aria-label="t('Back')" @click="$inertia.visit(route('login'))">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path :d="icon('back')" /></svg>
             </button>
-            <div class="reg-brand"><span><img src="/logo.png" alt="شعار المنجز السريع"></span><b>المنجز السريع</b></div>
+            <div class="reg-brand"><span><img src="/logo.png" :alt="t('Al-Munjaz Al-Saree')"></span><b>{{ t('Al-Munjaz Al-Saree') }}</b></div>
             <span class="reg-spacer"></span>
         </header>
 
-        <section v-if="step === 'form'" class="reg-body">
+        <section class="reg-body">
             <div class="reg-hero">
                 <span class="reg-role-icon"><svg width="29" height="29" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="icon(isCourier ? 'bike' : 'shop')" /></svg></span>
-                <span class="reg-role-chip">{{ isCourier ? 'تطبيق المندوب' : 'تطبيق التاجر' }}</span>
-                <h1>{{ isCourier ? 'حساب المندوب' : 'حساب التاجر' }}</h1>
-                <p>{{ isCourier ? 'أدخل بياناتك الشخصية ووسيلة التوصيل.' : 'أدخل بيانات متجرك لإنشاء الحساب.' }}</p>
+                <span class="reg-role-chip">{{ t(isCourier ? 'Courier App' : 'Merchant App') }}</span>
+                <h1>{{ t(isCourier ? 'Courier Account' : 'Merchant Account') }}</h1>
+                <p>{{ t(isCourier ? 'Enter your personal details and vehicle type' : 'Enter your store details to create an account') }}</p>
             </div>
 
             <form class="reg-card" @submit.prevent="submitForm">
                 <div class="reg-field" :class="{ error: form.errors.name }">
-                    <label>الاسم الكامل</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('user')" /></svg><input v-model="form.name" placeholder="أدخل الاسم الكامل" autocomplete="name"></div>
+                    <label>{{ t('Full Name') }}</label>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('user')" /></svg><input v-model="form.name" :placeholder="t('Full Name')" autocomplete="name"></div>
                     <small v-if="form.errors.name">{{ form.errors.name }}</small>
                 </div>
                 <div v-if="!isCourier" class="reg-field" :class="{ error: form.errors.shop }">
-                    <label>اسم المتجر</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('shop')" /></svg><input v-model="form.shop" placeholder="أدخل اسم المتجر"></div>
+                    <label>{{ t('Shop Name') }}</label>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('shop')" /></svg><input v-model="form.shop" :placeholder="t('Shop Name')"></div>
                     <small v-if="form.errors.shop">{{ form.errors.shop }}</small>
                 </div>
                 <div class="reg-field" :class="{ error: form.errors.address }">
-                    <label>{{ isCourier ? 'عنوان السكن' : 'عنوان المتجر' }}</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('pin')" /></svg><input v-model="form.address" :placeholder="isCourier ? 'أدخل عنوان السكن' : 'أدخل عنوان المتجر'"></div>
+                    <label>{{ t(isCourier ? 'Address' : 'Shop Address') }}</label>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('pin')" /></svg><input v-model="form.address" :placeholder="t(isCourier ? 'Address' : 'Shop Address')"></div>
                     <small v-if="form.errors.address">{{ form.errors.address }}</small>
                 </div>
                 <div class="reg-field" :class="{ error: form.errors.province_id }">
-                    <label>المحافظة</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('pin')" /></svg><select v-model="form.province_id" required><option disabled value="">اختر المحافظة</option><option v-for="province in provinces" :key="province.id" :value="province.id">{{ province.name_ar }}</option></select></div>
+                    <label>{{ t('Governorate') }}</label>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('pin')" /></svg><select v-model="form.province_id" required><option disabled value="">{{ t('Governorate') }}</option><option v-for="province in provinces" :key="province.id" :value="province.id">{{ localizedProvince(province) }}</option></select></div>
                     <small v-if="form.errors.province_id">{{ form.errors.province_id }}</small>
                 </div>
                 <div class="reg-field" :class="{ error: form.errors.phone }">
-                    <label>رقم الهاتف</label>
+                    <label>{{ t('Phone Number') }}</label>
                     <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path :d="icon('phone')" /></svg><input v-model="form.phone" dir="ltr" inputmode="tel" placeholder="07xx xxx xxxx" autocomplete="tel"></div>
                     <small v-if="form.errors.phone">{{ form.errors.phone }}</small>
                 </div>
                 <div class="reg-field" :class="{ error: form.errors.password }">
-                    <label>كلمة المرور</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('lock')" /></svg><input v-model="form.password" :type="showPassword ? 'text' : 'password'" placeholder="8 أحرف على الأقل" autocomplete="new-password"><button type="button" @click="showPassword = !showPassword">{{ showPassword ? 'إخفاء' : 'إظهار' }}</button></div>
+                    <label>{{ t('Password') }}</label>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('lock')" /></svg><input v-model="form.password" :type="showPassword ? 'text' : 'password'" :placeholder="t('Password')" autocomplete="new-password"><button type="button" @click="showPassword = !showPassword">{{ t(showPassword ? 'Hide' : 'Show') }}</button></div>
                     <small v-if="form.errors.password">{{ form.errors.password }}</small>
                 </div>
                 <div class="reg-field">
-                    <label>تأكيد كلمة المرور</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('lock')" /></svg><input v-model="form.password_confirmation" :type="showConfirmation ? 'text' : 'password'" placeholder="أعد إدخال كلمة المرور" autocomplete="new-password"><button type="button" @click="showConfirmation = !showConfirmation">{{ showConfirmation ? 'إخفاء' : 'إظهار' }}</button></div>
+                    <label>{{ t('Confirm Password') }}</label>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('lock')" /></svg><input v-model="form.password_confirmation" :type="showConfirmation ? 'text' : 'password'" :placeholder="t('Confirm Password')" autocomplete="new-password"><button type="button" @click="showConfirmation = !showConfirmation">{{ t(showConfirmation ? 'Hide' : 'Show') }}</button></div>
                 </div>
 
                 <template v-if="isCourier">
-                    <div class="courier-divider"><span>وسيلة التوصيل والوثائق</span></div>
+                    <div class="courier-divider"><span>{{ t('Vehicle Type') }} · {{ t('Documents') }}</span></div>
                     <div class="reg-field vehicle-field" :class="{ error: form.errors.vehicle }">
-                        <label>وسيلة التوصيل</label>
+                        <label>{{ t('Vehicle Type') }}</label>
                         <button class="vehicle-trigger" type="button" @click="showVehicles = !showVehicles">
                             <span class="vehicle-trigger-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="vehicleIcon(form.vehicle)" /></svg></span>
-                            <span>{{ selectedVehicle?.label || 'اختر وسيلة التوصيل' }}</span>
+                            <span>{{ selectedVehicle?.label || t('Choose Vehicle') }}</span>
                             <svg class="vehicle-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
                         </button>
                         <div v-if="showVehicles" class="vehicle-dropdown">
@@ -160,17 +177,17 @@ function icon(name) {
                     </div>
 
                     <div class="documents">
-                        <p>بطاقة السكن</p>
+                        <p>{{ t('Residence Card') }}</p>
                         <label class="upload-zone" :class="{ uploaded: !!form.residence_document, error: !!form.errors.residence_document }">
                             <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="chooseFile($event, 'residence_document')">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form.residence_document ? icon('check') : icon('upload')" /></svg>
-                            <span>{{ fileLabel('residence_document', 'اضغط لرفع صورة بطاقة السكن') }}</span>
+                            <span>{{ fileLabel('residence_document', t('Tap to upload')) }}</span>
                         </label>
                         <small v-if="form.errors.residence_document" class="document-error">{{ form.errors.residence_document }}</small>
 
-                        <p>البطاقة الوطنية</p>
+                        <p>{{ t('National ID Card') }}</p>
                         <div class="upload-pair">
-                            <label v-for="doc in [['id_front_document', 'الأمام'], ['id_back_document', 'الخلف']]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!form.errors[doc[0]] }">
+                            <label v-for="doc in [['id_front_document', t('Front')], ['id_back_document', t('Back')]]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!form.errors[doc[0]] }">
                                 <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="chooseFile($event, doc[0])">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form[doc[0]] ? icon('check') : icon('upload')" /></svg>
                                 <span>{{ fileLabel(doc[0], doc[1]) }}</span>
@@ -178,9 +195,9 @@ function icon(name) {
                         </div>
                         <small v-if="form.errors.id_front_document || form.errors.id_back_document" class="document-error">{{ form.errors.id_front_document || form.errors.id_back_document }}</small>
 
-                        <p>إجازة السوق</p>
+                        <p>{{ t('Driving License') }}</p>
                         <div class="upload-pair">
-                            <label v-for="doc in [['license_front_document', 'الأمام'], ['license_back_document', 'الخلف']]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!form.errors[doc[0]] }">
+                            <label v-for="doc in [['license_front_document', t('Front')], ['license_back_document', t('Back')]]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!form.errors[doc[0]] }">
                             <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="chooseFile($event, doc[0])">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form[doc[0]] ? icon('check') : icon('upload')" /></svg>
                             <span>{{ fileLabel(doc[0], doc[1]) }}</span>
@@ -191,18 +208,10 @@ function icon(name) {
                 </template>
 
                 <button type="submit" class="reg-submit" :disabled="sending">
-                    <span v-if="sending" class="loader"></span><span v-else>إنشاء الحساب</span>
+                    <span v-if="sending" class="loader"></span><span v-else>{{ t('Create Account') }}</span>
                 </button>
             </form>
-            <p class="reg-login">لدي حساب موجود؟ <a @click="$inertia.visit(route('login'))">تسجيل الدخول</a></p>
-        </section>
-
-        <section v-else class="pending-pane">
-            <span class="pending-icon"><svg width="35" height="35" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="icon('check')" /></svg></span>
-            <h1>تم استلام طلبك بنجاح</h1>
-            <p>سيتم مراجعة بياناتك من قبل فريق العمليات وستتلقى إشعاراً فور اكتمال المراجعة. بعدها يمكنك الدخول إلى حسابك.</p>
-            <span class="pending-chip">قيد المراجعة</span>
-            <button class="pending-return" type="button" @click="$inertia.visit(route('login'))">العودة لتسجيل الدخول</button>
+            <p class="reg-login">{{ t('Already have an account?') }} <a @click="$inertia.visit(route('login'))">{{ t('Sign In') }}</a></p>
         </section>
     </main>
 </template>
@@ -255,11 +264,5 @@ function icon(name) {
 .reg-submit { width:100%; min-height:46px; margin-top:19px; border-radius:12px; background:#fff; color:var(--primary-strong); font:inherit; font-size:13px; font-weight:900; box-shadow:0 8px 20px -6px rgba(0,0,0,.28); }
 .reg-login { margin:15px 0 0; text-align:center; color:rgba(255,255,255,.76); font-size:11px; font-weight:600; }
 .reg-login a { color:#fff; font-weight:900; text-decoration:underline; cursor:pointer; }
-.pending-pane { min-height:calc(100vh - 70px); display:flex; flex-direction:column; align-items:center; justify-content:center; padding:26px; text-align:center; }
-.pending-icon { width:70px; height:70px; display:grid; place-items:center; margin-bottom:17px; border:1px solid rgba(255,255,255,.3); border-radius:50%; background:rgba(255,255,255,.15); }
-.pending-pane h1 { margin:0; font-size:21px; font-weight:900; }
-.pending-pane p { max-width:320px; margin:10px 0 14px; color:rgba(255,255,255,.84); font-size:12px; line-height:2; font-weight:600; }
-.pending-chip { padding:6px 13px; border:1px solid rgba(255,255,255,.3); border-radius:20px; background:rgba(255,255,255,.15); font-size:11px; font-weight:800; }
-.pending-return { width:100%; max-width:320px; min-height:44px; margin-top:25px; border:1px solid rgba(255,255,255,.34); border-radius:12px; background:rgba(255,255,255,.1); color:#fff; font:inherit; font-size:12px; font-weight:900; }
 @media (min-width:480px) { .register-reference { min-height:94vh; margin:3vh auto; border:1px solid rgba(255,255,255,.18); border-radius:26px; box-shadow:0 30px 60px -20px rgba(15,27,26,.4); } }
 </style>

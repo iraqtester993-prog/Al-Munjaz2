@@ -17,6 +17,8 @@ use Inertia\Inertia;
 
 class AuthController extends Controller
 {
+    private const OTP_SESSION_KEY = 'registration_otp';
+
     public function loginForm()
     {
         return Inertia::render('Auth/Login');
@@ -117,7 +119,7 @@ class AuthController extends Controller
             'license_back_document' => [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
         ]);
 
-        DB::transaction(function () use ($data, $isCourier, $request): void {
+        $user = DB::transaction(function () use ($data, $isCourier, $request): User {
             $tenant = Tenant::create([
                 'slug' => 't'.Str::lower(Str::random(12)),
                 'name' => $isCourier ? ($data['name'].' — مندوب') : $data['shop'],
@@ -154,22 +156,122 @@ class AuthController extends Controller
                     Document::create(['user_id' => $user->id, 'type' => $type, 'path' => $path, 'status' => 'pending']);
                 }
             }
+
+            return $user;
         });
 
-        return back()->with('registration_saved', [
-            'phone' => $data['phone'],
-            'role' => $data['role'],
+        $this->startOtpChallenge($request, $user);
+
+        return redirect()->route('verify.otp.form');
+    }
+
+    public function otpForm(Request $request)
+    {
+        $challenge = $this->otpChallenge($request);
+
+        if (! $challenge) {
+            return redirect()->route('register', ['role' => 'merchant'])
+                ->withErrors(['phone' => __('auth.otp_start_registration')]);
+        }
+
+        return Inertia::render('Auth/Otp', [
+            'phone' => $challenge['phone'],
+            'role' => $challenge['role'],
+            'expiresAt' => $challenge['expires_at'],
+            // This is intentionally visible while the temporary code is in use.
+            // Replace it with an SMS provider and disable the hint before production.
+            'temporaryCodeHint' => config('services.temporary_otp.show_code_hint')
+                ? config('services.temporary_otp.code')
+                : null,
         ]);
     }
 
     public function verifyOtp(Request $request)
     {
-        return back()->withErrors(['code' => 'التحقق برسالة SMS غير مفعّل حالياً. تم استبداله بطلب حساب محفوظ بانتظار اعتماد الإدارة.']);
+        $data = $request->validate([
+            'code' => ['required', 'digits:6'],
+        ]);
+
+        $challenge = $this->otpChallenge($request);
+        if (! $challenge) {
+            return redirect()->route('register', ['role' => 'merchant'])
+                ->withErrors(['code' => __('auth.otp_session_expired')]);
+        }
+
+        if (now()->timestamp >= (int) $challenge['expires_at']) {
+            return back()->withErrors(['code' => __('auth.otp_expired')]);
+        }
+
+        $maxAttempts = $this->otpMaxAttempts();
+        if ((int) $challenge['attempts'] >= $maxAttempts) {
+            return back()->withErrors(['code' => __('auth.otp_attempts_exhausted')]);
+        }
+
+        if (! Hash::check($data['code'], $challenge['code_hash'])) {
+            $challenge['attempts'] = (int) $challenge['attempts'] + 1;
+            $request->session()->put(self::OTP_SESSION_KEY, $challenge);
+
+            $remaining = max(0, $maxAttempts - $challenge['attempts']);
+
+            return back()->withErrors([
+                'code' => $remaining > 0
+                    ? __('auth.otp_wrong_remaining', ['remaining' => $remaining])
+                    : __('auth.otp_attempts_exhausted'),
+            ]);
+        }
+
+        $user = DB::transaction(function () use ($challenge): User {
+            $user = User::query()->lockForUpdate()->findOrFail($challenge['user_id']);
+
+            abort_unless(
+                $user->status === 'pending' && $user->phone === $challenge['phone'],
+                422,
+                __('auth.otp_cannot_activate')
+            );
+
+            $user->forceFill([
+                'status' => 'active',
+                'phone_verified_at' => now(),
+            ])->save();
+
+            $tenant = Tenant::query()->lockForUpdate()->find($user->tenant_id);
+            if ($tenant?->status === 'pending') {
+                $tenant->update(['status' => 'active']);
+            }
+
+            return $user;
+        });
+
+        $request->session()->forget(self::OTP_SESSION_KEY);
+        Auth::login($user, true);
+        $request->session()->regenerate();
+
+        return redirect()->intended($this->homeFor($user))
+            ->with('success', __('auth.account_activated'));
     }
 
     public function resendOtp(Request $request)
     {
-        return response()->json(['message' => 'بوابة SMS غير مفعّلة حالياً.'], 422);
+        $challenge = $this->otpChallenge($request);
+        if (! $challenge) {
+            return redirect()->route('register', ['role' => 'merchant'])
+                ->withErrors(['code' => __('auth.otp_session_expired')]);
+        }
+
+        $now = now();
+        if ($now->timestamp < (int) $challenge['resend_available_at']) {
+            $wait = (int) $challenge['resend_available_at'] - $now->timestamp;
+
+            return back()->withErrors(['code' => __('auth.otp_wait', ['seconds' => $wait])]);
+        }
+
+        $challenge['code_hash'] = Hash::make($this->temporaryOtpCode());
+        $challenge['expires_at'] = $now->copy()->addSeconds($this->otpTtlSeconds())->timestamp;
+        $challenge['resend_available_at'] = $now->copy()->addSeconds($this->otpResendCooldownSeconds())->timestamp;
+        $challenge['attempts'] = 0;
+        $request->session()->put(self::OTP_SESSION_KEY, $challenge);
+
+        return back()->with('success', __('auth.otp_resent'));
     }
 
     public function logout(Request $request)
@@ -196,5 +298,56 @@ class AuthController extends Controller
             'merchant', 'courier' => '/app',
             default => '/login',
         };
+    }
+
+    /** @return array<string, mixed>|null */
+    private function otpChallenge(Request $request): ?array
+    {
+        $challenge = $request->session()->get(self::OTP_SESSION_KEY);
+
+        if (! is_array($challenge)
+            || empty($challenge['user_id'])
+            || empty($challenge['phone'])
+            || empty($challenge['code_hash'])
+            || empty($challenge['expires_at'])) {
+            return null;
+        }
+
+        return $challenge;
+    }
+
+    private function startOtpChallenge(Request $request, User $user): void
+    {
+        $now = now();
+
+        $request->session()->put(self::OTP_SESSION_KEY, [
+            'user_id' => $user->id,
+            'phone' => $user->phone,
+            'role' => $user->role,
+            'code_hash' => Hash::make($this->temporaryOtpCode()),
+            'expires_at' => $now->copy()->addSeconds($this->otpTtlSeconds())->timestamp,
+            'resend_available_at' => $now->copy()->addSeconds($this->otpResendCooldownSeconds())->timestamp,
+            'attempts' => 0,
+        ]);
+    }
+
+    private function temporaryOtpCode(): string
+    {
+        return (string) config('services.temporary_otp.code', '123456');
+    }
+
+    private function otpTtlSeconds(): int
+    {
+        return max(60, min((int) config('services.temporary_otp.ttl_seconds', 600), 3600));
+    }
+
+    private function otpMaxAttempts(): int
+    {
+        return max(1, min((int) config('services.temporary_otp.max_attempts', 5), 10));
+    }
+
+    private function otpResendCooldownSeconds(): int
+    {
+        return max(15, min((int) config('services.temporary_otp.resend_cooldown_seconds', 60), 300));
     }
 }

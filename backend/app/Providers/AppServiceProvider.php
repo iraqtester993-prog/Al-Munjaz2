@@ -14,13 +14,19 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->app->singleton('translations', function () {
+        // Do not cache this dictionary as a singleton. The locale can change
+        // after authentication (or during an Inertia visit), and a singleton
+        // would leave some components in the previous language.
+        $this->app->bind('translations', function () {
             $locale = App::getLocale();
             $fallback = config('app.fallback_locale');
 
             $strings = [];
 
-            foreach ([$locale, $fallback] as $candidate) {
+            // Load the fallback first, then let the requested locale replace
+            // every translated key it provides. The inverse order silently
+            // made Arabic/Kurdish screens retain English fallback labels.
+            foreach (array_unique([$fallback, $locale]) as $candidate) {
                 $path = lang_path($candidate.'.json');
                 if (! File::exists($path)) {
                     continue;

@@ -17,7 +17,7 @@ const props = defineProps({
 })
 
 const page = usePage()
-const user = computed(() => page.props.auth?.user)
+const locale = computed(() => page.props.locale || 'ar')
 
 const query = ref(props.q)
 const active = ref(props.filter)
@@ -39,20 +39,20 @@ const filters = computed(() => {
 })
 
 const merchantStatusCards = computed(() => [
-    { key: 'all', label: 'جميع الطلبات', icon: '▦', tone: 'all', count: props.counts.all ?? 0 },
-    { key: 'pending', label: 'قيد الانتظار', icon: '⌛', tone: 'pending', count: props.counts.pending ?? 0 },
-    { key: 'approved', label: 'تم قبول الطلب', icon: '✓', tone: 'approved', count: props.counts.approved ?? 0 },
-    { key: 'courier', label: 'بحوزة المندوب', icon: '⌁', tone: 'courier', count: props.counts.courier ?? 0 },
-    { key: 'delivered', label: 'تم التسليم', icon: '✓', tone: 'delivered', count: props.counts.delivered ?? 0 },
-    { key: 'returned', label: 'راجع', icon: '↩', tone: 'returned', count: props.counts.returned ?? 0 },
+    { key: 'all', label: t('All Orders'), icon: '▦', tone: 'all', count: props.counts.all ?? 0 },
+    { key: 'pending', label: t('Pending'), icon: '⌛', tone: 'pending', count: props.counts.pending ?? 0 },
+    { key: 'approved', label: t('Approved'), icon: '✓', tone: 'approved', count: props.counts.approved ?? 0 },
+    { key: 'courier', label: t('With Courier'), icon: '⌁', tone: 'courier', count: props.counts.courier ?? 0 },
+    { key: 'delivered', label: t('Delivered'), icon: '✓', tone: 'delivered', count: props.counts.delivered ?? 0 },
+    { key: 'returned', label: t('Returned'), icon: '↩', tone: 'returned', count: props.counts.returned ?? 0 },
 ])
 
 const courierStatusCards = computed(() => [
-    { key: 'pending', label: 'قيد الانتظار', icon: '⌛', tone: 'pending', count: props.counts.pending ?? 0 },
-    { key: 'approved', label: 'تم قبول الطلب', icon: '✓', tone: 'approved', count: props.counts.approved ?? 0 },
-    { key: 'courier', label: 'بحوزتي', icon: '⌁', tone: 'courier', count: props.counts.courier ?? 0 },
-    { key: 'delivered', label: 'تم التسليم', icon: '✓', tone: 'delivered', count: props.counts.delivered ?? 0 },
-    { key: 'returned', label: 'راجع', icon: '↩', tone: 'returned', count: props.counts.returned ?? 0 },
+    { key: 'pending', label: t('Pending'), icon: '⌛', tone: 'pending', count: props.counts.pending ?? 0 },
+    { key: 'approved', label: t('Approved'), icon: '✓', tone: 'approved', count: props.counts.approved ?? 0 },
+    { key: 'courier', label: t('With Me'), icon: '⌁', tone: 'courier', count: props.counts.courier ?? 0 },
+    { key: 'delivered', label: t('Delivered'), icon: '✓', tone: 'delivered', count: props.counts.delivered ?? 0 },
+    { key: 'returned', label: t('Returned'), icon: '↩', tone: 'returned', count: props.counts.returned ?? 0 },
 ])
 
 function tStatus(s) {
@@ -146,12 +146,29 @@ function openComplaint(order) {
 
 function vehicleLabel(order) {
     return {
-        normal: 'طلب عادي',
-        bike: 'دراجة نارية',
-        sedan: 'سيارة صالون',
-        suv: 'سيارة كبيرة',
-        truck: 'سيارة نقل',
-    }[order.delivery_vehicle] || 'طلب عادي'
+        normal: t('Regular Delivery'),
+        bike: t('Motorcycle'),
+        sedan: t('Sedan'),
+        suv: t('SUV'),
+        truck: t('Van / Truck'),
+    }[order.delivery_vehicle] || t('Regular Delivery')
+}
+
+function localizedOrderValue(order, key) {
+    const preferred = locale.value === 'en' ? 'en' : locale.value === 'ku' ? 'ku' : 'ar'
+
+    return order?.[`${key}_${preferred}`]
+        || order?.[`${key}_en`]
+        || order?.[`${key}_ar`]
+        || ''
+}
+
+function customerName(order) {
+    return localizedOrderValue(order, 'customer_name')
+}
+
+function customerAddress(order) {
+    return localizedOrderValue(order, 'address')
 }
 
 function pickupRemaining(order) {
@@ -167,7 +184,7 @@ function pickupText(order) {
     const seconds = Math.floor(remaining / 1000)
     const minutes = Math.floor(seconds / 60)
 
-    return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')} د`
+    return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')} ${t('Minutes abbreviation')}`
 }
 
 const STATUS_FLOW = ['pending', 'approved', 'courier', 'delivered']
@@ -199,7 +216,7 @@ onUnmounted(() => window.clearInterval(ticker))
     <AppShell :title="isCourier ? t('My Deliveries') : t('My Orders')">
         <template #title>
             {{ isCourier ? t('My Deliveries') : t('My Orders') }}
-            <span v-if="isCourier" class="tb-sub">{{ t('Available') }}: {{ fmt(wallet.budget) }} / {{ fmt(wallet.balance) }} د.ع</span>
+            <span v-if="isCourier" class="tb-sub">{{ t('Available') }}: {{ fmt(wallet.budget) }} / {{ fmt(wallet.balance) }} {{ t('IQD') }}</span>
         </template>
 
         <section v-if="!isCourier && merchantOverview" class="merchant-orders-overview">
@@ -227,7 +244,7 @@ onUnmounted(() => window.clearInterval(ticker))
             <button class="orders-back" type="button" @click="isCourier ? backToCourierOverview() : backToMerchantOverview()">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>
             </button>
-            <b>{{ active === 'all' ? 'جميع الطلبات' : tStatus(active) }}</b>
+            <b>{{ active === 'all' ? t('All Orders') : tStatus(active) }}</b>
             <span>{{ counts[active] ?? 0 }}</span>
         </div>
 
@@ -244,17 +261,17 @@ onUnmounted(() => window.clearInterval(ticker))
                     </svg>
                     </div>
                     <div class="order-mid">
-                        <b>{{ o.customer_name_ar }}</b>
-                        <span class="mono">{{ o.track_no }} · {{ o.address_ar }}</span>
+                        <b>{{ customerName(o) }}</b>
+                        <span class="mono">{{ o.track_no }} · {{ customerAddress(o) }}</span>
                     </div>
                     <StatusBadge :status="o.status" />
                 </header>
                 <div class="mobile-order-summary">
-                    <strong class="mono">{{ fmt(o.price) }} <small>د.ع</small></strong>
+                    <strong class="mono">{{ fmt(o.price) }} <small>{{ t('IQD') }}</small></strong>
                     <span class="mobile-vehicle-badge">{{ vehicleLabel(o) }}</span>
                 </div>
-                <p v-if="o.vehicle_note || o.notes" class="mobile-order-note"><b>ملاحظة الطلب:</b> {{ o.vehicle_note || o.notes }}</p>
-                <footer v-if="o.status === 'approved' && pickupText(o)" class="mobile-order-timer"><i></i> الوقت المتاح للاستلام: <b class="mono">{{ pickupText(o) }}</b></footer>
+                <p v-if="o.vehicle_note || o.notes" class="mobile-order-note"><b>{{ t('Notes') }}:</b> {{ o.vehicle_note || o.notes }}</p>
+                <footer v-if="o.status === 'approved' && pickupText(o)" class="mobile-order-timer"><i></i> {{ t('Time to reach the merchant') }}: <b class="mono">{{ pickupText(o) }}</b></footer>
             </article>
         </div>
         <div v-else class="empty-hint">{{ t('No orders found') }}</div>
@@ -268,7 +285,7 @@ onUnmounted(() => window.clearInterval(ticker))
             </button>
         </template>
 
-        <SheetModal :open="!!selected" :title="selected?.track_no" :subtitle="selected?.customer_name_ar" @close="selected = null">
+        <SheetModal :open="!!selected" :title="selected?.track_no" :subtitle="customerName(selected)" @close="selected = null">
             <template v-if="selected">
                 <div class="detail-row">
                     <span class="text-muted">{{ t('Status') }}</span>
@@ -276,7 +293,7 @@ onUnmounted(() => window.clearInterval(ticker))
                 </div>
                 <div class="detail-row">
                     <span class="text-muted">{{ t('Customer') }}</span>
-                    <b>{{ selected.customer_name_ar }}</b>
+                    <b>{{ customerName(selected) }}</b>
                 </div>
                 <div class="detail-row">
                     <span class="text-muted">{{ t('Phone') }}</span>
@@ -284,11 +301,11 @@ onUnmounted(() => window.clearInterval(ticker))
                 </div>
                 <div class="detail-row">
                     <span class="text-muted">{{ t('Address') }}</span>
-                    <b>{{ selected.address_ar }}</b>
+                    <b>{{ customerAddress(selected) }}</b>
                 </div>
                 <div class="detail-row">
                     <span class="text-muted">{{ t('Price') }}</span>
-                    <b class="mono">{{ fmt(selected.price) }} د.ع</b>
+                    <b class="mono">{{ fmt(selected.price) }} {{ t('IQD') }}</b>
                 </div>
                 <div class="detail-row">
                     <span class="text-muted">{{ t('Date') }}</span>
@@ -315,7 +332,7 @@ onUnmounted(() => window.clearInterval(ticker))
                 </div>
 
                 <button v-if="['approved', 'courier'].includes(selected.status)" class="order-complaint" type="button" @click="openComplaint(selected)">
-                    شكوى / تأخر
+                    {{ t('Contact Support') }}
                 </button>
 
                 <button v-if="!isCourier && selected.status === 'pending'" class="btn btn-ghost" style="width: 100%; margin-top: 10px" @click="openEdit">{{ t('Edit') }}</button>
