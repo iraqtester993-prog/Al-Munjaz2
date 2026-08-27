@@ -77,7 +77,7 @@ function dateTime(value) {
     if (!value) return '—'
     try {
         return new Intl.DateTimeFormat(
-            { ar: 'ar-IQ', en: 'en-US', ku: 'ku-IQ' }[locale.value] || 'ar-IQ',
+            { ar: 'ar-IQ-u-nu-latn', en: 'en-US', ku: 'ku-IQ-u-nu-latn' }[locale.value] || 'en-US',
             { dateStyle: 'medium', timeStyle: 'short' },
         ).format(new Date(value))
     } catch {

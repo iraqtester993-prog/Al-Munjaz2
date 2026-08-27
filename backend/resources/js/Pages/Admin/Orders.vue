@@ -219,7 +219,7 @@ function formatDate(value) {
 
     try {
         const lang = document.documentElement.lang || 'ar'
-        const locale = lang === 'ar' ? 'ar-IQ' : lang === 'ku' ? 'ku-IQ' : 'en-US'
+        const locale = lang === 'ar' ? 'ar-IQ-u-nu-latn' : lang === 'ku' ? 'ku-IQ-u-nu-latn' : 'en-US'
         return new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(new Date(value))
     } catch {
         return value
@@ -231,7 +231,7 @@ function formatDateTime(value) {
 
     try {
         const lang = document.documentElement.lang || 'ar'
-        const locale = lang === 'ar' ? 'ar-IQ' : lang === 'ku' ? 'ku-IQ' : 'en-US'
+        const locale = lang === 'ar' ? 'ar-IQ-u-nu-latn' : lang === 'ku' ? 'ku-IQ-u-nu-latn' : 'en-US'
         return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
     } catch {
         return value

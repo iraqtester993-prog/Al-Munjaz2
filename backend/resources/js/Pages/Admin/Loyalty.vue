@@ -84,7 +84,7 @@ function formatted(value) {
 function dateLabel(value) {
     if (!value) return '—'
     try {
-        return new Intl.DateTimeFormat(locale.value === 'en' ? 'en-GB' : locale.value === 'ku' ? 'ku' : 'ar-IQ', {
+        return new Intl.DateTimeFormat(locale.value === 'en' ? 'en-GB' : locale.value === 'ku' ? 'ku-IQ-u-nu-latn' : 'ar-IQ-u-nu-latn', {
             dateStyle: 'medium', timeStyle: 'short', numberingSystem: 'latn',
         }).format(new Date(value))
     } catch {

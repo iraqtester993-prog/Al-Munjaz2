@@ -164,7 +164,7 @@ function shortDate(value) {
     if (!value) return '—'
 
     const date = new Date(`${value}T00:00:00`)
-    const language = locale.value === 'ku' ? 'ku' : locale.value
+    const language = { ar: 'ar-IQ-u-nu-latn', en: 'en-US', ku: 'ku-IQ-u-nu-latn' }[locale.value] || 'en-US'
     return new Intl.DateTimeFormat(language, { day: 'numeric', month: 'short' }).format(date)
 }
 
@@ -195,7 +195,7 @@ function visitHero(slide) {
 }
 
 function refreshedAt() {
-    const language = locale.value === 'ar' ? 'ar-IQ' : locale.value
+    const language = { ar: 'ar-IQ-u-nu-latn', en: 'en-US', ku: 'ku-IQ-u-nu-latn' }[locale.value] || 'en-US'
     return lastRefresh.value.toLocaleTimeString(language)
 }
 
@@ -212,7 +212,7 @@ function locationUpdatedAt(courier) {
     if (!courier?.updated_at) return '—'
 
     try {
-        const language = { ar: 'ar-IQ', en: 'en-US', ku: 'ku-IQ' }[locale.value] || 'ar-IQ'
+        const language = { ar: 'ar-IQ-u-nu-latn', en: 'en-US', ku: 'ku-IQ-u-nu-latn' }[locale.value] || 'en-US'
         return new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(courier.updated_at))
     } catch (_) {
         return courier.updated_at
