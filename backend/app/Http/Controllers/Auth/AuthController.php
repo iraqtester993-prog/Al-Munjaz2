@@ -44,16 +44,22 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $credentials = $request->validate([
-            'username' => ['required', 'string'],
+            'phone' => ['required', 'string'],
             'password' => ['required', 'string'],
             'role' => ['required', 'in:merchant,courier'],
             'province_id' => ['nullable', 'integer', 'exists:provinces,id'],
         ]);
 
-        $user = User::where('username', $credentials['username'])->first();
+        // Mobile accounts sign in with their actual phone number. The
+        // username fallback keeps accounts created by an older release
+        // compatible, because that release stored the same phone in username.
+        $user = User::query()
+            ->where('phone', $credentials['phone'])
+            ->orWhere('username', $credentials['phone'])
+            ->first();
 
         if (! $user || ! Hash::check($credentials['password'], $user->password)) {
-            return back()->withErrors(['username' => __('auth.failed')]);
+            return back()->withErrors(['phone' => __('auth.failed')]);
         }
 
         $roleMatches = $credentials['role'] === 'courier'
@@ -61,15 +67,15 @@ class AuthController extends Controller
             : $user->role === $credentials['role'];
 
         if (! $roleMatches) {
-            return back()->withErrors(['username' => __('auth.role_mismatch')]);
+            return back()->withErrors(['phone' => __('auth.role_mismatch')]);
         }
 
         if ($user->status === 'pending') {
-            return back()->withErrors(['username' => __('auth.pending_review')]);
+            return back()->withErrors(['phone' => __('auth.pending_review')]);
         }
 
         if ($user->status === 'rejected') {
-            return back()->withErrors(['username' => __('auth.rejected')]);
+            return back()->withErrors(['phone' => __('auth.rejected')]);
         }
 
         $area = null;

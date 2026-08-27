@@ -22,15 +22,13 @@ const roles = computed(() => [
     { key: 'courier', label: t('Courier App'), desc: t('My deliveries, collections, wallet'), icon: 'bike' },
 ])
 
-const form = useForm({ username: '', password: '', role: 'merchant', province_id: '' })
+const form = useForm({ phone: '', password: '', role: 'merchant', province_id: '' })
 
 function chooseRole(role) {
     form.role = role
-    form.province_id = ''
-    // New users go directly to registration and become authenticated after
-    // their OTP is confirmed. Existing accounts can still use the small
-    // sign-in action below.
-    router.visit(route('register', role))
+    form.reset('phone', 'password', 'province_id')
+    form.clearErrors()
+    view.value = 'login'
 }
 
 function localizedProvince(province) {
@@ -151,12 +149,12 @@ function icon(name) {
                     <small v-if="errors.province_id" class="login-error">{{ errors.province_id }}</small>
                 </label>
                 <label>
-                    <span>{{ t('Username or phone') }}</span>
+                    <span>{{ t('Phone number') }}</span>
                     <div class="auth-input-wrap">
                         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path :d="icon('user')" /></svg>
-                        <input v-model="form.username" autocomplete="username" :placeholder="t('Username or phone')" required>
+                        <input v-model="form.phone" type="tel" inputmode="tel" autocomplete="tel" :placeholder="t('Phone number')" required>
                     </div>
-                    <small v-if="errors.username" class="login-error">{{ errors.username }}</small>
+                    <small v-if="errors.phone" class="login-error">{{ errors.phone }}</small>
                 </label>
                 <label>
                     <span>{{ t('Password') }}</span>
