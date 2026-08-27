@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
+import { startNativeBackgroundLocation, stopNativeBackgroundLocation } from '../Utils/nativeBackgroundLocation'
 
 const page = usePage()
 const user = computed(() => page.props.auth?.user || {})
@@ -14,6 +15,7 @@ let lastPosition = null
 let sending = false
 let sessionPermissionGranted = false
 let trackingAttempt = 0
+let nativeTracking = false
 
 function sharingEnabled() {
     try {
@@ -31,6 +33,8 @@ function stopTracking() {
     }
 
     watchId = null
+    nativeTracking = false
+    stopNativeBackgroundLocation()
 }
 
 function distanceMeters(from, to) {
@@ -51,10 +55,10 @@ function shouldShare(next) {
     return distanceMeters(lastPosition, next) >= 25
 }
 
-async function share(position) {
-    const latitude = Number(position.coords?.latitude)
-    const longitude = Number(position.coords?.longitude)
-    const accuracy = Math.round(Number(position.coords?.accuracy || 0))
+async function shareCoordinates(position) {
+    const latitude = Number(position?.latitude)
+    const longitude = Number(position?.longitude)
+    const accuracy = Math.round(Number(position?.accuracy || position?.accuracy_meters || 0))
 
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || sending) return
 
@@ -79,6 +83,14 @@ async function share(position) {
     } finally {
         sending = false
     }
+}
+
+function share(position) {
+    return shareCoordinates({
+        latitude: position.coords?.latitude,
+        longitude: position.coords?.longitude,
+        accuracy: position.coords?.accuracy,
+    })
 }
 
 async function hasGrantedLocationPermission() {
@@ -106,13 +118,25 @@ async function startTracking() {
 
     // Location is never requested implicitly.  The account owner enables it
     // from Profile first; until then this component is completely inert.
-    if (!isCourier.value || !sharingEnabled() || document.visibilityState !== 'visible' || !navigator.geolocation) return
+    if (!isCourier.value || !sharingEnabled() || !navigator.geolocation) return
     if (!(await hasGrantedLocationPermission()) || attempt !== trackingAttempt) return
 
     // The asynchronous permission check above may complete after a role,
     // preference, or visibility change. Verify the inert conditions again
     // immediately before starting the native watcher.
-    if (!isCourier.value || !sharingEnabled() || document.visibilityState !== 'visible' || attempt !== trackingAttempt) return
+    if (!isCourier.value || !sharingEnabled() || attempt !== trackingAttempt) return
+
+    // The future Capacitor shell supplies this bridge and keeps the native
+    // location service alive after the web view is closed. Until then, the
+    // PWA uses the browser watcher; mobile browsers may throttle it while the
+    // app is backgrounded and can stop it after full termination.
+    nativeTracking = await startNativeBackgroundLocation(shareCoordinates)
+    if (attempt !== trackingAttempt) {
+        if (nativeTracking) stopNativeBackgroundLocation()
+        nativeTracking = false
+        return
+    }
+    if (nativeTracking) return
 
     watchId = navigator.geolocation.watchPosition(
         share,
@@ -135,7 +159,9 @@ function onLocationPreferenceChanged(event) {
 }
 
 function onVisibilityChanged() {
-    startTracking()
+    // A browser may resume a throttled PWA location watcher when it becomes
+    // visible again. Do not stop it merely because the app was minimized.
+    if (!nativeTracking && document.visibilityState === 'visible') startTracking()
 }
 
 onMounted(() => {
