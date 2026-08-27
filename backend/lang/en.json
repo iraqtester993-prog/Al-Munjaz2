@@ -890,6 +890,7 @@
     "Dashboard permissions": "Dashboard permissions",
     "Owner accounts receive all permissions. Manager access is controlled by these switches.": "Owner accounts receive all permissions. Manager access is controlled by these switches.",
     "Operating Governorate": "Operating governorate",
+    "Registration is temporarily unavailable because no operating governorate is enabled.": "Registration is temporarily unavailable because no operating governorate is enabled.",
     "Choose governorate": "Choose governorate",
     "Overview": "Overview",
     "Courier Locations": "Courier locations",

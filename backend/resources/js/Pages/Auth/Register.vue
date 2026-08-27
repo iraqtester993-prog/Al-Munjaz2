@@ -8,6 +8,7 @@ const props = defineProps({
     role: { type: String, required: true },
     vehicles: { type: Object, required: true },
     provinces: { type: Array, required: true },
+    registrationAvailable: { type: Boolean, default: true },
     courierUploadLimits: { type: Object, default: () => ({}) },
 })
 
@@ -384,7 +385,8 @@ onBeforeUnmount(() => {
                     </div>
                 </template>
 
-                <button type="submit" class="reg-submit" :disabled="sending || isPreparingDocuments">
+                <p v-if="!registrationAvailable" class="registration-unavailable">{{ t('Registration is temporarily unavailable because no operating governorate is enabled.') }}</p>
+                <button type="submit" class="reg-submit" :disabled="!registrationAvailable || sending || isPreparingDocuments">
                     <span v-if="sending || isPreparingDocuments" class="loader"></span><span v-else>{{ t('Create Account') }}</span>
                 </button>
             </form>
@@ -445,6 +447,7 @@ onBeforeUnmount(() => {
 .document-info { display:block; margin-top:4px; color:#b9f7d3; font-size:9px; font-weight:800; }
 .document-file-details { display:grid; grid-template-columns:1fr 1fr; gap:8px; min-height:0; }
 .document-file-details > small { min-width:0; color:#b9f7d3; font-size:9px; font-weight:800; line-height:1.4; overflow-wrap:anywhere; }
+.registration-unavailable { margin:16px 0 -5px; padding:10px 11px; border:1px solid rgba(255,208,203,.52); border-radius:10px; background:rgba(156,44,37,.18); color:#ffd8d2; font-size:10px; line-height:1.65; font-weight:800; }
 .reg-submit:disabled { opacity:.72; cursor:not-allowed; }
 .reg-submit { width:100%; min-height:46px; margin-top:19px; border-radius:12px; background:#fff; color:var(--primary-strong); font:inherit; font-size:13px; font-weight:900; box-shadow:0 8px 20px -6px rgba(0,0,0,.28); }
 .reg-login { margin:15px 0 0; text-align:center; color:rgba(255,255,255,.76); font-size:11px; font-weight:600; }

@@ -890,6 +890,7 @@
     "Dashboard permissions": "دەسەڵاتەکانی داشبۆرد",
     "Owner accounts receive all permissions. Manager access is controlled by these switches.": "هەژمارەکانی خاوەن هەموو دەسەڵاتەکان وەردەگرن. دەسەڵاتەکانی بەڕێوەبەری لق بەەم دوگمانانە کۆنترۆڵ دەکرێن.",
     "Operating Governorate": "پارێزگای کارپێکردن",
+    "Registration is temporarily unavailable because no operating governorate is enabled.": "تۆمارکردن کاتێک بەردەست نییە تا بەڕێوەبەرایەتی پارێزگایەکی کارپێکردن چالاک بکات.",
     "Choose governorate": "پارێزگا هەڵبژێرە",
     "Overview": "پوختە",
     "Courier Locations": "شوێنەکانی گەیەنەران",

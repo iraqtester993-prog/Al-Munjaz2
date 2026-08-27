@@ -137,9 +137,15 @@ class AuthController extends Controller
 
     public function registerForm(string $role)
     {
+        $operatingAreas = $this->operatingAreas();
+
         return Inertia::render('Auth/Register', [
             'role' => $role,
-            'provinces' => $this->operatingAreas(),
+            'provinces' => $operatingAreas,
+            // A province is the operational boundary for every new account.
+            // Do not leave a form that can never succeed when the owner has
+            // temporarily disabled every operational branch.
+            'registrationAvailable' => $operatingAreas->isNotEmpty(),
             'courierUploadLimits' => $this->courierUploadLimits(),
             'vehicles' => [
                 'bike' => ['ar' => 'دراجة نارية', 'en' => 'Motorcycle', 'ku' => 'ماتۆڕسکلێت'],
@@ -152,6 +158,12 @@ class AuthController extends Controller
 
     public function register(Request $request)
     {
+        if ($this->operatingAreas()->isEmpty()) {
+            return back()->withErrors([
+                'province_id' => __('Registration is temporarily unavailable because no operating governorate is enabled.'),
+            ]);
+        }
+
         $isCourier = $request->input('role') === 'courier';
         $uploadLimits = $this->courierUploadLimits();
         $documentRules = [$isCourier ? 'required' : 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:'.$uploadLimits['maxFileKilobytes']];

@@ -890,6 +890,7 @@
     "Dashboard permissions": "صلاحيات لوحة التحكم",
     "Owner accounts receive all permissions. Manager access is controlled by these switches.": "حسابات المالك تحصل على جميع الصلاحيات. وتُتحكم صلاحيات مدير الفرع بهذه المفاتيح.",
     "Operating Governorate": "المحافظة التشغيلية",
+    "Registration is temporarily unavailable because no operating governorate is enabled.": "التسجيل متوقف مؤقتاً حتى تقوم الإدارة بتفعيل محافظة تشغيلية.",
     "Choose governorate": "اختر المحافظة",
     "Overview": "نظرة عامة",
     "Courier Locations": "مواقع المندوبين",
