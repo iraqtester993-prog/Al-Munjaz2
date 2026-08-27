@@ -155,6 +155,7 @@ Route::middleware(['auth', 'active'])->group(function () {
         Route::post('orders/{order}/return', [AppOrderController::class, 'startReturn'])->name('app.orders.return');
         Route::post('orders/{order}/return-to-merchant', [AppOrderController::class, 'confirmReturnToMerchant'])->name('app.orders.return-to-merchant');
         Route::post('orders/{order}/recreate', [AppOrderController::class, 'recreate'])->name('app.orders.recreate');
+        Route::post('orders/{order}/republish', [AppOrderController::class, 'republish'])->name('app.orders.republish');
         Route::post('orders/{order}/claim', [AppOrderController::class, 'claim'])->name('app.orders.claim');
         Route::get('wallet', [AppWalletController::class, 'index'])->name('app.wallet');
         Route::post('wallet/withdraw', [AppWalletController::class, 'withdraw'])->name('app.wallet.withdraw');

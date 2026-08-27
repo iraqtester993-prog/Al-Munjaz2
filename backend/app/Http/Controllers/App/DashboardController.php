@@ -8,7 +8,6 @@ use App\Models\Order;
 use App\Models\User;
 use App\Services\CourierOrderAccess;
 use App\Services\FinanceRequestService;
-use App\Services\CustomerContactVisibility;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -96,14 +95,12 @@ class DashboardController extends Controller
             'merchant:id,name,phone,address',
             'tenant:id,name',
         ])->latest('id')->limit(5)->get()->map(function (Order $o) use ($isCourier, $user): array {
-            $phoneRevealed = app(CustomerContactVisibility::class)->canReveal($o, $user);
-
             return [
             'id' => $o->id,
             'track_no' => $o->track_no,
             ...$this->localizedOrderCardText($o),
-            'phone' => $phoneRevealed ? $o->phone : null,
-            'phone_revealed' => $phoneRevealed,
+            'phone' => $o->phone,
+            'phone_revealed' => true,
             'delivery_vehicle' => $o->delivery_vehicle,
             'price' => $o->price,
             'status' => $o->status,
@@ -133,11 +130,8 @@ class DashboardController extends Controller
                 'id' => $order->id,
                 'track_no' => $order->track_no,
                 ...$this->localizedOrderCardText($order),
-                // An available or merely assigned order must not disclose a
-                // customer's number. It appears after the courier marks the
-                // parcel as collected (status courier / picked_at).
-                'phone' => null,
-                'phone_revealed' => false,
+                'phone' => $order->phone,
+                'phone_revealed' => true,
                 'order_type' => $order->order_type,
                 'delivery_vehicle' => $order->delivery_vehicle ?: 'normal',
                 'vehicle_note' => $order->vehicle_note,

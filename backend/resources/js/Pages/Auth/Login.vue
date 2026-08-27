@@ -16,37 +16,18 @@ const branding = computed(() => page.props.branding || {
     name: t('Al-Munjaz Al-Saree'),
     logo_url: '/logo.png',
 })
-const provinces = computed(() => Array.isArray(page.props.provinces) ? page.props.provinces : [])
 const roles = computed(() => [
     { key: 'merchant', label: t('Merchant App'), desc: t('My orders, statement, wallet'), icon: 'shop' },
     { key: 'courier', label: t('Courier App'), desc: t('My deliveries, collections, wallet'), icon: 'bike' },
 ])
 
-const form = useForm({ phone: '', password: '', role: 'merchant', province_id: '' })
+const form = useForm({ phone: '', password: '', role: 'merchant' })
 
 function chooseRole(role) {
     form.role = role
-    form.reset('phone', 'password', 'province_id')
+    form.reset('phone', 'password')
     form.clearErrors()
     view.value = 'login'
-}
-
-function localizedProvince(province) {
-    return province?.[`name_${locale.value}`]
-        || province?.name_ar
-        || province?.name_en
-        || province?.name_ku
-        || ''
-}
-
-function provinceLabel(province) {
-    const provinceName = localizedProvince(province)
-    const branchName = province?.[`branch_name_${locale.value}`]
-        || province?.branch_name_ar
-        || province?.branch_name_en
-        || province?.branch_name
-
-    return branchName && branchName !== provinceName ? `${provinceName} — ${branchName}` : provinceName
 }
 
 function toggleTheme() {
@@ -137,17 +118,6 @@ function icon(name) {
             </div>
 
             <form class="login-card-ref" @submit.prevent="submit">
-                <label v-if="provinces.length">
-                    <span>{{ t('Governorate') }}</span>
-                    <div class="auth-input-wrap auth-select-wrap">
-                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="icon('pin')" /></svg>
-                        <select v-model="form.province_id" required>
-                            <option disabled value="">{{ t('Governorate') }}</option>
-                            <option v-for="province in provinces" :key="province.id" :value="province.id">{{ provinceLabel(province) }}</option>
-                        </select>
-                    </div>
-                    <small v-if="errors.province_id" class="login-error">{{ errors.province_id }}</small>
-                </label>
                 <label>
                     <span>{{ t('Phone number') }}</span>
                     <div class="auth-input-wrap">

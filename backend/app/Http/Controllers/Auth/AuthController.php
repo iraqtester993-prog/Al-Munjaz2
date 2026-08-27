@@ -33,12 +33,7 @@ class AuthController extends Controller
 
     public function loginForm()
     {
-        return Inertia::render('Auth/Login', [
-            // Only provinces backed by an active operational branch are
-            // selectable. This prevents a new courier or merchant from
-            // entering an area that the platform cannot actually serve.
-            'provinces' => $this->operatingAreas(),
-        ]);
+        return Inertia::render('Auth/Login');
     }
 
     public function login(Request $request)
@@ -47,7 +42,6 @@ class AuthController extends Controller
             'phone' => ['required', 'string'],
             'password' => ['required', 'string'],
             'role' => ['required', 'in:merchant,courier'],
-            'province_id' => ['nullable', 'integer', 'exists:provinces,id'],
         ]);
 
         // Mobile accounts sign in with their actual phone number. The
@@ -78,36 +72,16 @@ class AuthController extends Controller
             return back()->withErrors(['phone' => __('auth.rejected')]);
         }
 
-        $area = null;
-        $areas = $this->operatingAreas();
-        if ($areas->isNotEmpty()) {
-            $provinceId = (int) ($credentials['province_id'] ?? 0);
-            if (! $provinceId) {
-                return back()->withErrors(['province_id' => 'اختر المحافظة التي يعمل ضمنها الفرع قبل تسجيل الدخول.']);
-            }
-
-            $area = $areas->firstWhere('id', $provinceId);
-            if (! $area) {
-                return back()->withErrors(['province_id' => 'المحافظة المختارة ليست ضمن الفروع النشطة.']);
-            }
-
-            if (! $user->provinces()->whereKey($provinceId)->exists()) {
-                return back()->withErrors(['province_id' => 'هذا الحساب غير مفعّل للمحافظة المختارة.']);
-            }
-        }
-
         Auth::login($user, true);
 
         $request->session()->regenerate();
-        if ($area) {
-            // The selected operating province is not cosmetic. Persist the
-            // active branch on the account so order queues, content and
-            // administration queries share the same server-side boundary.
-            if ((int) $user->branch_id !== (int) $area['branch_id']) {
-                $user->forceFill(['branch_id' => (int) $area['branch_id']])->save();
-            }
-            $request->session()->put('operating_branch_id', (int) $area['branch_id']);
-            $request->session()->put('operating_province_id', (int) $area['id']);
+        // A mobile account belongs to the governorate selected at
+        // registration. Login never asks the person to select it again.
+        if ($user->branch_id) {
+            $request->session()->put('operating_branch_id', (int) $user->branch_id);
+        }
+        if ($provinceId = $user->provinces()->value('provinces.id')) {
+            $request->session()->put('operating_province_id', (int) $provinceId);
         }
 
         return redirect()->intended($this->homeFor($user));

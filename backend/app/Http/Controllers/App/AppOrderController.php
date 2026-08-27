@@ -13,7 +13,6 @@ use App\Models\Setting;
 use App\Models\User;
 use App\Services\CourierOrderAccess;
 use App\Services\CourierOrderAssignmentService;
-use App\Services\CustomerContactVisibility;
 use App\Services\OrderWorkflowService;
 use App\Services\PricingService;
 use App\Tenancy\TenantContext;
@@ -104,19 +103,18 @@ class AppOrderController extends Controller
                 ->get(['id', 'name_ar', 'name_en', 'name_ku', 'city'])
                 ->keyBy('id');
 
-        $viewer = $request->user();
-        $orders = $orderRecords->map(function (Order $o) use ($isCourier, $viewer, $movementBranches): array {
-            $phoneRevealed = app(CustomerContactVisibility::class)->canReveal($o, $viewer);
-
+        $orders = $orderRecords->map(function (Order $o) use ($isCourier, $movementBranches): array {
             return [
             'id' => $o->id,
             'track_no' => $o->track_no,
             'source' => $o->source,
             'customer_name_ar' => $o->customer_name_ar,
             'customer_name_en' => $o->customer_name_en,
-            'phone' => $phoneRevealed ? $o->phone : null,
-            'phone2' => $phoneRevealed ? $o->phone2 : null,
-            'phone_revealed' => $phoneRevealed,
+            // The merchant and the assigned/eligible courier need customer
+            // contact details at every delivery state, including pending.
+            'phone' => $o->phone,
+            'phone2' => $o->phone2,
+            'phone_revealed' => true,
             'address_ar' => $o->address_ar,
             'address_en' => $o->address_en,
             'pickup_latitude' => $o->pickup_latitude === null ? null : (float) $o->pickup_latitude,
@@ -202,21 +200,16 @@ class AppOrderController extends Controller
             'delivery_vehicle' => ['required', Rule::in(['normal', 'bike', 'sedan', 'suv', 'truck'])],
             'weight_grams' => ['nullable', 'integer', 'min:0', 'max:1000000'],
             'vehicle_note' => ['nullable', 'string', 'max:255'],
-            'province_id' => ['required', 'integer', 'exists:provinces,id'],
             'price' => ['required', 'integer', 'min:1'],
             'notes' => ['nullable', 'string', 'max:255'],
         ]);
 
         $tenant = TenantContext::tenant();
 
-        abort_unless(
-            $user->provinces()->whereKey($data['province_id'])->exists(),
-            422,
-            'المحافظة المختارة غير مفعلة لحسابك.'
-        );
-
-        $operatingBranch = $this->operatingBranchForUser($user, (int) $data['province_id']);
-        abort_unless($operatingBranch, 422, 'اختر محافظة مرتبطة بفرع نشط قبل إنشاء الطلب.');
+        $provinceId = $this->operatingProvinceForUser($user);
+        abort_unless($provinceId, 422, 'هذا الحساب غير مرتبط بمحافظة تشغيل مفعّلة.');
+        $operatingBranch = $this->operatingBranchForUser($user, $provinceId);
+        abort_unless($operatingBranch, 422, 'هذا الحساب غير مرتبط بفرع نشط.');
 
         $order = new Order($data);
         $order->tenant_id = $tenant->id;
@@ -227,13 +220,13 @@ class AppOrderController extends Controller
         $order->date = $request->input('date') ?: today();
         $order->status = 'pending';
         $order->workflow_stage = 'created';
-        $order->province_id = $data['province_id'];
+        $order->province_id = $provinceId;
         // These operational defaults are controlled from the dashboard.  A
         // merchant can never override them in a browser request.
         $availabilityMinutes = max(1, min((int) Setting::get('order_expiry_minutes', 30), 1440));
         $quote = app(PricingService::class)->quote(
             $user,
-            (int) $data['province_id'],
+            $provinceId,
             $data['order_type'] ?? null,
             $data['delivery_vehicle'],
             (int) ($data['weight_grams'] ?? 0),
@@ -288,23 +281,18 @@ class AppOrderController extends Controller
             'delivery_vehicle' => ['required', Rule::in(['normal', 'bike', 'sedan', 'suv', 'truck'])],
             'weight_grams' => ['nullable', 'integer', 'min:0', 'max:1000000'],
             'vehicle_note' => ['nullable', 'string', 'max:255'],
-            'province_id' => ['required', 'integer', 'exists:provinces,id'],
             'price' => ['required', 'integer', 'min:1'],
             'notes' => ['nullable', 'string', 'max:255'],
         ]);
 
-        abort_unless(
-            $request->user()->provinces()->whereKey($data['province_id'])->exists(),
-            422,
-            'المحافظة المختارة غير مفعلة لحسابك.'
-        );
-
-        $operatingBranch = $this->operatingBranchForUser($request->user(), (int) $data['province_id']);
-        abort_unless($operatingBranch, 422, 'اختر محافظة مرتبطة بفرع نشط قبل تعديل الطلب.');
+        $provinceId = $this->operatingProvinceForUser($request->user());
+        abort_unless($provinceId, 422, 'هذا الحساب غير مرتبط بمحافظة تشغيل مفعّلة.');
+        $operatingBranch = $this->operatingBranchForUser($request->user(), $provinceId);
+        abort_unless($operatingBranch, 422, 'هذا الحساب غير مرتبط بفرع نشط.');
 
         $quote = app(PricingService::class)->quote(
             $request->user(),
-            (int) $data['province_id'],
+            $provinceId,
             $data['order_type'] ?? null,
             $data['delivery_vehicle'],
             (int) ($data['weight_grams'] ?? 0),
@@ -319,6 +307,7 @@ class AppOrderController extends Controller
             'fee' => $quote['fee'],
             'return_fee' => $quote['return_fee'],
             'pricing_rule_id' => $quote['rule']?->id,
+            'province_id' => $provinceId,
             'branch_id' => $operatingBranch->id,
             'origin_branch_id' => $operatingBranch->id,
         ]);
@@ -473,6 +462,29 @@ class AppOrderController extends Controller
         return back()->with('success', 'تم إنشاء طلب جديد من الطلب المرتجع: '.$newOrder->track_no);
     }
 
+    /** Re-open an unclaimed pending order for a fresh courier offer window. */
+    public function republish(Request $request, Order $order)
+    {
+        $this->authorizeOrder($order, $request);
+        abort_unless($request->user()->role === 'merchant', 403, 'إعادة نشر الطلب متاحة للتاجر فقط.');
+        abort_unless($order->status === 'pending' && ! $order->courier_id, 422, 'يمكن إعادة نشر الطلبات قيد الانتظار وغير المقبولة فقط.');
+
+        $minutes = max(1, min((int) Setting::get('order_expiry_minutes', 30), 1440));
+        $order->forceFill(['pickup_deadline_at' => now()->addMinutes($minutes)])->save();
+
+        ActivityLog::create([
+            'tenant_id' => $order->tenant_id,
+            'user_id' => $request->user()->id,
+            'action' => 'order.republished',
+            'subject_type' => 'order',
+            'subject_id' => $order->id,
+            'data' => ['track_no' => $order->track_no],
+            'ip' => $request->ip(),
+        ]);
+
+        return back()->with('success', 'تمت إعادة نشر الطلب للمندوبين المتاحين.');
+    }
+
     public function claim(Request $request, Order $order)
     {
         $courier = $request->user();
@@ -529,6 +541,19 @@ class AppOrderController extends Controller
         // not have a branch assignment. The first active branch for their
         // authorised province is a safe one-time compatibility fallback.
         return $branches->orderBy('name_ar')->first();
+    }
+
+    private function operatingProvinceForUser(User $user): ?int
+    {
+        $provinceId = $user->provinces()->value('provinces.id');
+
+        if ($provinceId) {
+            return (int) $provinceId;
+        }
+
+        return $user->branch_id
+            ? Branch::withoutGlobalScopes()->whereKey($user->branch_id)->value('province_id')
+            : null;
     }
 
     /**

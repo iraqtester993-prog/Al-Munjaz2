@@ -18,7 +18,6 @@ const pickupLocationBusy = ref(false)
 const pickupLocationMessage = ref('')
 const pickupLocationError = ref('')
 const page = usePage()
-const provinces = computed(() => page.props.auth?.provinces || [])
 const locale = computed(() => page.props.locale || 'ar')
 
 const vehicleOptions = computed(() => [
@@ -51,7 +50,6 @@ const form = useForm({
     order_type: '',
     delivery_vehicle: 'normal',
     vehicle_note: '',
-    province_id: '',
     price: '',
     notes: '',
     date: '',
@@ -110,15 +108,6 @@ const priceInput = computed({
     set: (value) => { form.price = moneyDigits(value) },
 })
 
-function provinceName(province) {
-    const preferred = locale.value === 'en' ? 'en' : locale.value === 'ku' ? 'ku' : 'ar'
-
-    return province?.[`name_${preferred}`]
-        || province?.name_en
-        || province?.name_ar
-        || ''
-}
-
 watch(
     () => props.open,
     (open) => {
@@ -138,14 +127,12 @@ watch(
                 order_type: props.order.order_type || '',
                 delivery_vehicle: props.order.delivery_vehicle || 'normal',
                 vehicle_note: props.order.vehicle_note || '',
-                province_id: props.order.province_id || provinces.value[0]?.id || '',
                 price: props.order.price || '',
                 notes: props.order.notes || '',
                 date: props.order.date || '',
             })
         } else {
             form.reset()
-            form.province_id = provinces.value[0]?.id || ''
         }
         vehiclePickerOpen.value = false
         pickupLocationMessage.value = ''
@@ -258,7 +245,6 @@ function submit() {
         vehicle_note: form.vehicle_note,
         price: form.price,
         notes: form.notes,
-        province_id: form.province_id,
     }
     if (props.order) {
         form
@@ -358,14 +344,6 @@ function submit() {
                 <small v-if="pickupLocationMessage" class="pickup-location-message success">{{ pickupLocationMessage }}</small>
                 <small v-if="pickupLocationError || form.errors.pickup_latitude" class="pickup-location-message error">{{ pickupLocationError || form.errors.pickup_latitude }}</small>
             </section>
-            <div class="field" :class="{ 'has-error': form.errors.province_id }">
-                <label>{{ t('Delivery Governorate') }}</label>
-                <select v-model="form.province_id" required>
-                    <option disabled value="">{{ t('Choose Governorate') }}</option>
-                    <option v-for="province in provinces" :key="province.id" :value="province.id">{{ provinceName(province) }}</option>
-                </select>
-                <span v-if="form.errors.province_id" class="field-error">{{ form.errors.province_id }}</span>
-            </div>
             <div class="field">
                 <label>{{ t('Order Type') }}</label>
                 <input v-model="form.order_type" :placeholder="t('Order Type')" />

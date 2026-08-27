@@ -47,7 +47,7 @@ const returnFeeInput = computed({
 
 const filters = computed(() => {
     const list = [{ key: 'all', label: t('All') }]
-    for (const s of ['pending', 'approved', 'courier', 'delivered', 'returned', 'cancelled', 'damaged', 'rejected']) {
+    for (const s of ['pending', 'approved', 'courier', 'delivered', 'returned']) {
         list.push({ key: s, label: tStatus(s) })
     }
     return list
@@ -239,14 +239,8 @@ function canAct(order) {
 }
 
 function actionsFor(order) {
-    const acts = {
-        approved: { label: t('Accept'), next: 'approved' },
-        courier: { label: t('Start Delivery'), next: 'courier' },
-        delivered: { label: t('Mark Delivered'), next: 'delivered', kind: 'success' },
-        returned: { label: t('Mark Returned'), next: 'returned', kind: 'danger' },
-    }
     return canAct(order).map((s) => ({
-        label: s === 'approved' ? t('Accept') : s === 'courier' ? t('Start Delivery') : s === 'delivered' ? t('Mark Delivered') : t('Mark Returned'),
+        label: s === 'courier' ? t('Collect Order') : s === 'delivered' ? t('Mark Delivered') : t('Mark Returned'),
         next: s,
         kind: s === 'returned' ? 'danger' : s === 'delivered' ? 'success' : 'primary',
     }))
@@ -266,6 +260,22 @@ function recreateReturnedOrder(order) {
         preserveScroll: true,
         onSuccess: () => {
             selected.value = null
+        },
+        onFinish: () => (busy.value = null),
+    })
+}
+
+function republishOrder(order) {
+    if (busy.value) return
+
+    busy.value = order.id
+    router.post(route('app.orders.republish', order.id), {}, {
+        preserveScroll: true,
+        onSuccess: () => {
+            selected.value = {
+                ...selected.value,
+                pickup_deadline_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+            }
         },
         onFinish: () => (busy.value = null),
     })
@@ -317,10 +327,26 @@ function customerAddress(order) {
 }
 
 function canViewCustomerPhone(order) {
-    if (!props.isCourier) return true
+    return Boolean(order?.phone_revealed || order?.phone)
+}
 
-    return Boolean(order?.courier_id)
-        && ['courier', 'delivered', 'returned'].includes(order?.status)
+const deliverySteps = computed(() => ([
+    { status: 'pending', label: t('Pending') },
+    { status: 'approved', label: t('Approved') },
+    { status: 'courier', label: t('With Courier') },
+    { status: 'delivered', label: t('Delivered') },
+    { status: 'returned', label: t('Returned') },
+]))
+
+function deliveryStepIndex(order) {
+    const index = deliverySteps.value.findIndex((step) => step.status === order?.status)
+    return index < 0 ? 0 : index
+}
+
+function whatsappUrl(phone) {
+    if (!phone) return null
+    const digits = String(phone).replace(/\D/g, '')
+    return `https://wa.me/${digits.startsWith('0') ? `964${digits.slice(1)}` : digits}`
 }
 
 function pickupRemaining(order) {
@@ -503,35 +529,28 @@ onUnmounted(() => window.clearInterval(ticker))
             </button>
         </template>
 
-        <SheetModal :open="!!selected" :title="selected?.track_no" :subtitle="customerName(selected)" @close="selected = null">
+        <SheetModal :open="!!selected" @close="selected = null">
             <template v-if="selected">
-                <div class="detail-row">
-                    <span class="text-muted">{{ t('Status') }}</span>
-                    <StatusBadge :status="selected.status" />
-                </div>
+                <section class="order-detail-status">
+                    <div class="order-detail-status-head">
+                        <StatusBadge :status="selected.status" />
+                        <span class="order-detail-track mono">{{ selected.track_no }}</span>
+                        <span class="order-detail-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8"/></svg></span>
+                    </div>
+                    <div class="order-detail-steps" :style="{ '--active-step': deliveryStepIndex(selected) }">
+                        <span v-for="(step, index) in deliverySteps" :key="step.status" class="order-detail-step" :class="{ active: index === deliveryStepIndex(selected), done: index < deliveryStepIndex(selected) }"><i>{{ index + 1 }}</i><b>{{ step.label }}</b></span>
+                    </div>
+                </section>
+                <section class="order-detail-section">
+                    <h3>{{ t('Order Details') }}</h3>
                 <div class="detail-row">
                     <span class="text-muted">{{ t('Customer') }}</span>
                     <b>{{ customerName(selected) }}</b>
                 </div>
                 <div class="detail-row">
                     <span class="text-muted">{{ t('Phone') }}</span>
-                    <b v-if="canViewCustomerPhone(selected)" class="mono">{{ selected.phone }}{{ selected.phone2 ? ' / ' + selected.phone2 : '' }}</b>
-                    <b v-else class="customer-phone-locked" :aria-label="t('Phone')">•••••••••••</b>
+                    <b class="mono">{{ selected.phone }}{{ selected.phone2 ? ' / ' + selected.phone2 : '' }}</b>
                 </div>
-                <section v-if="isCourier && hasPickupLocation(selected)" class="mobile-pickup-location-card">
-                    <div class="mobile-pickup-location-head">
-                        <span class="mobile-pickup-location-icon" aria-hidden="true">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 5.2-8 11-8 11S4 15.2 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" /></svg>
-                        </span>
-                        <span><small>{{ t('Merchant pickup location') }}</small><b>{{ pickupLocationLabel(selected, t('Merchant pickup location')) }}</b></span>
-                    </div>
-                    <p v-if="selected.status !== 'pending'">{{ t('Open this point in a navigation app installed on your device.') }}</p>
-                    <p v-else>{{ t('Accept the order to open navigation.') }}</p>
-                    <a v-if="selected.status !== 'pending'" class="mobile-pickup-location-action" :href="pickupNavigationHref(selected)">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 3-7.5 18-3.7-7.8L2 9.5 21 3Z" /><path d="m9.8 13.2 4.4-4.4" /></svg>
-                        {{ t('Open navigation apps') }}
-                    </a>
-                </section>
                 <div class="detail-row">
                     <span class="text-muted">{{ t('Address') }}</span>
                     <b>{{ customerAddress(selected) }}</b>
@@ -548,49 +567,16 @@ onUnmounted(() => window.clearInterval(ticker))
                     <span class="text-muted">{{ t('Price') }}</span>
                     <b class="mono">{{ fmt(selected.price) }} {{ t('IQD') }}</b>
                 </div>
-                <div class="detail-row">
-                    <span class="text-muted">{{ t('Date') }}</span>
-                    <b>{{ selected.date }}</b>
-                </div>
-                <div v-if="selected.courier" class="detail-row">
-                    <span class="text-muted">{{ t('Courier') }}</span>
-                    <b>{{ selected.courier.name }}</b>
-                </div>
-
-                <section class="mobile-operational-section">
-                    <h4>{{ t('Operational Details') }}</h4>
-                    <div class="detail-row">
-                        <span class="text-muted">{{ t('Workflow stage') }}</span>
-                        <b>{{ tStage(selected.workflow_stage) }}</b>
-                    </div>
-                    <div v-if="selected.origin_branch || selected.destination_branch" class="mobile-branch-route">
-                        <span class="mobile-route-label">{{ t('Branch Route') }}</span>
-                        <b>{{ routeText(selected) }}</b>
-                        <small v-if="selected.origin_branch">{{ t('Origin / pickup branch') }}: {{ branchName(selected.origin_branch) }}</small>
-                        <small v-if="selected.destination_branch">{{ t('Destination / delivery branch') }}: {{ branchName(selected.destination_branch) }}</small>
-                    </div>
                 </section>
 
-                <section class="mobile-operational-section">
-                    <h4>{{ t('Operational Timeline') }}</h4>
-                    <div v-if="selected.timeline?.length" class="mobile-order-timeline">
-                        <div v-for="(event, index) in selected.timeline" :key="`${event.kind}-${event.at}-${index}`" class="mobile-timeline-event">
-                            <div class="mobile-timeline-rail">
-                                <span class="mobile-timeline-marker" :class="`is-${event.kind}`">
-                                    <svg v-if="event.kind === 'movement'" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10M7 17h10M17 4l3 3-3 3M7 14l-3 3 3 3"/></svg>
-                                    <svg v-else-if="event.kind === 'created'" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-                                    <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>
-                                </span>
-                            </div>
-                            <div class="mobile-timeline-copy">
-                                <b>{{ timelineTitle(event) }}</b>
-                                <p v-if="timelineDescription(event)">{{ timelineDescription(event) }}</p>
-                                <time>{{ formatDateTime(event.at) }}</time>
-                            </div>
-                        </div>
-                    </div>
-                    <div v-else class="empty-hint">{{ t('No operational activity yet.') }}</div>
+                <a v-if="whatsappUrl(selected.phone)" class="customer-whatsapp" :href="whatsappUrl(selected.phone)" target="_blank" rel="noopener">{{ t('Customer WhatsApp') }}</a>
+                <section v-if="selected.merchant" class="courier-merchant-card">
+                    <span class="merchant-card-label">{{ t('Merchant') }}</span>
+                    <div class="merchant-card-profile"><span class="merchant-avatar">{{ selected.merchant.name?.slice(0, 1) }}</span><span><b>{{ selected.merchant.name }}</b><small v-if="selected.merchant.address" class="merchant-info-row">{{ selected.merchant.address }}</small><small v-if="selected.merchant.phone" class="merchant-info-row mono">{{ selected.merchant.phone }}</small></span></div>
+                    <a v-if="hasPickupLocation(selected)" class="merchant-location-row" :href="pickupNavigationHref(selected)">{{ t('Merchant location') }} · {{ pickupLocationLabel(selected, t('Merchant pickup location')) }}</a>
+                    <div class="merchant-card-actions"><a v-if="whatsappUrl(selected.merchant.phone)" :href="whatsappUrl(selected.merchant.phone)" target="_blank" rel="noopener">{{ t('WhatsApp') }}</a><button type="button" @click="openOrderChat(selected)">{{ t('Chat') }}</button></div>
                 </section>
+                <section v-if="selected.status === 'approved' && pickupText(selected)" class="pickup-countdown"><b>{{ t('Time to reach the merchant') }}</b><strong class="mono">{{ pickupText(selected) }}</strong></section>
 
                 <section v-if="returnFlow?.orderId === selected.id" class="return-flow">
                     <template v-if="returnFlow.step === 'choice'">
@@ -636,7 +622,7 @@ onUnmounted(() => window.clearInterval(ticker))
                     </template>
                 </section>
 
-                <div v-else-if="actionsFor(selected).length" class="deliv-actions" style="margin-top: 6px">
+                <div v-else-if="actionsFor(selected).length" class="deliv-actions order-detail-actions">
                     <button v-for="a in actionsFor(selected)" :key="a.next" class="mini-btn" :class="a.kind" :disabled="busy === selected.id" @click="handleAction(selected, a.next)">
                         <span v-if="busy === selected.id" class="loader"></span>
                         {{ a.label }}
@@ -660,6 +646,10 @@ onUnmounted(() => window.clearInterval(ticker))
                     <span v-else>{{ t('Add New Order') }}</span>
                 </button>
 
+                <button v-if="!isCourier && selected.status === 'pending' && !selected.courier_id" class="order-recreate" type="button" :disabled="busy === selected.id" @click="republishOrder(selected)">
+                    <span v-if="busy === selected.id" class="loader"></span><span v-else>{{ t('Republish Order') }}</span>
+                </button>
+
                 <button v-if="!isCourier && selected.status === 'pending'" class="btn btn-ghost" style="width: 100%; margin-top: 10px" @click="openEdit">{{ t('Edit') }}</button>
             </template>
         </SheetModal>
@@ -672,6 +662,7 @@ onUnmounted(() => window.clearInterval(ticker))
 .orders-overview-title{margin:3px 0 18px;color:var(--ink);font-size:19px;font-weight:950}.merchant-status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.merchant-status-card{display:grid;min-height:164px;place-items:center;align-content:center;gap:10px;padding:16px 10px;border:1.5px solid var(--border);border-radius:25px;background:var(--surface);color:var(--ink);font:inherit;text-align:center;cursor:pointer;transition:transform .15s,box-shadow .15s}.merchant-status-card:active{transform:scale(.985);box-shadow:0 3px 10px rgba(11,110,104,.08)}.merchant-status-icon{width:62px;height:62px;display:grid;place-items:center;border-radius:18px}.merchant-status-card strong{font-size:26px;font-weight:950;line-height:1}.merchant-status-card b{color:var(--ink-soft);font-size:12px;font-weight:900}.merchant-status-card.pending .merchant-status-icon{background:#FFF2C7;color:#E88400}.merchant-status-card.pending strong{color:#D97706}.merchant-status-card.approved .merchant-status-icon{background:#E0F2FE;color:#0EA5E9}.merchant-status-card.approved strong{color:#0EA5E9}.merchant-status-card.courier .merchant-status-icon{background:#DBEAFE;color:#2563EB}.merchant-status-card.courier strong{color:#2563EB}.merchant-status-card.delivered .merchant-status-icon{background:#DCFCE7;color:#16A34A}.merchant-status-card.delivered strong{color:#16A34A}.merchant-status-card.returned .merchant-status-icon{background:#FEE2E2;color:#DC2626}.merchant-status-card.returned strong{color:#DC2626}.orders-list-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}.orders-back{display:grid;place-items:center;width:36px;height:36px;border:0;border-radius:10px;background:var(--surface-2);color:var(--ink);cursor:pointer}.orders-list-head>b{flex:1;font-size:14px;font-weight:900}.orders-list-head>span{padding:3px 10px;border-radius:20px;background:var(--surface-2);color:var(--ink-soft);font-size:11px;font-weight:800}
 .mobile-order-stack{display:grid;gap:10px}.mobile-order-card{overflow:hidden;border:1.5px solid color-mix(in srgb,var(--primary) 35%,var(--border));border-radius:16px;background:linear-gradient(145deg,color-mix(in srgb,var(--primary-tint) 75%,var(--surface)),var(--surface));box-shadow:0 4px 13px rgba(11,110,104,.08);cursor:pointer}.mobile-order-head{display:flex;align-items:center;gap:10px;padding:12px 13px 8px}.mobile-order-head .order-mid{flex:1}.mobile-order-head .order-mid b{font-size:13px}.mobile-order-head :deep(.badge){flex:none}.mobile-order-summary{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 13px 10px}.mobile-order-summary strong{color:var(--primary-strong);font-size:16px;font-weight:900}.mobile-order-summary small{color:var(--ink-faint);font-family:var(--font);font-size:10px}.mobile-order-tags{display:flex;align-items:center;justify-content:flex-end;gap:5px;min-width:0;flex-wrap:wrap}.mobile-vehicle-badge,.mobile-order-type-badge{display:inline-flex;align-items:center;gap:4px;max-width:125px;padding:5px 9px;border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border));border-radius:9px;background:color-mix(in srgb,var(--primary-tint) 75%,var(--surface));color:var(--primary-strong);font-size:10px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mobile-order-type-badge{border-color:color-mix(in srgb,var(--accent) 26%,var(--border));background:color-mix(in srgb,var(--accent-tint) 70%,var(--surface));color:var(--accent)}.mobile-order-note{margin:0 13px 10px;padding:6px 8px;border-radius:8px;background:var(--surface-2);color:var(--ink-soft);font-size:10px;font-weight:700}.mobile-order-note b{color:var(--primary-strong)}.mobile-order-timer{display:flex;align-items:center;gap:5px;padding:8px 12px;border-top:1px solid var(--border);background:var(--surface-2);color:var(--success);font-size:10px;font-weight:900}.mobile-order-timer i{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 7px color-mix(in srgb,var(--success) 70%,transparent)}
 .mobile-pickup-location-card{display:grid;gap:8px;margin:14px 0;padding:13px;border:1.5px solid color-mix(in srgb,var(--success) 42%,var(--border));border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--success-tint) 72%,var(--surface)),var(--surface))}.mobile-pickup-location-head{display:flex;align-items:center;gap:9px}.mobile-pickup-location-icon{display:grid;place-items:center;width:38px;height:38px;flex:none;border-radius:11px;background:var(--success);color:#fff}.mobile-pickup-location-head span:last-child{display:grid;gap:2px;min-width:0}.mobile-pickup-location-head small{color:var(--ink-faint);font-size:9.5px;font-weight:800}.mobile-pickup-location-head b{overflow:hidden;color:var(--ink);font-size:12px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.mobile-pickup-location-card p{margin:0;color:var(--ink-soft);font-size:10px;font-weight:700;line-height:1.55}.mobile-pickup-location-action{display:flex;align-items:center;justify-content:center;gap:6px;min-height:38px;border-radius:10px;background:var(--primary);color:#fff;font-size:10.5px;font-weight:900;text-decoration:none;box-shadow:0 4px 10px rgba(11,110,104,.16)}
+.order-detail-status{display:grid;gap:16px;padding:4px 0 18px;border-bottom:1px solid var(--border)}.order-detail-status-head{display:flex;align-items:center;gap:9px}.order-detail-status-head :deep(.badge){flex:none}.order-detail-track{margin-inline-start:auto;color:var(--primary-strong);font-size:15px;font-weight:950}.order-detail-icon{display:grid;place-items:center;width:35px;height:35px;border-radius:11px;background:var(--primary-tint);color:var(--primary-strong)}.order-detail-steps{position:relative;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px}.order-detail-steps::before{position:absolute;top:17px;inset-inline:8%;height:2px;background:var(--border);content:""}.order-detail-step{position:relative;z-index:1;display:grid;justify-items:center;gap:6px;color:var(--ink-faint);font-size:8.5px;font-weight:900;text-align:center}.order-detail-step i{display:grid;place-items:center;width:33px;height:33px;border:2px solid var(--border);border-radius:50%;background:var(--surface);font-style:normal;color:var(--ink-soft)}.order-detail-step.done i{border-color:var(--primary);background:var(--primary);color:#fff}.order-detail-step.active i{border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}.order-detail-step.active{color:var(--ink)}.order-detail-section{padding:16px 0 2px}.order-detail-section h3{margin:0 0 13px;color:var(--ink);font-size:15px;font-weight:950}.order-detail-section .detail-row{padding:7px 0}.customer-whatsapp{display:flex;align-items:center;justify-content:center;min-height:42px;margin:12px 0;border-radius:11px;background:#e0f0eb;color:#079050;font-size:12px;font-weight:900;text-decoration:none}.courier-merchant-card{display:grid;gap:10px;margin:14px 0;padding:13px;border:1.5px solid color-mix(in srgb,var(--primary) 34%,var(--border));border-radius:17px;background:color-mix(in srgb,var(--primary-tint) 66%,var(--surface))}.merchant-card-label{color:var(--primary-strong);font-size:11px;font-weight:950}.merchant-card-profile{display:flex;align-items:center;gap:10px}.merchant-card-profile>span:last-child{display:grid;gap:3px;min-width:0}.merchant-card-profile b{font-size:14px;color:var(--ink)}.merchant-avatar{display:grid;place-items:center;order:-1;width:43px;height:43px;flex:none;border-radius:50%;background:var(--primary);color:#fff;font-size:18px;font-weight:950}.merchant-info-row{overflow:hidden;color:var(--ink-soft);font-size:10px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.merchant-location-row{display:block;overflow:hidden;padding:9px;border-radius:10px;background:color-mix(in srgb,var(--success-tint) 74%,var(--surface));color:var(--success);font-size:10.5px;font-weight:900;text-decoration:none;text-overflow:ellipsis;white-space:nowrap}.merchant-card-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}.merchant-card-actions>*{display:grid;place-items:center;min-height:38px;border:0;border-radius:10px;background:var(--primary);color:#fff;font:900 11px var(--font);text-decoration:none;cursor:pointer}.merchant-card-actions a{background:color-mix(in srgb,var(--success-tint) 72%,var(--surface));color:var(--success)}.pickup-countdown{display:grid;justify-items:center;gap:6px;margin:14px 0;padding:13px;border:1px solid #edc980;border-radius:15px;background:#fff4de;color:var(--ink)}.pickup-countdown b{font-size:12px}.pickup-countdown strong{color:#c58315;font-size:26px;font-weight:950}.order-detail-actions{display:grid;gap:8px;margin-top:12px}.order-detail-actions .mini-btn{width:100%;min-height:48px;border-radius:13px;font-size:13px}
 .order-complaint{display:flex;align-items:center;justify-content:center;width:100%;margin-top:10px;padding:9px 12px;border:1px solid color-mix(in srgb,var(--danger) 24%,transparent);border-radius:10px;background:color-mix(in srgb,var(--danger-tint) 82%,transparent);color:var(--danger);font:inherit;font-size:11px;font-weight:900;cursor:pointer}
 .order-chat{border-color:color-mix(in srgb,var(--primary) 28%,transparent);background:var(--primary-tint);color:var(--primary-strong)}
 .customer-phone-locked{letter-spacing:1px;color:var(--ink-faint);font-size:12px}

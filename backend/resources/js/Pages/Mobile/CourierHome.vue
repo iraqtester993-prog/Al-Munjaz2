@@ -104,12 +104,8 @@ function canClaim(order) {
     return props.stats.onDuty && Number(props.stats.budget || 0) >= Number(order.price || 0)
 }
 
-// A new job is only a pickup offer. The customer's number becomes visible
-// after the courier has moved the parcel into their custody, never while an
-// offer is merely being reviewed.
 function canViewCustomerPhone(order) {
-    return Boolean(order?.courier_id)
-        && ['courier', 'delivered', 'returned'].includes(order?.status)
+    return Boolean(order?.phone_revealed || order?.phone)
 }
 
 function openDetails(order) {
@@ -275,8 +271,7 @@ onUnmounted(() => window.clearInterval(ticker))
                     </div>
                     <div v-if="hasPickupLocation(selected)" class="merchant-location-row">
                         <span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 10c0 5.2-8 11-8 11S4 15.2 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{{ pickupLocationLabel(selected, t('Merchant pickup location')) }}</span>
-                        <a v-if="selected.courier_id" :href="pickupNavigationHref(selected)">{{ t('Open navigation apps') }}</a>
-                        <small v-else>{{ t('Accept the order to open navigation.') }}</small>
+                        <a :href="pickupNavigationHref(selected)">{{ t('Merchant location') }}</a>
                     </div>
                     <div class="merchant-card-actions">
                         <a v-if="whatsappUrl(selected.merchant.phone)" :href="whatsappUrl(selected.merchant.phone)" target="_blank" rel="noopener">{{ t('WhatsApp') }}</a>
