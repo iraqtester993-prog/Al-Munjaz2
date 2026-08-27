@@ -18,20 +18,20 @@ const selectedCourierId = ref('')
 const adjustmentOpen = ref(false)
 
 const labels = {
-    title: { ar: 'نقاط الولاء', en: 'Loyalty points', ku: 'خاڵەکانی دڵسۆزی' },
-    eyebrow: { ar: 'برنامج الولاء', en: 'Loyalty programme', ku: 'بەرنامەی دڵسۆزی' },
-    subtitle: { ar: 'تحكم بمكافآت إكمال الطلبات وسجل نقاط المندوبين من مكان واحد. كل حركة تحفظ كسجل غير قابل للتعديل.', en: 'Control completed-delivery rewards and courier point history in one place. Every movement is preserved as an immutable ledger entry.', ku: 'پاداشتی تەواوکردنی داواکاری و مێژووی خاڵەکانی گەیەنەر لە یەک شوێن بەڕێوەببە. هەر جوڵەیەک تۆمارێکی نەگۆڕە.' },
+    title: { ar: 'نقاط المندوب', en: 'Courier points', ku: 'خاڵەکانی گەیەنەر' },
+    eyebrow: { ar: 'نظام نقاط المندوب', en: 'Courier points system', ku: 'سیستەمی خاڵی گەیەنەر' },
+    subtitle: { ar: 'تحكم بنقاط المندوبين وسجل حركاتهم من مكان واحد. كل حركة تحفظ كسجل غير قابل للتعديل، والاستبدال سيكون متاحاً لاحقاً.', en: 'Manage courier points and their movement history in one place. Every movement is preserved in an immutable ledger; redemption can be enabled later.', ku: 'خاڵەکانی گەیەنەران و مێژووی جوڵەکانیان لە یەک شوێن بەڕێوەببە. هەر جوڵەیەک لە تۆمارێکی نەگۆڕەدا دەپارێزرێت و بەکارهێنانی خاڵ دواتر بەردەست دەبێت.' },
     refresh: { ar: 'تحديث', en: 'Refresh', ku: 'نوێکردنەوە' },
     activeCouriers: { ar: 'مندوبون نشطون', en: 'Active couriers', ku: 'گەیەنەرانی چالاک' },
-    circulation: { ar: 'إجمالي النقاط', en: 'Points in circulation', ku: 'کۆی خاڵەکان' },
-    rewarded: { ar: 'لديهم رصيد', en: 'With a balance', ku: 'خاوەن باڵانس' },
+    circulation: { ar: 'إجمالي نقاط المندوبين', en: 'Courier points in circulation', ku: 'کۆی خاڵەکانی گەیەنەران' },
+    rewarded: { ar: 'مندوبون لديهم نقاط', en: 'Couriers with points', ku: 'گەیەنەرانی خاوەن خاڵ' },
     ledger: { ar: 'قيود السجل', en: 'Ledger entries', ku: 'تۆمارەکانی دفتر' },
-    settings: { ar: 'مكافأة إكمال الطلب', en: 'Completed delivery reward', ku: 'پاداشتی تەواوکردنی داواکاری' },
-    settingsHint: { ar: 'عدد النقاط التي تضاف تلقائياً للمندوب عند تحويل الطلب إلى «تم التسليم». ضع 0 لإيقاف المكافأة دون حذف السجل السابق.', en: 'Points credited automatically when an order reaches Delivered. Set 0 to pause future awards without deleting history.', ku: 'ژمارەی خاڵەکان کە خۆکار بۆ گەیەنەر زیاد دەکرێت کاتێک داواکاری دەبێتە تەسلیمکراو. ٠ دابنێ بۆ وەستاندنی پاداشتی داهاتوو بەبێ سڕینەوەی مێژوو.' },
-    perDelivery: { ar: 'نقطة لكل طلب مكتمل', en: 'Points per completed delivery', ku: 'خاڵ بۆ هەر داواکاری تەواوکراو' },
+    settings: { ar: 'نقاط لكل طلب مسلّم', en: 'Points per delivered order', ku: 'خاڵ بۆ هەر داواکاری گەیەنراو' },
+    settingsHint: { ar: 'عدد نقاط المندوب التي تضاف تلقائياً عند تحويل الطلب إلى «تم التسليم». ضع 0 لإيقاف الإضافة التلقائية دون حذف السجل السابق.', en: 'Courier points credited automatically when an order reaches Delivered. Set 0 to pause future awards without deleting history.', ku: 'ژمارەی خاڵەکانی گەیەنەر کە خۆکار زیاد دەکرێت کاتێک داواکاری دەبێتە گەیەنراو. ٠ دابنێ بۆ وەستاندنی زیادکردنی خۆکار بەبێ سڕینەوەی مێژوو.' },
+    perDelivery: { ar: 'نقطة لكل طلب مسلّم', en: 'Points per delivered order', ku: 'خاڵ بۆ هەر داواکاری گەیەنراو' },
     save: { ar: 'حفظ الإعداد', en: 'Save setting', ku: 'پاشەکەوتکردنی ڕێکخستن' },
-    manual: { ar: 'تعديل يدوي موثق', en: 'Audited manual adjustment', ku: 'دەستکاریکردنی دەستی بە تۆمار' },
-    manualHint: { ar: 'إضافة أو خصم نقاط بمبرر واضح. لا يمكن تعديل أو حذف أي قيد بعد ترحيله.', en: 'Credit or debit points with a clear reason. Posted ledger entries cannot be edited or deleted.', ku: 'خاڵ زیاد بکە یان کەم بکە بە هۆکارێکی ڕوون. تۆمارەکان دوای تۆمارکردن ناگۆڕدرێن و ناسڕدرێن.' },
+    manual: { ar: 'تعديل نقاط المندوب', en: 'Courier points adjustment', ku: 'دەستکاریکردنی خاڵی گەیەنەر' },
+    manualHint: { ar: 'إضافة أو خصم نقاط المندوب بمبرر واضح. لا يمكن تعديل أو حذف أي قيد بعد ترحيله.', en: 'Credit or debit courier points with a clear reason. Posted ledger entries cannot be edited or deleted.', ku: 'خاڵی گەیەنەر زیاد بکە یان کەم بکە بە هۆکارێکی ڕوون. تۆمارەکان دوای تۆمارکردن ناگۆڕدرێن و ناسڕدرێن.' },
     selectCourier: { ar: 'اختر المندوب', en: 'Select courier', ku: 'گەیەنەر هەڵبژێرە' },
     chooseCourier: { ar: 'اختر حساباً نشطاً', en: 'Choose an active account', ku: 'هەژمارێکی چالاک هەڵبژێرە' },
     add: { ar: 'إضافة نقاط', en: 'Add points', ku: 'زیادکردنی خاڵ' },
@@ -48,7 +48,7 @@ const labels = {
     search: { ar: 'ابحث بالاسم أو الهاتف', en: 'Search name or phone', ku: 'بە ناو یان ژمارەی مۆبایل بگەڕێ' },
     noCouriers: { ar: 'لا توجد حسابات مندوبين نشطة مطابقة للبحث.', en: 'No active courier accounts match this search.', ku: 'هیچ هەژماری گەیەنەری چالاک لەم گەڕانە ناگونجێت.' },
     adjust: { ar: 'تعديل الرصيد', en: 'Adjust balance', ku: 'دەستکاریکردنی باڵانس' },
-    history: { ar: 'آخر حركات نقاط الولاء', en: 'Latest loyalty movements', ku: 'دوایین جوڵەکانی خاڵی دڵسۆزی' },
+    history: { ar: 'آخر حركات نقاط المندوب', en: 'Latest courier point movements', ku: 'دوایین جوڵەکانی خاڵی گەیەنەر' },
     historyHint: { ar: 'هذا سجل تدقيقي للقراءة فقط؛ التصحيح يتم بقيد جديد معاكس.', en: 'This is a read-only audit trail; corrections are made with a new compensating entry.', ku: 'ئەمە تۆمارێکی تەنها بۆ خوێندنەوەیە؛ ڕاستکردنەوە بە تۆمارێکی نوێی پێچەوانە ئەنجام دەدرێت.' },
     date: { ar: 'التاريخ', en: 'Date', ku: 'بەروار' },
     courier: { ar: 'المندوب', en: 'Courier', ku: 'گەیەنەر' },
@@ -56,7 +56,7 @@ const labels = {
     source: { ar: 'المصدر', en: 'Source', ku: 'سەرچاوە' },
     note: { ar: 'الملاحظة', en: 'Note', ku: 'تێبینی' },
     after: { ar: 'الرصيد بعد الحركة', en: 'Balance after', ku: 'باڵانس دوای جوڵە' },
-    noEntries: { ar: 'لا توجد حركات نقاط مسجلة بعد.', en: 'No loyalty movements have been recorded yet.', ku: 'هێشتا هیچ جوڵەی خاڵێک تۆمار نەکراوە.' },
+    noEntries: { ar: 'لا توجد حركات نقاط مندوب مسجلة بعد.', en: 'No courier point movements have been recorded yet.', ku: 'هێشتا هیچ جوڵەی خاڵی گەیەنەر تۆمار نەکراوە.' },
     deliveryReward: { ar: 'مكافأة إتمام طلب', en: 'Delivery reward', ku: 'پاداشتی تەواوکردنی داواکاری' },
     adminCredit: { ar: 'إضافة إدارية', en: 'Administrative credit', ku: 'زیادکردنی بەڕێوەبردن' },
     adminDebit: { ar: 'خصم إداري', en: 'Administrative debit', ku: 'کەمکردنەوەی بەڕێوەبردن' },
@@ -74,14 +74,18 @@ function roleLabel(role) {
 }
 
 function formatted(value) {
-    return new Intl.NumberFormat(locale.value === 'ku' ? 'ku' : locale.value === 'en' ? 'en-US' : 'ar-IQ').format(Number(value) || 0)
+    return new Intl.NumberFormat('en-US', {
+        useGrouping: true,
+        maximumFractionDigits: 0,
+        numberingSystem: 'latn',
+    }).format(Number(value) || 0)
 }
 
 function dateLabel(value) {
     if (!value) return '—'
     try {
         return new Intl.DateTimeFormat(locale.value === 'en' ? 'en-GB' : locale.value === 'ku' ? 'ku' : 'ar-IQ', {
-            dateStyle: 'medium', timeStyle: 'short',
+            dateStyle: 'medium', timeStyle: 'short', numberingSystem: 'latn',
         }).format(new Date(value))
     } catch {
         return value

@@ -41,11 +41,31 @@ class User extends Authenticatable
 
     public const STATUSES = ['pending', 'active', 'suspended', 'rejected'];
 
+    /**
+     * Explicit, human-readable capabilities for a branch dashboard account.
+     * An administrator is always allowed every capability; these values only
+     * constrain owner/manager accounts to their authorised branches.
+     *
+     * @var array<int, string>
+     */
+    public const DASHBOARD_PERMISSIONS = [
+        'overview',
+        'orders',
+        'merchants',
+        'couriers',
+        'courier_locations',
+        'content',
+        'notifications',
+        'finance',
+        'settings',
+    ];
+
     protected $fillable = [
         'tenant_id', 'branch_id', 'name', 'username', 'email', 'phone', 'password',
         'role', 'status', 'vehicle', 'shop_name', 'address', 'identity_number', 'theme', 'locale',
         'is_online', 'last_active_at',
         'current_latitude', 'current_longitude', 'location_accuracy_meters', 'location_updated_at',
+        'dashboard_permissions',
     ];
 
     protected $hidden = [
@@ -66,6 +86,7 @@ class User extends Authenticatable
             'identity_number' => 'encrypted',
             'is_online' => 'boolean',
             'password' => 'hashed',
+            'dashboard_permissions' => 'array',
         ];
     }
 
@@ -144,5 +165,20 @@ class User extends Authenticatable
     public function isActiveUser(): bool
     {
         return $this->status === 'active';
+    }
+
+    /**
+     * Platform administrators are the system owners and never receive a
+     * mutable per-screen restriction.  Branch accounts are restricted to an
+     * explicit allow-list so an account created for one function cannot gain
+     * access merely by discovering a route.
+     */
+    public function canUseDashboardPermission(string $permission): bool
+    {
+        if ($this->isAdmin() || $this->role === 'owner') {
+            return true;
+        }
+
+        return in_array($permission, $this->dashboard_permissions ?? [], true);
     }
 }

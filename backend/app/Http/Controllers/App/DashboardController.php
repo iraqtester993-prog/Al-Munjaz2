@@ -7,6 +7,8 @@ use App\Models\MobileSlide;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\CourierOrderAccess;
+use App\Services\FinanceRequestService;
+use App\Services\CustomerContactVisibility;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -21,7 +23,10 @@ class DashboardController extends Controller
             'stats' => $this->statsFor($user, $isCourier),
             'recentOrders' => $this->recentOrders($user, $isCourier),
             'availableOrders' => $isCourier ? $this->availableOrders($user) : [],
-            'heroSlides' => $this->heroSlides($isCourier),
+            'heroSlides' => $this->heroSlides(
+                $isCourier,
+                (int) ($request->session()->get('operating_branch_id') ?: $user->branch_id),
+            ),
         ]);
     }
 
@@ -47,7 +52,13 @@ class DashboardController extends Controller
             $wallet = $user->wallet;
 
             return [
-                'collectedToday' => $todayDelivered->sum('price'),
+                // A courier collection is the delivery value after the
+                // platform fee. The Qi wallet itself is debited at delivery
+                // by the workflow service, while this figure reflects cash
+                // the courier actually retains from completed jobs.
+                'collectedToday' => $todayDelivered->sum(
+                    fn (Order $order): int => FinanceRequestService::netCollectionForOrder($order)
+                ),
                 'deliveredToday' => $todayDelivered->count(),
                 'onDuty' => (bool) $user->is_online,
                 'available' => app(CourierOrderAccess::class)->available($user)->count(),
@@ -84,11 +95,15 @@ class DashboardController extends Controller
             'courier:id,name,phone',
             'merchant:id,name,phone,address',
             'tenant:id,name',
-        ])->latest('id')->limit(5)->get()->map(fn (Order $o) => [
+        ])->latest('id')->limit(5)->get()->map(function (Order $o) use ($isCourier, $user): array {
+            $phoneRevealed = app(CustomerContactVisibility::class)->canReveal($o, $user);
+
+            return [
             'id' => $o->id,
             'track_no' => $o->track_no,
             ...$this->localizedOrderCardText($o),
-            'phone' => $o->phone,
+            'phone' => $phoneRevealed ? $o->phone : null,
+            'phone_revealed' => $phoneRevealed,
             'delivery_vehicle' => $o->delivery_vehicle,
             'price' => $o->price,
             'status' => $o->status,
@@ -102,7 +117,8 @@ class DashboardController extends Controller
             'merchant' => $o->merchant
                 ? ['name' => $o->merchant->name, 'phone' => $o->merchant->phone, 'address' => $o->merchant->address]
                 : ($o->tenant ? ['name' => $o->tenant->name, 'phone' => null, 'address' => null] : null),
-        ])->all();
+            ];
+        })->all();
     }
 
     protected function availableOrders(User $user): array
@@ -117,7 +133,11 @@ class DashboardController extends Controller
                 'id' => $order->id,
                 'track_no' => $order->track_no,
                 ...$this->localizedOrderCardText($order),
-                'phone' => $order->phone,
+                // An available or merely assigned order must not disclose a
+                // customer's number. It appears after the courier marks the
+                // parcel as collected (status courier / picked_at).
+                'phone' => null,
+                'phone_revealed' => false,
                 'order_type' => $order->order_type,
                 'delivery_vehicle' => $order->delivery_vehicle ?: 'normal',
                 'vehicle_note' => $order->vehicle_note,
@@ -164,10 +184,10 @@ class DashboardController extends Controller
         ];
     }
 
-    protected function heroSlides(bool $isCourier): array
+    protected function heroSlides(bool $isCourier, int $branchId = 0): array
     {
         $publishedSlides = MobileSlide::query()
-            ->publishedFor($isCourier ? 'courier' : 'merchant')
+            ->publishedFor($isCourier ? 'courier' : 'merchant', $branchId ?: null)
             ->get()
             ->map(fn (MobileSlide $slide) => $slide->mobilePayload())
             ->values()
@@ -193,4 +213,5 @@ class DashboardController extends Controller
             ['title_ar' => 'إدارة طلباتك من مكان واحد', 'title_en' => 'Manage every order in one place', 'title_ku' => 'هەموو داواکارییەکانت لە یەک شوێن بەڕێوەببە', 'body_ar' => 'راجع الرصيد والتقارير والرسائل من التطبيق.', 'body_en' => 'Review balance, reports, and messages from the app.', 'body_ku' => 'باڵانس، ڕاپۆرت و نامەکانت لە ئەپەکەوە بپشکنە.', 'tag_ar' => 'تطبيق التاجر', 'tag_en' => 'Merchant App', 'tag_ku' => 'ئەپی بازرگان', 'accent' => false, 'image_url' => null],
         ];
     }
+
 }

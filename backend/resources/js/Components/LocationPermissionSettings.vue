@@ -185,13 +185,36 @@ onBeforeUnmount(() => {
             <small v-else>{{ t('Allow location access only when you choose a location-related action.') }}</small>
             <small v-if="message" class="location-error">{{ message }}</small>
         </div>
-        <button v-if="isEnabled && shareCourierLocation" type="button" class="location-toggle" :class="{ active: sharingEnabled }" :aria-pressed="sharingEnabled" @click="toggleSharing">{{ sharingEnabled ? t('On') : t('Enable') }}</button>
-        <span v-else-if="isEnabled" class="location-state">{{ t('On') }}</span>
-        <button v-else-if="!isBusy && status !== 'unsupported' && status !== 'unavailable'" type="button" class="location-toggle" @click="requestLocation">{{ t('Enable') }}</button>
+        <button
+            v-if="isEnabled && shareCourierLocation"
+            type="button"
+            class="location-switch"
+            :class="{ 'is-on': sharingEnabled }"
+            role="switch"
+            :aria-checked="sharingEnabled"
+            :aria-label="t('Location access')"
+            @click="toggleSharing"
+        ><span /></button>
+        <span
+            v-else-if="isEnabled"
+            class="location-switch is-on is-locked"
+            role="switch"
+            :aria-checked="true"
+            :aria-label="t('Location access')"
+        ><span /></span>
+        <button
+            v-else-if="!isBusy && status !== 'unsupported' && status !== 'unavailable'"
+            type="button"
+            class="location-switch"
+            role="switch"
+            :aria-checked="false"
+            :aria-label="t('Location access')"
+            @click="requestLocation"
+        ><span /></button>
         <span v-else class="location-state">{{ status === 'requesting' ? t('Requesting…') : t('…') }}</span>
     </section>
 </template>
 
 <style scoped>
-.location-setting{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:12px;border:1px solid var(--border);border-radius:13px;background:var(--surface);box-shadow:0 2px 9px rgba(15,27,26,.025)}.location-setting.enabled{border-color:color-mix(in srgb,var(--success) 38%,var(--border));background:color-mix(in srgb,var(--success-tint) 60%,var(--surface))}.location-setting-icon{display:grid;place-items:center;width:36px;height:36px;border-radius:11px;flex:none;background:var(--primary-tint);color:var(--primary-strong)}.location-setting-icon svg{width:18px;height:18px}.location-setting-copy{display:grid;min-width:0;flex:1;gap:2px}.location-setting-copy b{font-size:11.5px;font-weight:900}.location-setting-copy small{font-size:9.5px;line-height:1.55;color:var(--ink-soft);font-weight:650}.location-setting-copy .location-error{color:var(--danger)}.location-toggle{border:0;border-radius:9px;padding:8px 10px;background:var(--primary);color:#fff;font:inherit;font-size:10px;font-weight:900;cursor:pointer}.location-toggle.active{background:var(--success)}.location-state{font-size:11px;color:var(--ink-faint);font-weight:800}
+.location-setting{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:12px;border:1px solid var(--border);border-radius:13px;background:var(--surface);box-shadow:0 2px 9px rgba(15,27,26,.025)}.location-setting.enabled{border-color:color-mix(in srgb,var(--success) 38%,var(--border));background:color-mix(in srgb,var(--success-tint) 60%,var(--surface))}.location-setting-icon{display:grid;place-items:center;width:36px;height:36px;border-radius:11px;flex:none;background:var(--primary-tint);color:var(--primary-strong)}.location-setting-icon svg{width:18px;height:18px}.location-setting-copy{display:grid;min-width:0;flex:1;gap:2px}.location-setting-copy b{font-size:11.5px;font-weight:900}.location-setting-copy small{font-size:9.5px;line-height:1.55;color:var(--ink-soft);font-weight:650}.location-setting-copy .location-error{color:var(--danger)}.location-switch{position:relative;display:inline-flex;align-items:center;width:42px;height:24px;padding:3px;flex:none;border:0;border-radius:999px;background:var(--border-strong,var(--border));cursor:pointer;transition:background .2s ease,box-shadow .2s ease}.location-switch span{display:block;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(15,27,26,.26);transform:translateX(0);transition:transform .2s ease}.location-switch.is-on{background:var(--success)}.location-switch.is-on span{transform:translateX(-18px)}html[dir="ltr"] .location-switch.is-on span{transform:translateX(18px)}.location-switch:focus-visible{outline:3px solid color-mix(in srgb,var(--primary) 35%,transparent);outline-offset:2px}.location-switch.is-locked{cursor:default;opacity:.82}.location-state{font-size:11px;color:var(--ink-faint);font-weight:800}
 </style>

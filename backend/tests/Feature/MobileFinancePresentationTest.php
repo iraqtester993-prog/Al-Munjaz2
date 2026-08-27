@@ -51,7 +51,7 @@ class MobileFinancePresentationTest extends TestCase
                 ->where('orders.0.id', $order->id));
     }
 
-    public function test_courier_wallet_exposes_derived_delivery_figures_but_cannot_self_credit_budget(): void
+    public function test_courier_wallet_exposes_qi_credit_and_uses_administrative_review_for_cash_budget(): void
     {
         $courier = User::where('username', 'مندوب')->firstOrFail();
 
@@ -64,10 +64,18 @@ class MobileFinancePresentationTest extends TestCase
                 ->has('summary.completed_deliveries')
                 ->has('summary.returned_deliveries')
                 ->has('summary.collections_total')
+                ->has('summary.cash_on_hand')
                 ->has('transactions'));
 
         $this->actingAs($courier)
             ->post('/app/wallet/budget', ['amount' => 100000, 'mode' => 'set'])
-            ->assertForbidden();
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('finance_requests', [
+            'user_id' => $courier->id,
+            'type' => \App\Models\FinanceRequest::BUDGET_RECHARGE,
+            'status' => \App\Models\FinanceRequest::PENDING,
+            'amount' => 100000,
+        ]);
     }
 }

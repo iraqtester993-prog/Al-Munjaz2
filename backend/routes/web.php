@@ -8,6 +8,7 @@ use App\Http\Controllers\Admin\AdminFinanceController;
 use App\Http\Controllers\Admin\AdminMobileContentController;
 use App\Http\Controllers\Admin\AdminLoyaltyController;
 use App\Http\Controllers\Admin\BranchPortalController;
+use App\Http\Controllers\Admin\BranchMobileContentController;
 use App\Http\Controllers\Admin\AdminNotificationController;
 use App\Http\Controllers\Admin\AdminOrderController;
 use App\Http\Controllers\Admin\AdminPlatformController;
@@ -153,6 +154,7 @@ Route::middleware(['auth', 'active'])->group(function () {
         Route::post('orders/{order}/status', [AppOrderController::class, 'status'])->name('app.orders.status');
         Route::post('orders/{order}/return', [AppOrderController::class, 'startReturn'])->name('app.orders.return');
         Route::post('orders/{order}/return-to-merchant', [AppOrderController::class, 'confirmReturnToMerchant'])->name('app.orders.return-to-merchant');
+        Route::post('orders/{order}/recreate', [AppOrderController::class, 'recreate'])->name('app.orders.recreate');
         Route::post('orders/{order}/claim', [AppOrderController::class, 'claim'])->name('app.orders.claim');
         Route::get('wallet', [AppWalletController::class, 'index'])->name('app.wallet');
         Route::post('wallet/withdraw', [AppWalletController::class, 'withdraw'])->name('app.wallet.withdraw');
@@ -192,6 +194,7 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     Route::get('merchants', [AdminUserController::class, 'merchants'])->name('admin.merchants');
     Route::get('couriers', [AdminUserController::class, 'couriers'])->name('admin.couriers');
     Route::get('couriers/locations', [AdminCourierLocationController::class, 'index'])->name('admin.couriers.locations');
+    Route::put('users/{user}', [AdminUserController::class, 'update'])->name('admin.users.update');
     Route::post('users/{user}/status', [AdminUserController::class, 'status'])->name('admin.users.status');
     Route::get('users/{user}/documents/{document}', [AdminUserController::class, 'showDocument'])->name('admin.users.documents.show');
     Route::post('users/{user}/documents/{document}/review', [AdminUserController::class, 'reviewDocument'])->name('admin.users.documents.review');
@@ -257,5 +260,17 @@ Route::post('/dashboard/branch/preferences/theme', [AdminPreferencesController::
 Route::post('/dashboard/branch/preferences/locale', [AdminPreferencesController::class, 'locale'])
     ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
     ->name('admin.branch.preferences.locale');
+Route::get('/dashboard/branch/content', [BranchMobileContentController::class, 'index'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.content');
+Route::post('/dashboard/branch/content', [BranchMobileContentController::class, 'store'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.content.store');
+Route::put('/dashboard/branch/content/{mobileSlide}', [BranchMobileContentController::class, 'update'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.content.update');
+Route::delete('/dashboard/branch/content/{mobileSlide}', [BranchMobileContentController::class, 'destroy'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.content.destroy');
 
 Route::get('/admin', fn () => redirect()->route('admin.dashboard'))->middleware(['dashboard.host', 'auth', 'active', 'role:admin']);

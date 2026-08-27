@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useForm, usePage } from '@inertiajs/vue3'
 import Flash from '../../Components/Flash.vue'
 import { bytesToMegabytes, CourierDocumentError, prepareCourierDocument } from '../../Utils/courierDocuments'
@@ -27,6 +27,7 @@ const uploadErrors = ref({})
 const uploadInfo = ref({})
 const preparingDocuments = ref({})
 const documentSummaryError = ref('')
+const documentPreviews = ref({})
 
 const courierDocumentKeys = [
     'residence_document',
@@ -56,7 +57,7 @@ const form = useForm({
     phone: '',
     shop: '',
     address: '',
-    vehicle: 'bike',
+    vehicle: isCourier ? '' : 'bike',
     province_id: '',
     password: '',
     password_confirmation: '',
@@ -90,6 +91,7 @@ const vehicleOptions = computed(() => Object.entries(props.vehicles).map(([key, 
 const selectedVehicle = computed(() => vehicleOptions.value.find((vehicle) => vehicle.key === form.vehicle))
 
 function submitForm() {
+    if (isCourier && !validateCourierFields()) return
     if (isCourier && !validateCourierDocuments()) return
 
     sending.value = true
@@ -98,6 +100,30 @@ function submitForm() {
         preserveScroll: true,
         onFinish: () => (sending.value = false),
     })
+}
+
+function validateCourierFields() {
+    const errors = {}
+    const requiredFields = ['name', 'address', 'phone', 'password', 'password_confirmation', 'vehicle']
+    if (props.provinces.length) requiredFields.push('province_id')
+
+    form.clearErrors(...requiredFields)
+    for (const key of requiredFields) {
+        if (!String(form[key] || '').trim()) errors[key] = t('This field is required')
+    }
+
+    if (form.password && form.password_confirmation && form.password !== form.password_confirmation) {
+        errors.password_confirmation = t('Passwords do not match')
+    }
+
+    if (Object.keys(errors).length) {
+        form.setError(errors)
+        documentSummaryError.value = t('This field is required')
+        return false
+    }
+
+    documentSummaryError.value = ''
+    return true
 }
 
 async function chooseFile(event, key) {
@@ -118,12 +144,14 @@ async function chooseFile(event, key) {
         }
 
         form[key] = prepared.file
+        setDocumentPreview(key, prepared.file)
         uploadInfo.value[key] = {
             optimized: prepared.optimized,
             size: prepared.file.size,
         }
     } catch (error) {
         form[key] = null
+        clearDocumentPreview(key)
         delete uploadInfo.value[key]
         uploadErrors.value[key] = documentErrorMessage(error)
         if (error instanceof CourierDocumentError && error.code === 'total_too_large') {
@@ -134,8 +162,21 @@ async function chooseFile(event, key) {
     }
 }
 
-function fileLabel(key, fallback) {
-    return form[key]?.name || fallback
+function setDocumentPreview(key, file) {
+    clearDocumentPreview(key)
+
+    if (!file?.type?.startsWith('image/') || typeof URL === 'undefined') return
+    documentPreviews.value[key] = URL.createObjectURL(file)
+}
+
+function clearDocumentPreview(key) {
+    const preview = documentPreviews.value[key]
+    if (preview && typeof URL !== 'undefined') URL.revokeObjectURL(preview)
+    delete documentPreviews.value[key]
+}
+
+function documentPreview(key) {
+    return documentPreviews.value[key] || ''
 }
 
 function fileInfo(key) {
@@ -229,6 +270,10 @@ function icon(name) {
     }
     return paths[name]
 }
+
+onBeforeUnmount(() => {
+    for (const key of Object.keys(documentPreviews.value)) clearDocumentPreview(key)
+})
 </script>
 
 <template>
@@ -253,37 +298,37 @@ function icon(name) {
             <form class="reg-card" @submit.prevent="submitForm">
                 <div class="reg-field" :class="{ error: form.errors.name }">
                     <label>{{ t('Full Name') }}</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('user')" /></svg><input v-model="form.name" :placeholder="t('Full Name')" autocomplete="name"></div>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('user')" /></svg><input v-model="form.name" :placeholder="t('Full Name')" autocomplete="name" required></div>
                     <small v-if="form.errors.name">{{ form.errors.name }}</small>
                 </div>
                 <div v-if="!isCourier" class="reg-field" :class="{ error: form.errors.shop }">
                     <label>{{ t('Shop Name') }}</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('shop')" /></svg><input v-model="form.shop" :placeholder="t('Shop Name')"></div>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('shop')" /></svg><input v-model="form.shop" :placeholder="t('Shop Name')" required></div>
                     <small v-if="form.errors.shop">{{ form.errors.shop }}</small>
                 </div>
                 <div class="reg-field" :class="{ error: form.errors.address }">
                     <label>{{ t(isCourier ? 'Address' : 'Shop Address') }}</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('pin')" /></svg><input v-model="form.address" :placeholder="t(isCourier ? 'Address' : 'Shop Address')"></div>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('pin')" /></svg><input v-model="form.address" :placeholder="t(isCourier ? 'Address' : 'Shop Address')" required></div>
                     <small v-if="form.errors.address">{{ form.errors.address }}</small>
                 </div>
-                <div class="reg-field" :class="{ error: form.errors.province_id }">
+                <div v-if="provinces.length" class="reg-field" :class="{ error: form.errors.province_id }">
                     <label>{{ t('Governorate') }}</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('pin')" /></svg><select v-model="form.province_id" required><option disabled value="">{{ t('Governorate') }}</option><option v-for="province in provinces" :key="province.id" :value="province.id">{{ localizedProvince(province) }}</option></select></div>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('pin')" /></svg><select v-model="form.province_id" :required="provinces.length > 0"><option disabled value="">{{ t('Governorate') }}</option><option v-for="province in provinces" :key="province.id" :value="province.id">{{ localizedProvince(province) }}</option></select></div>
                     <small v-if="form.errors.province_id">{{ form.errors.province_id }}</small>
                 </div>
                 <div class="reg-field" :class="{ error: form.errors.phone }">
                     <label>{{ t('Phone Number') }}</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path :d="icon('phone')" /></svg><input v-model="form.phone" dir="ltr" inputmode="tel" placeholder="07xx xxx xxxx" autocomplete="tel"></div>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path :d="icon('phone')" /></svg><input v-model="form.phone" dir="ltr" inputmode="tel" placeholder="07xx xxx xxxx" autocomplete="tel" required></div>
                     <small v-if="form.errors.phone">{{ form.errors.phone }}</small>
                 </div>
                 <div class="reg-field" :class="{ error: form.errors.password }">
                     <label>{{ t('Password') }}</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('lock')" /></svg><input v-model="form.password" :type="showPassword ? 'text' : 'password'" :placeholder="t('Password')" autocomplete="new-password"><button type="button" @click="showPassword = !showPassword">{{ t(showPassword ? 'Hide' : 'Show') }}</button></div>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('lock')" /></svg><input v-model="form.password" :type="showPassword ? 'text' : 'password'" :placeholder="t('Password')" autocomplete="new-password" required><button type="button" @click="showPassword = !showPassword">{{ t(showPassword ? 'Hide' : 'Show') }}</button></div>
                     <small v-if="form.errors.password">{{ form.errors.password }}</small>
                 </div>
                 <div class="reg-field">
                     <label>{{ t('Confirm Password') }}</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('lock')" /></svg><input v-model="form.password_confirmation" :type="showConfirmation ? 'text' : 'password'" :placeholder="t('Confirm Password')" autocomplete="new-password"><button type="button" @click="showConfirmation = !showConfirmation">{{ t(showConfirmation ? 'Hide' : 'Show') }}</button></div>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path :d="icon('lock')" /></svg><input v-model="form.password_confirmation" :type="showConfirmation ? 'text' : 'password'" :placeholder="t('Confirm Password')" autocomplete="new-password" required><button type="button" @click="showConfirmation = !showConfirmation">{{ t(showConfirmation ? 'Hide' : 'Show') }}</button></div>
                 </div>
 
                 <template v-if="isCourier">
@@ -311,8 +356,8 @@ function icon(name) {
                         <p>{{ t('Residence Card') }}</p>
                         <label class="upload-zone" :class="{ uploaded: !!form.residence_document, error: !!uploadError('residence_document'), preparing: preparingDocuments.residence_document }">
                             <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" :disabled="preparingDocuments.residence_document" @change="chooseFile($event, 'residence_document')">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form.residence_document ? icon('check') : icon('upload')" /></svg>
-                            <span>{{ preparingDocuments.residence_document ? t('Preparing image…') : fileLabel('residence_document', t('Tap to upload')) }}</span>
+                            <span class="upload-visual"><img v-if="documentPreview('residence_document')" :src="documentPreview('residence_document')" alt=""><svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form.residence_document ? icon('check') : icon('upload')" /></svg></span>
+                            <span>{{ preparingDocuments.residence_document ? t('Preparing image…') : (form.residence_document ? t('Uploaded') : t('Tap to upload')) }}</span>
                         </label>
                         <small v-if="fileInfo('residence_document')" class="document-info">{{ fileInfo('residence_document') }}</small>
                         <small v-if="uploadError('residence_document')" class="document-error">{{ uploadError('residence_document') }}</small>
@@ -321,8 +366,8 @@ function icon(name) {
                         <div class="upload-pair">
                             <label v-for="doc in [['id_front_document', t('Front')], ['id_back_document', t('Back')]]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!uploadError(doc[0]), preparing: preparingDocuments[doc[0]] }">
                                 <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" :disabled="preparingDocuments[doc[0]]" @change="chooseFile($event, doc[0])">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form[doc[0]] ? icon('check') : icon('upload')" /></svg>
-                                <span>{{ preparingDocuments[doc[0]] ? t('Preparing image…') : fileLabel(doc[0], doc[1]) }}</span>
+                                <span class="upload-visual"><img v-if="documentPreview(doc[0])" :src="documentPreview(doc[0])" alt=""><svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form[doc[0]] ? icon('check') : icon('upload')" /></svg></span>
+                                <span>{{ preparingDocuments[doc[0]] ? t('Preparing image…') : (form[doc[0]] ? t('Uploaded') : doc[1]) }}</span>
                             </label>
                         </div>
                         <div class="document-file-details"><small v-for="key in ['id_front_document', 'id_back_document']" :key="key"><template v-if="fileInfo(key)">{{ fileInfo(key) }}</template><template v-else-if="uploadError(key)"><span class="document-error">{{ uploadError(key) }}</span></template></small></div>
@@ -331,8 +376,8 @@ function icon(name) {
                         <div class="upload-pair">
                             <label v-for="doc in [['license_front_document', t('Front')], ['license_back_document', t('Back')]]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!uploadError(doc[0]), preparing: preparingDocuments[doc[0]] }">
                             <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" :disabled="preparingDocuments[doc[0]]" @change="chooseFile($event, doc[0])">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form[doc[0]] ? icon('check') : icon('upload')" /></svg>
-                            <span>{{ preparingDocuments[doc[0]] ? t('Preparing image…') : fileLabel(doc[0], doc[1]) }}</span>
+                            <span class="upload-visual"><img v-if="documentPreview(doc[0])" :src="documentPreview(doc[0])" alt=""><svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form[doc[0]] ? icon('check') : icon('upload')" /></svg></span>
+                            <span>{{ preparingDocuments[doc[0]] ? t('Preparing image…') : (form[doc[0]] ? t('Uploaded') : doc[1]) }}</span>
                             </label>
                         </div>
                         <div class="document-file-details"><small v-for="key in ['license_front_document', 'license_back_document']" :key="key"><template v-if="fileInfo(key)">{{ fileInfo(key) }}</template><template v-else-if="uploadError(key)"><span class="document-error">{{ uploadError(key) }}</span></template></small></div>
@@ -389,6 +434,7 @@ function icon(name) {
 .documents > .document-helper { margin:0 0 10px; padding:9px 10px; border:1px solid rgba(255,255,255,.16); border-radius:10px; background:rgba(2,48,45,.2); color:rgba(255,255,255,.76); font-size:9.5px; line-height:1.65; font-weight:650; }
 .upload-zone { min-height:46px; display:flex; align-items:center; gap:9px; margin-top:7px; padding:8px 10px; color:rgba(255,255,255,.83); border:1px dashed rgba(255,255,255,.38); border-radius:11px; background:rgba(255,255,255,.07); font-size:10px; font-weight:700; cursor:pointer; }
 .upload-zone input { display:none; }
+.upload-visual{display:grid;width:28px;height:28px;place-items:center;overflow:hidden;flex:none;border-radius:7px;background:rgba(255,255,255,.12)}.upload-visual img{width:100%;height:100%;object-fit:cover}.upload-pair .upload-visual{width:42px;height:38px;border-radius:8px}.upload-pair .upload-zone.uploaded{padding:6px}
 .upload-zone.uploaded { border-style:solid; border-color:#a3f2ca; background:rgba(86, 212, 139, .16); color:#fff; }
 .upload-zone.error { border-color:#ffd0cb; }
 .upload-zone.preparing { opacity:.72; cursor:progress; }

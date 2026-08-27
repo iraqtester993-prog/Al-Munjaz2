@@ -20,11 +20,12 @@ const activeStatus = ref(null)
 const filtersOpen = ref(false)
 const copied = ref(false)
 const locale = computed(() => page.props.locale || 'ar')
+const archivedStatuses = ['delivered', 'returned']
 const filterForm = ref({
     period: props.period,
     from: props.filters.from || '',
     to: props.filters.to || '',
-    status: props.filters.status || 'all',
+    status: archivedStatuses.includes(props.filters.status) ? props.filters.status : 'all',
     province_id: props.filters.province_id ? String(props.filters.province_id) : '',
 })
 
@@ -38,19 +39,39 @@ const statusMeta = computed(() => ({
     damaged: { title: t('Damaged'), icon: '!', color: 'var(--warning)', tint: 'var(--warning-tint)' },
 }))
 
-const statusCards = computed(() => props.statusOptions
+// The archive is intentionally a completed-work record, not a second copy
+// of active queues. Only delivered and returned orders belong here.
+const statusCards = computed(() => archivedStatuses
     .map((status) => ({
         status,
         meta: statusMeta.value[status] || { title: status, icon: '•', color: 'var(--ink-soft)', tint: 'var(--surface-2)' },
         count: Number(props.summary.status_counts?.[status] || 0),
         value: Number(props.summary.status_values?.[status] || 0),
     }))
-    .filter((card) => card.count > 0 || ['delivered', 'returned'].includes(card.status)))
+)
 
-const detailOrders = computed(() => props.orders.filter((order) => order.status === activeStatus.value))
+const archivedOrders = computed(() => props.orders.filter((order) => archivedStatuses.includes(order.status)))
+const archivedTotal = computed(() => archivedOrders.value.reduce((sum, order) => sum + Number(order.price || 0), 0))
+const deliveredArchive = computed(() => archivedOrders.value.filter((order) => order.status === 'delivered'))
+const returnedArchive = computed(() => archivedOrders.value.filter((order) => order.status === 'returned'))
+const detailOrders = computed(() => archivedOrders.value.filter((order) => order.status === activeStatus.value))
 const detailTotal = computed(() => detailOrders.value.reduce((sum, order) => sum + Number(order.price || 0), 0))
 const activeMeta = computed(() => activeStatus.value ? statusMeta.value[activeStatus.value] : null)
-const topProvinceOrders = computed(() => Math.max(...props.provinceDistribution.map((row) => Number(row.orders || 0)), 1))
+const archiveProvinceDistribution = computed(() => {
+    const rows = new Map()
+
+    for (const order of archivedOrders.value) {
+        const province = order.province || {}
+        const key = String(province.id || order.province_id || 'not-set')
+        const row = rows.get(key) || { ...province, id: province.id || order.province_id || 'not-set', orders: 0, amount: 0 }
+        row.orders += 1
+        row.amount += Number(order.price || 0)
+        rows.set(key, row)
+    }
+
+    return [...rows.values()].sort((a, b) => Number(b.orders) - Number(a.orders))
+})
+const topProvinceOrders = computed(() => Math.max(...archiveProvinceDistribution.value.map((row) => Number(row.orders || 0)), 1))
 
 function customerName(order) {
     const preferred = locale.value === 'en' ? 'en' : locale.value === 'ku' ? 'ku' : 'ar'
@@ -70,7 +91,7 @@ function provinceName(province) {
 
 function formatDate(date) {
     if (!date) return t('Not specified')
-    const language = { ar: 'ar-IQ', en: 'en-US', ku: 'ku-IQ' }[locale.value] || 'ar-IQ'
+    const language = { ar: 'ar-IQ-u-nu-latn', en: 'en-US', ku: 'ku-IQ-u-nu-latn' }[locale.value] || 'en-US'
     return new Intl.DateTimeFormat(language, { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(`${date}T12:00:00`))
 }
 
@@ -113,10 +134,10 @@ async function copyReport() {
     const range = filterForm.value.period === 'today' ? t('Orders Today') : t('All Orders')
     const text = [
         `${t('Al-Munjaz Al-Saree')} — ${range}`,
-        `${t('Total Orders')}: ${props.summary.orders_count}`,
-        `${t('Total Amount')}: ${fmt(props.summary.orders_value)} ${t('IQD')}`,
-        `${t('Delivered')}: ${props.summary.delivered_count} — ${fmt(props.summary.delivered_value)} ${t('IQD')}`,
-        `${t('Returned')}: ${props.summary.returned_count} — ${fmt(props.summary.returned_value)} ${t('IQD')}`,
+        `${t('Total Orders')}: ${archivedOrders.value.length}`,
+        `${t('Total Amount')}: ${fmt(archivedTotal.value)} ${t('IQD')}`,
+        `${t('Delivered')}: ${deliveredArchive.value.length} — ${fmt(deliveredArchive.value.reduce((sum, order) => sum + Number(order.price || 0), 0))} ${t('IQD')}`,
+        `${t('Returned')}: ${returnedArchive.value.length} — ${fmt(returnedArchive.value.reduce((sum, order) => sum + Number(order.price || 0), 0))} ${t('IQD')}`,
     ].join('\n')
 
     try {
@@ -157,7 +178,7 @@ async function copyReport() {
                 <label class="filter-field"><span>{{ t('Status') }}</span>
                     <select v-model="filterForm.status">
                         <option value="all">{{ t('All statuses') }}</option>
-                        <option v-for="status in statusOptions" :key="status" :value="status">{{ statusMeta[status]?.title || status }}</option>
+                        <option v-for="status in archivedStatuses" :key="status" :value="status">{{ statusMeta[status]?.title || status }}</option>
                     </select>
                 </label>
                 <label class="filter-field"><span>{{ t('Governorate') }}</span>
@@ -172,11 +193,11 @@ async function copyReport() {
             <section class="report-total">
                 <div>
                     <span>{{ t('Total Amount') }}</span>
-                    <strong class="mono">{{ fmt(summary.orders_value) }} <small>{{ t('IQD') }}</small></strong>
+                    <strong class="mono">{{ fmt(archivedTotal) }} <small>{{ t('IQD') }}</small></strong>
                 </div>
                 <div class="report-total-count">
                     <span>{{ t('Total Orders') }}</span>
-                    <strong class="mono">{{ summary.orders_count }}</strong>
+                    <strong class="mono">{{ archivedOrders.length }}</strong>
                 </div>
             </section>
 
@@ -190,16 +211,16 @@ async function copyReport() {
                 </button>
             </section>
 
-            <section v-if="provinceDistribution.length" class="province-report list-card">
+            <section v-if="archiveProvinceDistribution.length" class="province-report list-card">
                 <div class="province-heading"><div><b>{{ t('Orders by Governorate') }}</b><span>{{ t('Order Distribution by Governorate') }}</span></div></div>
-                <article v-for="province in provinceDistribution" :key="province.id || 'not-set'" class="province-row">
+                <article v-for="province in archiveProvinceDistribution" :key="province.id || 'not-set'" class="province-row">
                     <div class="province-copy"><b>{{ provinceName(province) }}</b><span>{{ province.orders }} {{ t('orders') }}</span></div>
                     <div class="province-bar"><i :style="{ width: `${Math.max(5, (Number(province.orders || 0) / topProvinceOrders) * 100)}%` }"></i></div>
                     <strong class="mono">{{ fmt(province.amount) }}</strong>
                 </article>
             </section>
 
-            <div v-if="!orders.length" class="empty-hint">{{ t('No orders found') }}</div>
+            <div v-if="!archivedOrders.length" class="empty-hint">{{ t('No orders found') }}</div>
         </template>
 
         <template v-else>

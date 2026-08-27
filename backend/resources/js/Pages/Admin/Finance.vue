@@ -17,11 +17,12 @@ const decisionAction = ref('approve')
 const decision = ref({ approved_amount: '', branch_id: '', decision_note: '' })
 const decisionBusy = ref(false)
 const manualBusy = ref(false)
-const manual = ref({ user_id: '', type: 'cash_handover', amount: '', branch_id: '', note: '' })
+const manual = ref({ user_id: '', type: 'qi_topup', amount: '', branch_id: '', external_reference: '', note: '' })
 
 const typeMeta = {
     cash_handover: { key: 'Cash Handover', tint: 'var(--warning-tint)', color: 'var(--warning)' },
-    budget_recharge: { key: 'Budget Recharge', tint: 'var(--success-tint)', color: 'var(--success)' },
+    budget_recharge: { key: 'Cash Budget Added', tint: 'var(--success-tint)', color: 'var(--success)' },
+    qi_topup: { key: 'Qi Balance Top Up', tint: 'var(--primary-tint)', color: 'var(--primary-strong)' },
     merchant_payout: { key: 'Merchant Payout', tint: 'var(--primary-tint)', color: 'var(--primary-strong)' },
     settlement: { key: 'Settlement', tint: 'var(--primary-tint)', color: 'var(--primary-strong)' },
     withdrawal: { key: 'Withdrawal', tint: 'var(--danger-tint)', color: 'var(--danger)' },
@@ -47,7 +48,8 @@ const cards = computed(() => [
     { label: t('Pending Requests'), value: props.summary.pending_count || 0, suffix: '', tint: 'var(--warning-tint)', color: 'var(--warning)' },
     { label: t('Pending Amount'), value: fmt(props.summary.pending_amount || 0), suffix: t('IQD'), tint: 'var(--accent-tint)', color: 'var(--accent)' },
     { label: t('Cash Handovers'), value: fmt(props.summary.cash_handover || 0), suffix: t('IQD'), tint: 'var(--success-tint)', color: 'var(--success)' },
-    { label: t('Budget Recharged'), value: fmt(props.summary.recharged || 0), suffix: t('IQD'), tint: 'var(--primary-tint)', color: 'var(--primary-strong)' },
+    { label: t('Cash Budget Added'), value: fmt(props.summary.budget_added || 0), suffix: t('IQD'), tint: 'var(--primary-tint)', color: 'var(--primary-strong)' },
+    { label: t('Qi Top-ups'), value: fmt(props.summary.qi_topups || 0), suffix: t('IQD'), tint: 'var(--accent-tint)', color: 'var(--accent)' },
     { label: t('Branch Cash'), value: fmt(props.summary.branch_cash || 0), suffix: t('IQD'), tint: 'var(--surface-2)', color: 'var(--ink)' },
 ])
 
@@ -59,6 +61,7 @@ function typeLabel(type) { return t(meta(type).key) }
 function statusLabel(status) { return t((statusMeta[status] || { key: status }).key) }
 function statusClass(status) { return statusMeta[status]?.className || '' }
 function requiresBranch(type) { return type === 'cash_handover' }
+function isQiTopup(type) { return type === 'qi_topup' }
 
 function openDecision(request, action) {
     activeRequest.value = request
@@ -101,7 +104,7 @@ function submitManual() {
         branch_id: requiresBranch(manual.value.type) ? (manual.value.branch_id || null) : null,
     }, {
         preserveScroll: true,
-        onSuccess: () => { manual.value = { user_id: '', type: manual.value.type, amount: '', branch_id: '', note: '' } },
+        onSuccess: () => { manual.value = { user_id: '', type: manual.value.type, amount: '', branch_id: '', external_reference: '', note: '' } },
         onFinish: () => (manualBusy.value = false),
     })
 }
@@ -123,7 +126,7 @@ function submitManual() {
                     <article v-for="request in pendingRequests" :key="request.id" class="finance-request-card">
                         <div class="request-card-top">
                             <span class="finance-type-icon" :style="{ background: meta(request.type).tint, color: meta(request.type).color }"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v9l3 2M5.5 5.5a9 9 0 1 0 13 0" /></svg></span>
-                            <span class="request-card-main"><b>{{ typeLabel(request.type) }}</b><small>{{ request.user?.name || '—' }} · {{ request.reference }}</small></span>
+                            <span class="request-card-main"><b>{{ typeLabel(request.type) }}</b><small>{{ request.user?.name || '—' }} · {{ request.reference }}<template v-if="request.external_reference"> · QI: {{ request.external_reference }}</template></small></span>
                             <strong class="mono">{{ fmt(request.amount) }} <small>{{ t('IQD') }}</small></strong>
                         </div>
                         <div class="request-card-meta"><span>{{ request.branch ? `${request.branch.name} — ${request.branch.city}` : t('No branch selected') }}</span><span>{{ request.created_at?.slice(0, 16).replace('T', ' ') || '—' }}</span></div>
@@ -137,9 +140,10 @@ function submitManual() {
             <form class="panel finance-manual-panel" @submit.prevent="submitManual">
                 <header class="panel-head"><span><h3>{{ t('Record Settlement') }}</h3><p>{{ t('Record a verified office transaction with a complete audit trail.') }}</p></span></header>
                 <div class="panel-body finance-form-grid">
-                    <label><span>{{ t('Operation') }}</span><select v-model="manual.type"><option value="cash_handover">{{ t('Cash Handover') }}</option><option value="budget_recharge">{{ t('Budget Recharge') }}</option><option value="merchant_payout">{{ t('Merchant Payout') }}</option></select></label>
+                    <label><span>{{ t('Operation') }}</span><select v-model="manual.type"><option value="qi_topup">{{ t('Qi Balance Top Up') }}</option><option value="budget_recharge">{{ t('Cash Budget Added') }}</option><option value="cash_handover">{{ t('Cash Handover') }}</option><option value="merchant_payout">{{ t('Merchant Payout') }}</option></select></label>
                     <label><span>{{ t('Account') }}</span><select v-model="manual.user_id" required><option value="" disabled>{{ t('Select account') }}</option><option v-for="account in manualAccounts" :key="account.id" :value="account.id">{{ account.name }} — {{ account.phone }}</option></select></label>
                     <label><span>{{ t('Amount') }} ({{ t('IQD') }})</span><input v-model="manual.amount" type="number" min="1000" step="1000" inputmode="numeric" required></label>
+                    <label v-if="isQiTopup(manual.type)"><span>{{ t('Qi Transaction Reference') }}</span><input v-model.trim="manual.external_reference" type="text" inputmode="text" :placeholder="t('Optional for direct administrative credit')"></label>
                     <label v-if="requiresBranch(manual.type)"><span>{{ t('Receiving Branch') }}</span><select v-model="manual.branch_id" required><option value="" disabled>{{ t('Select branch') }}</option><option v-for="branch in branches" :key="branch.id" :value="branch.id">{{ branch.name }} — {{ branch.city }}</option></select></label>
                     <label class="form-wide"><span>{{ t('Note') }}</span><textarea v-model="manual.note" rows="2" :placeholder="t('Optional settlement note')"></textarea></label>
                     <button class="finance-submit form-wide" type="submit" :disabled="manualBusy"><span v-if="manualBusy" class="loader"></span><span v-else>{{ t('Record Settlement') }}</span></button>
@@ -149,7 +153,7 @@ function submitManual() {
 
         <section class="panel finance-history-panel">
             <header class="panel-head"><span><h3>{{ t('Finance Request History') }}</h3><p>{{ t('Every decision is preserved with its ledger reference.') }}</p></span></header>
-            <div class="finance-table-scroll"><table class="tbl finance-table"><thead><tr><th>{{ t('Reference') }}</th><th>{{ t('Operation') }}</th><th>{{ t('Account') }}</th><th>{{ t('Branch') }}</th><th>{{ t('Amount') }}</th><th>{{ t('Status') }}</th><th>{{ t('Processed By') }}</th><th>{{ t('Date') }}</th></tr></thead><tbody><tr v-for="request in requests" :key="request.id"><td class="mono">{{ request.reference }}</td><td><span class="chip" :style="{ background: meta(request.type).tint, color: meta(request.type).color }"><i :style="{ background: meta(request.type).color }"></i>{{ typeLabel(request.type) }}</span></td><td><b>{{ request.user?.name || '—' }}</b><small class="cell-sub">{{ request.user?.phone }}</small></td><td>{{ request.branch ? `${request.branch.name} — ${request.branch.city}` : '—' }}</td><td class="mono">{{ fmt(request.approved_amount ?? request.amount) }}</td><td><span class="finance-status" :class="statusClass(request.status)">{{ statusLabel(request.status) }}</span></td><td>{{ request.processor || '—' }}</td><td class="mono">{{ request.processed_at?.slice(0, 10) || request.created_at?.slice(0, 10) || '—' }}</td></tr></tbody></table><div v-if="!requests.length" class="finance-empty">{{ t('No finance requests yet.') }}</div></div>
+            <div class="finance-table-scroll"><table class="tbl finance-table"><thead><tr><th>{{ t('Reference') }}</th><th>{{ t('Operation') }}</th><th>{{ t('Account') }}</th><th>{{ t('Branch') }}</th><th>{{ t('Amount') }}</th><th>{{ t('Status') }}</th><th>{{ t('Processed By') }}</th><th>{{ t('Date') }}</th></tr></thead><tbody><tr v-for="request in requests" :key="request.id"><td class="mono">{{ request.reference }}<small v-if="request.external_reference" class="cell-sub">QI: {{ request.external_reference }}</small></td><td><span class="chip" :style="{ background: meta(request.type).tint, color: meta(request.type).color }"><i :style="{ background: meta(request.type).color }"></i>{{ typeLabel(request.type) }}</span></td><td><b>{{ request.user?.name || '—' }}</b><small class="cell-sub">{{ request.user?.phone }}</small></td><td>{{ request.branch ? `${request.branch.name} — ${request.branch.city}` : '—' }}</td><td class="mono">{{ fmt(request.approved_amount ?? request.amount) }}</td><td><span class="finance-status" :class="statusClass(request.status)">{{ statusLabel(request.status) }}</span></td><td>{{ request.processor || '—' }}</td><td class="mono">{{ request.processed_at?.slice(0, 10) || request.created_at?.slice(0, 10) || '—' }}</td></tr></tbody></table><div v-if="!requests.length" class="finance-empty">{{ t('No finance requests yet.') }}</div></div>
         </section>
 
         <section class="panel finance-ledger-panel">

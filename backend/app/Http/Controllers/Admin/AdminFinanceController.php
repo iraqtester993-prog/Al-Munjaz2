@@ -70,7 +70,7 @@ class AdminFinanceController extends Controller
                 'wallet_balance' => (int) ($user->wallet?->balance ?? 0),
                 'budget' => (int) ($user->wallet?->budget ?? 0),
                 'cash_on_hand' => $user->isCourierRole() ? $finance->cashOnHand($user->id) : null,
-                'recharge_capacity' => $user->isCourierRole() ? $finance->rechargeCapacity($user->id) : null,
+                'collections_total' => $user->isCourierRole() ? $finance->collectionsTotal($user) : null,
             ]);
 
         return Inertia::render('Admin/Finance', [
@@ -82,7 +82,8 @@ class AdminFinanceController extends Controller
                 'pending_count' => FinanceRequest::withoutGlobalScope(TenantScope::class)->where('status', FinanceRequest::PENDING)->count(),
                 'pending_amount' => (int) FinanceRequest::withoutGlobalScope(TenantScope::class)->where('status', FinanceRequest::PENDING)->sum('amount'),
                 'cash_handover' => (int) Transaction::withoutGlobalScope(TenantScope::class)->where('type', FinanceRequest::CASH_HANDOVER)->where('direction', -1)->sum('amount'),
-                'recharged' => (int) Transaction::withoutGlobalScope(TenantScope::class)->where('type', FinanceRequest::BUDGET_RECHARGE)->where('direction', 1)->sum('amount'),
+                'budget_added' => (int) Transaction::withoutGlobalScope(TenantScope::class)->where('type', FinanceRequest::BUDGET_RECHARGE)->where('direction', 1)->sum('amount'),
+                'qi_topups' => (int) Transaction::withoutGlobalScope(TenantScope::class)->where('type', FinanceRequest::QI_TOPUP)->where('direction', 1)->sum('amount'),
                 'merchant_payouts' => (int) Transaction::withoutGlobalScope(TenantScope::class)->where('type', FinanceRequest::MERCHANT_PAYOUT)->where('direction', -1)->sum('amount'),
                 'branch_cash' => (int) Branch::withoutGlobalScope(TenantScope::class)->sum('cash_balance'),
             ],
@@ -131,6 +132,7 @@ class AdminFinanceController extends Controller
             'type' => ['required', Rule::in(FinanceRequest::TYPES)],
             'amount' => ['required', 'integer', 'min:1000'],
             'branch_id' => ['nullable', 'integer', Rule::exists('branches', 'id')],
+            'external_reference' => ['nullable', 'string', 'max:120'],
             'note' => ['nullable', 'string', 'max:1000'],
         ]);
 
@@ -141,7 +143,10 @@ class AdminFinanceController extends Controller
             return back()->withErrors(['user_id' => __('Cash handover must belong to a courier account.')]);
         }
         if ($requestType === FinanceRequest::BUDGET_RECHARGE && ! $account->isCourierRole()) {
-            return back()->withErrors(['user_id' => __('Budget recharge must belong to a courier account.')]);
+            return back()->withErrors(['user_id' => __('Cash budget additions must belong to a courier account.')]);
+        }
+        if ($requestType === FinanceRequest::QI_TOPUP && ! $account->isCourierRole()) {
+            return back()->withErrors(['user_id' => __('Qi balance top-ups must belong to a courier account.')]);
         }
         if ($requestType === FinanceRequest::MERCHANT_PAYOUT && $account->role !== 'merchant') {
             return back()->withErrors(['user_id' => __('Merchant payout must belong to a merchant account.')]);
@@ -153,6 +158,7 @@ class AdminFinanceController extends Controller
             (int) $data['amount'],
             isset($data['branch_id']) ? (int) $data['branch_id'] : null,
             $data['note'] ?? null,
+            filled($data['external_reference'] ?? null) ? trim((string) $data['external_reference']) : null,
         );
 
         $finance->approve(
@@ -175,6 +181,7 @@ class AdminFinanceController extends Controller
             'status' => $request->status,
             'amount' => (int) $request->amount,
             'approved_amount' => $request->approved_amount !== null ? (int) $request->approved_amount : null,
+            'external_reference' => $request->external_reference,
             'note' => $request->note,
             'decision_note' => $request->decision_note,
             'created_at' => $request->created_at?->toIso8601String(),

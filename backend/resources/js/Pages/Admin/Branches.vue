@@ -7,6 +7,8 @@ import AdminShell from '../../Components/AdminShell.vue'
 const props = defineProps({
     branches: { type: Array, default: () => [] },
     accessUsers: { type: Array, default: () => [] },
+    provinces: { type: Array, default: () => [] },
+    dashboardPermissions: { type: Array, default: () => [] },
 })
 const page = usePage()
 const modalOpen = ref(false)
@@ -22,6 +24,7 @@ const blankBranch = () => ({
     name_en: '',
     name_ku: '',
     city: '',
+    province_id: '',
     phone: '',
     address: '',
     create_access_account: true,
@@ -30,6 +33,7 @@ const blankBranch = () => ({
     access_username: '',
     access_password: '',
     access_role: 'branch_manager',
+    access_permissions: ['overview', 'orders', 'merchants', 'couriers', 'courier_locations', 'content', 'notifications'],
 })
 
 const form = useForm(blankBranch())
@@ -40,6 +44,7 @@ const accessForm = useForm({
     access_username: '',
     access_password: '',
     access_role: 'branch_manager',
+    access_permissions: ['overview', 'orders', 'merchants', 'couriers', 'courier_locations', 'content', 'notifications'],
 })
 const formError = computed(() => Object.values(form.errors)[0] || '')
 const accessError = computed(() => Object.values(accessForm.errors)[0] || '')
@@ -80,6 +85,7 @@ function openEdit(branch) {
         name_en: branch.name_en || '',
         name_ku: branch.name_ku || '',
         city: branch.city || '',
+        province_id: branch.province_id ? String(branch.province_id) : '',
         phone: branch.phone || '',
         address: branch.address || '',
         create_access_account: false,
@@ -88,6 +94,7 @@ function openEdit(branch) {
         access_username: '',
         access_password: '',
         access_role: 'branch_manager',
+        access_permissions: ['overview', 'orders', 'merchants', 'couriers', 'courier_locations', 'content', 'notifications'],
     })
     modalOpen.value = true
 }
@@ -104,6 +111,7 @@ function openAccess(branch) {
     accessForm.reset()
     accessForm.existing_user_id = ''
     accessForm.access_role = 'branch_manager'
+    accessForm.access_permissions = ['overview', 'orders', 'merchants', 'couriers', 'courier_locations', 'content', 'notifications']
 }
 
 function closeAccess() {
@@ -115,7 +123,24 @@ function closeAccess() {
 function syncExistingAccessRole() {
     if (selectedExistingAccessUser.value) {
         accessForm.access_role = selectedExistingAccessUser.value.role
+        accessForm.access_permissions = selectedExistingAccessUser.value.permissions || []
     }
+}
+
+const permissionLabel = (permission) => ({
+    overview: t('Overview'),
+    orders: t('Orders'),
+    merchants: t('Merchants'),
+    couriers: t('Couriers'),
+    courier_locations: t('Courier Locations'),
+    content: t('Mobile Content'),
+    notifications: t('Notifications'),
+    finance: t('Finance'),
+    settings: t('Settings'),
+}[permission] || permission)
+
+function enforceOwnerPermissions(target) {
+    if (target.access_role === 'owner') target.access_permissions = [...props.dashboardPermissions]
 }
 
 function submitAccess() {
@@ -194,7 +219,7 @@ function toggleStatus(branch) {
                         <span class="branch-icon" aria-hidden="true">⌂</span>
                         <div>
                             <h3>{{ branchName(branch) }}</h3>
-                            <p class="branch-place">{{ branch.city }} <span v-if="branch.code">· {{ branch.code }}</span></p>
+                            <p class="branch-place">{{ branch.province?.[`name_${locale()}`] || branch.province?.name_ar || branch.city }} <span v-if="branch.code">· {{ branch.code }}</span></p>
                         </div>
                     </div>
                     <span class="state" :class="{ off: !branch.is_active }">{{ branch.is_active ? t('Active') : t('Inactive') }}</span>
@@ -259,6 +284,12 @@ function toggleStatus(branch) {
                     <label>{{ t('Branch Code') }}<input v-model="form.code" required maxlength="20" placeholder="BGD-HQ" /></label>
                     <label>{{ t('Governorate / City') }}<input v-model="form.city" required maxlength="60" :placeholder="t('Baghdad')" /></label>
                 </div>
+                <label>{{ t('Operating Governorate') }}
+                    <select v-model="form.province_id" required>
+                        <option value="" disabled>{{ t('Choose governorate') }}</option>
+                        <option v-for="province in provinces" :key="province.id" :value="String(province.id)">{{ province[`name_${locale()}`] || province.name_ar }}</option>
+                    </select>
+                </label>
 
                 <fieldset v-if="!editing" class="access-fieldset">
                     <legend>{{ t('Branch Dashboard Access') }}</legend>
@@ -277,11 +308,19 @@ function toggleStatus(branch) {
                             <label>{{ t('Temporary Password (generated if blank)') }}<input v-model="form.access_password" type="text" minlength="10" maxlength="120" autocomplete="new-password" /></label>
                         </div>
                         <label>{{ t('Access Role') }}
-                            <select v-model="form.access_role">
+                            <select v-model="form.access_role" @change="enforceOwnerPermissions(form)">
                                 <option value="branch_manager">{{ t('Branch Manager') }}</option>
                                 <option value="owner">{{ t('Branch Owner') }}</option>
                             </select>
                         </label>
+                        <fieldset class="permissions-fieldset">
+                            <legend>{{ t('Dashboard permissions') }}</legend>
+                            <p class="access-note">{{ t('Owner accounts receive all permissions. Manager access is controlled by these switches.') }}</p>
+                            <label v-for="permission in dashboardPermissions" :key="permission" class="permission-switch">
+                                <input v-model="form.access_permissions" type="checkbox" :value="permission" :disabled="form.access_role === 'owner'" />
+                                <span>{{ permissionLabel(permission) }}</span>
+                            </label>
+                        </fieldset>
                     </template>
                 </fieldset>
 
@@ -336,12 +375,20 @@ function toggleStatus(branch) {
                         <label>{{ t('Temporary Password (generated if blank)') }}<input v-model="accessForm.access_password" type="text" minlength="10" maxlength="120" autocomplete="new-password" /></label>
                     </div>
                     <label>{{ t('Access Role') }}
-                        <select v-model="accessForm.access_role">
+                        <select v-model="accessForm.access_role" @change="enforceOwnerPermissions(accessForm)">
                             <option value="branch_manager">{{ t('Branch Manager') }}</option>
                             <option value="owner">{{ t('Branch Owner') }}</option>
                         </select>
                     </label>
                 </template>
+                <fieldset class="permissions-fieldset">
+                    <legend>{{ t('Dashboard permissions') }}</legend>
+                    <p class="access-note">{{ t('Owner accounts receive all permissions. Manager access is controlled by these switches.') }}</p>
+                    <label v-for="permission in dashboardPermissions" :key="permission" class="permission-switch">
+                        <input v-model="accessForm.access_permissions" type="checkbox" :value="permission" :disabled="accessForm.access_role === 'owner'" />
+                        <span>{{ permissionLabel(permission) }}</span>
+                    </label>
+                </fieldset>
                 <p v-if="accessError" class="error" role="alert">{{ accessError }}</p>
                 <footer>
                     <button class="btn ghost" type="button" @click="closeAccess">{{ t('Cancel') }}</button>
@@ -366,5 +413,5 @@ function toggleStatus(branch) {
 </template>
 
 <style scoped>
-.section-head{display:flex;justify-content:space-between;align-items:end;gap:16px;margin-bottom:20px}.eyebrow,.modal-kicker,.credential-kicker{color:var(--primary-strong);font-size:10px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.section-head h2{margin:4px 0 0;font-size:22px}.section-head p{margin:4px 0 0;color:var(--ink-faint);font-size:12px}.head-actions{display:flex;align-items:center;gap:10px}.route-total{font-size:11px;color:var(--ink-faint);white-space:nowrap}.route-total b{color:var(--primary-strong)}.btn{border:0;border-radius:10px;padding:9px 13px;font:inherit;font-size:12px;font-weight:800;cursor:pointer;transition:transform .18s ease,opacity .18s ease}.btn:hover:not(:disabled){transform:translateY(-1px)}.btn:disabled{cursor:wait;opacity:.65}.primary{background:var(--primary);color:#fff}.ghost{background:var(--surface-2);border:1px solid var(--border);color:var(--ink)}.danger{background:var(--danger-tint);color:var(--danger)}.page-error{margin:-6px 0 16px;padding:10px 12px;border-radius:10px;background:var(--danger-tint);color:var(--danger);font-size:12px;font-weight:700}.branch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px}.branch-card{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:17px;box-shadow:var(--shadow);display:flex;flex-direction:column;min-height:330px;transition:border-color .18s ease,opacity .18s ease}.branch-card.inactive{opacity:.78}.branch-head{display:flex;justify-content:space-between;gap:10px}.branch-title-row{display:flex;gap:10px;min-width:0}.branch-icon{width:38px;height:38px;flex:0 0 auto;display:grid;place-items:center;border-radius:11px;background:var(--primary-tint);color:var(--primary-strong);font-weight:900;font-size:19px}.branch-card h3{margin:1px 0 3px;font-size:15px;line-height:1.3}.branch-place{margin:0;color:var(--ink-faint);font-size:11px}.state{font-size:10px;font-weight:800;color:var(--success);background:var(--success-tint);padding:5px 8px;border-radius:20px;height:max-content;white-space:nowrap}.state.off{color:var(--danger);background:var(--danger-tint)}.alternate-names{min-height:17px;margin:12px 0 0;color:var(--ink-faint);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.branch-contact{display:flex;flex-direction:column;gap:3px;min-height:35px;margin-top:8px;color:var(--ink-soft);font-size:11px;overflow:hidden}.branch-contact span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.branch-flow{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:16px 0 13px}.branch-flow>div{padding:8px 7px;border-radius:10px;background:var(--surface-2);min-width:0}.branch-flow span{display:block;color:var(--ink-faint);font-size:9px;line-height:1.2}.branch-flow b{display:block;margin-top:4px;color:var(--ink);font-size:15px}.cash{border-top:1px solid var(--border);padding-top:11px;display:flex;justify-content:space-between;gap:10px;font-size:11px;color:var(--ink-faint)}.cash b{color:var(--primary-strong);font-size:12px;white-space:nowrap}.access-summary{min-height:42px;display:grid;gap:3px;margin-top:11px;padding:9px 10px;border-radius:10px;background:var(--surface-2)}.access-summary>div{display:flex;justify-content:space-between;gap:8px;color:var(--ink-faint);font-size:10px;font-weight:800}.access-summary b{color:var(--primary-strong);font-size:12px}.access-summary small{overflow:hidden;color:var(--ink-soft);font-size:9px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.branch-actions{display:flex;gap:8px;margin-top:auto;padding-top:15px}.branch-actions .btn{flex:1}.access-button{color:var(--primary-strong)}.status-action{font-size:11px}.modal-backdrop,.credential-backdrop{position:fixed;inset:0;background:#0a121180;display:grid;place-items:center;z-index:99;padding:20px;overflow:auto}.branch-modal{width:min(560px,100%);background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:21px;display:grid;gap:14px;box-shadow:0 24px 72px #0004}.branch-modal header{display:flex;justify-content:space-between;align-items:start;gap:14px}.branch-modal header h3{margin:4px 0 0;font-size:18px}.branch-modal header button{width:32px;height:32px;border:0;border-radius:9px;background:var(--surface-2);color:var(--ink);font-size:22px;line-height:1;cursor:pointer}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.branch-modal label{font-size:11px;font-weight:800;display:grid;gap:6px;color:var(--ink-soft)}.branch-modal input,.branch-modal textarea,.branch-modal select{width:100%;box-sizing:border-box;font:inherit;font-size:13px;color:var(--ink);border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--surface-2);outline:none}.branch-modal input:focus,.branch-modal textarea:focus,.branch-modal select:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-tint)}fieldset{border:1px solid var(--border);border-radius:12px;padding:12px;display:grid;gap:10px}legend{padding:0 5px;color:var(--ink-faint);font-size:10px;font-weight:900}.access-fieldset{background:var(--surface-2)}.access-toggle{display:flex!important;grid-template-columns:auto 1fr;align-items:center;gap:8px}.access-toggle input{width:16px!important;height:16px;padding:0}.access-note{margin:0;color:var(--ink-faint);font-size:10px;line-height:1.65}.error{color:var(--danger);margin:0;font-size:12px;font-weight:700}footer{display:flex;justify-content:flex-end;gap:8px}.empty{padding:30px}.credentials-card{width:min(470px,100%);padding:23px;border:1px solid var(--border);border-radius:20px;background:var(--surface);box-shadow:0 26px 78px #0005}.credentials-card h3{margin:5px 0 3px;font-size:18px}.credentials-card>p{margin:0 0 14px;color:var(--ink-faint);font-size:11px}.credential-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;margin-top:9px;padding:10px;border:1px solid var(--border);border-radius:11px;background:var(--surface-2)}.credential-row span{grid-column:1/-1;color:var(--ink-faint);font-size:9px;font-weight:800}.credential-row b{overflow:hidden;color:var(--ink);font-size:11.5px;text-overflow:ellipsis;white-space:nowrap}.credential-row button{padding:5px 8px;border:0;border-radius:7px;color:var(--primary-strong);background:var(--primary-tint);font:inherit;font-size:9px;font-weight:900}.credentials-warning{margin-top:13px!important;color:var(--warning)!important;line-height:1.65}.credentials-close{width:100%;margin-top:6px}@media(max-width:620px){.section-head{align-items:stretch;flex-direction:column}.head-actions{justify-content:space-between}.branch-grid{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}.branch-modal{margin:auto;padding:17px}.route-total{white-space:normal}.branch-actions{flex-wrap:wrap}.branch-actions .btn{min-width:calc(50% - 5px)}.status-action{width:100%}}
+.section-head{display:flex;justify-content:space-between;align-items:end;gap:16px;margin-bottom:20px}.eyebrow,.modal-kicker,.credential-kicker{color:var(--primary-strong);font-size:10px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.section-head h2{margin:4px 0 0;font-size:22px}.section-head p{margin:4px 0 0;color:var(--ink-faint);font-size:12px}.head-actions{display:flex;align-items:center;gap:10px}.route-total{font-size:11px;color:var(--ink-faint);white-space:nowrap}.route-total b{color:var(--primary-strong)}.btn{border:0;border-radius:10px;padding:9px 13px;font:inherit;font-size:12px;font-weight:800;cursor:pointer;transition:transform .18s ease,opacity .18s ease}.btn:hover:not(:disabled){transform:translateY(-1px)}.btn:disabled{cursor:wait;opacity:.65}.primary{background:var(--primary);color:#fff}.ghost{background:var(--surface-2);border:1px solid var(--border);color:var(--ink)}.danger{background:var(--danger-tint);color:var(--danger)}.page-error{margin:-6px 0 16px;padding:10px 12px;border-radius:10px;background:var(--danger-tint);color:var(--danger);font-size:12px;font-weight:700}.branch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px}.branch-card{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:17px;box-shadow:var(--shadow);display:flex;flex-direction:column;min-height:330px;transition:border-color .18s ease,opacity .18s ease}.branch-card.inactive{opacity:.78}.branch-head{display:flex;justify-content:space-between;gap:10px}.branch-title-row{display:flex;gap:10px;min-width:0}.branch-icon{width:38px;height:38px;flex:0 0 auto;display:grid;place-items:center;border-radius:11px;background:var(--primary-tint);color:var(--primary-strong);font-weight:900;font-size:19px}.branch-card h3{margin:1px 0 3px;font-size:15px;line-height:1.3}.branch-place{margin:0;color:var(--ink-faint);font-size:11px}.state{font-size:10px;font-weight:800;color:var(--success);background:var(--success-tint);padding:5px 8px;border-radius:20px;height:max-content;white-space:nowrap}.state.off{color:var(--danger);background:var(--danger-tint)}.alternate-names{min-height:17px;margin:12px 0 0;color:var(--ink-faint);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.branch-contact{display:flex;flex-direction:column;gap:3px;min-height:35px;margin-top:8px;color:var(--ink-soft);font-size:11px;overflow:hidden}.branch-contact span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.branch-flow{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:16px 0 13px}.branch-flow>div{padding:8px 7px;border-radius:10px;background:var(--surface-2);min-width:0}.branch-flow span{display:block;color:var(--ink-faint);font-size:9px;line-height:1.2}.branch-flow b{display:block;margin-top:4px;color:var(--ink);font-size:15px}.cash{border-top:1px solid var(--border);padding-top:11px;display:flex;justify-content:space-between;gap:10px;font-size:11px;color:var(--ink-faint)}.cash b{color:var(--primary-strong);font-size:12px;white-space:nowrap}.access-summary{min-height:42px;display:grid;gap:3px;margin-top:11px;padding:9px 10px;border-radius:10px;background:var(--surface-2)}.access-summary>div{display:flex;justify-content:space-between;gap:8px;color:var(--ink-faint);font-size:10px;font-weight:800}.access-summary b{color:var(--primary-strong);font-size:12px}.access-summary small{overflow:hidden;color:var(--ink-soft);font-size:9px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.branch-actions{display:flex;gap:8px;margin-top:auto;padding-top:15px}.branch-actions .btn{flex:1}.access-button{color:var(--primary-strong)}.status-action{font-size:11px}.modal-backdrop,.credential-backdrop{position:fixed;inset:0;background:#0a121180;display:grid;place-items:center;z-index:99;padding:20px;overflow:auto}.branch-modal{width:min(560px,100%);background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:21px;display:grid;gap:14px;box-shadow:0 24px 72px #0004}.branch-modal header{display:flex;justify-content:space-between;align-items:start;gap:14px}.branch-modal header h3{margin:4px 0 0;font-size:18px}.branch-modal header button{width:32px;height:32px;border:0;border-radius:9px;background:var(--surface-2);color:var(--ink);font-size:22px;line-height:1;cursor:pointer}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.branch-modal label{font-size:11px;font-weight:800;display:grid;gap:6px;color:var(--ink-soft)}.branch-modal input,.branch-modal textarea,.branch-modal select{width:100%;box-sizing:border-box;font:inherit;font-size:13px;color:var(--ink);border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--surface-2);outline:none}.branch-modal input:focus,.branch-modal textarea:focus,.branch-modal select:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-tint)}fieldset{border:1px solid var(--border);border-radius:12px;padding:12px;display:grid;gap:10px}legend{padding:0 5px;color:var(--ink-faint);font-size:10px;font-weight:900}.access-fieldset{background:var(--surface-2)}.access-toggle{display:flex!important;grid-template-columns:auto 1fr;align-items:center;gap:8px}.access-toggle input{width:16px!important;height:16px;padding:0}.permissions-fieldset{grid-template-columns:repeat(2,minmax(0,1fr));background:var(--surface-2)}.permissions-fieldset .access-note{grid-column:1/-1}.permission-switch{display:flex!important;grid-template-columns:auto 1fr;align-items:center;gap:8px;padding:7px 8px;border-radius:9px;background:var(--surface);font-size:10px!important}.permission-switch input{appearance:none;width:32px!important;height:18px;padding:0!important;margin:0;border-radius:999px!important;background:#9baead!important;position:relative;cursor:pointer}.permission-switch input::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:transform .18s}.permission-switch input:checked{background:var(--primary)!important}.permission-switch input:checked::after{transform:translateX(14px)}.permission-switch input:disabled{opacity:.72;cursor:not-allowed}.access-note{margin:0;color:var(--ink-faint);font-size:10px;line-height:1.65}.error{color:var(--danger);margin:0;font-size:12px;font-weight:700}footer{display:flex;justify-content:flex-end;gap:8px}.empty{padding:30px}.credentials-card{width:min(470px,100%);padding:23px;border:1px solid var(--border);border-radius:20px;background:var(--surface);box-shadow:0 26px 78px #0005}.credentials-card h3{margin:5px 0 3px;font-size:18px}.credentials-card>p{margin:0 0 14px;color:var(--ink-faint);font-size:11px}.credential-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;margin-top:9px;padding:10px;border:1px solid var(--border);border-radius:11px;background:var(--surface-2)}.credential-row span{grid-column:1/-1;color:var(--ink-faint);font-size:9px;font-weight:800}.credential-row b{overflow:hidden;color:var(--ink);font-size:11.5px;text-overflow:ellipsis;white-space:nowrap}.credential-row button{padding:5px 8px;border:0;border-radius:7px;color:var(--primary-strong);background:var(--primary-tint);font:inherit;font-size:9px;font-weight:900}.credentials-warning{margin-top:13px!important;color:var(--warning)!important;line-height:1.65}.credentials-close{width:100%;margin-top:6px}@media(max-width:620px){.section-head{align-items:stretch;flex-direction:column}.head-actions{justify-content:space-between}.branch-grid{grid-template-columns:1fr}.form-grid,.permissions-fieldset{grid-template-columns:1fr}.branch-modal{margin:auto;padding:17px}.route-total{white-space:normal}.branch-actions{flex-wrap:wrap}.branch-actions .btn{min-width:calc(50% - 5px)}.status-action{width:100%}}
 </style>

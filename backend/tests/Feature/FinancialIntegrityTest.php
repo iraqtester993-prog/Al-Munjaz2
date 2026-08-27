@@ -30,12 +30,13 @@ class FinancialIntegrityTest extends TestCase
         $this->seed(DemoSeeder::class);
     }
 
-    public function test_a_delivery_posts_one_collection_and_one_net_merchant_receivable(): void
+    public function test_a_delivery_posts_net_courier_collection_and_deducts_the_company_fee_from_qi_credit(): void
     {
         $merchant = User::where('username', 'تاجر')->firstOrFail();
         $courier = User::where('username', 'مندوب')->firstOrFail();
         $province = $merchant->provinces()->firstOrFail();
         $startingBalance = (int) $merchant->wallet->balance;
+        $startingCourierBalance = (int) $courier->wallet->balance;
 
         $order = Order::withoutGlobalScopes()->create([
             'tenant_id' => $merchant->tenant_id,
@@ -62,12 +63,13 @@ class FinancialIntegrityTest extends TestCase
         app(OrderWorkflowService::class)->changeStatus($order, 'delivered', $courier);
 
         $this->assertSame('delivered', $order->fresh()->status);
-        $this->assertSame($startingBalance + 25500, (int) $merchant->wallet->fresh()->balance);
+        $this->assertSame($startingBalance + 30000, (int) $merchant->wallet->fresh()->balance);
+        $this->assertSame($startingCourierBalance - 4500, (int) $courier->wallet->fresh()->balance);
         $this->assertDatabaseHas('transactions', [
             'order_id' => $order->id,
             'user_id' => $courier->id,
             'type' => 'collected',
-            'amount' => 30000,
+            'amount' => 25500,
             'direction' => 1,
         ]);
         $this->assertDatabaseHas('transactions', [
@@ -79,13 +81,13 @@ class FinancialIntegrityTest extends TestCase
         ]);
         $this->assertDatabaseHas('transactions', [
             'order_id' => $order->id,
-            'user_id' => $merchant->id,
+            'user_id' => $courier->id,
             'type' => 'delivery_fee',
             'amount' => 4500,
             'direction' => -1,
         ]);
         $this->assertSame(
-            $startingBalance + 25500,
+            $startingBalance + 30000,
             (int) Tenant::findOrFail($merchant->tenant_id)->wallet_balance,
         );
 
@@ -96,7 +98,8 @@ class FinancialIntegrityTest extends TestCase
             ->where('user_id', $merchant->id)
             ->where('type', 'settlement')
             ->count());
-        $this->assertSame($startingBalance + 25500, (int) $merchant->wallet->fresh()->balance);
+        $this->assertSame($startingBalance + 30000, (int) $merchant->wallet->fresh()->balance);
+        $this->assertSame($startingCourierBalance - 4500, (int) $courier->wallet->fresh()->balance);
     }
 
     public function test_pricing_uses_the_merchant_primary_province_as_route_origin(): void

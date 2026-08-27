@@ -247,12 +247,31 @@ function openEdit() {
     showForm.value = true
 }
 
+function recreateReturnedOrder(order) {
+    if (busy.value) return
+
+    busy.value = order.id
+    router.post(route('app.orders.recreate', order.id), {}, {
+        preserveScroll: true,
+        onSuccess: () => {
+            selected.value = null
+        },
+        onFinish: () => (busy.value = null),
+    })
+}
+
 function openSupport() {
     router.post(route('app.chats.open'), {}, { preserveScroll: true })
 }
 
 function openOrderChat(order) {
     router.post(route('app.chats.open'), { order_id: order.id }, { preserveScroll: true })
+}
+
+function openComplaint(order) {
+    // The order context accompanies a complaint so the destination thread
+    // never becomes an anonymous support conversation.
+    router.post(route('app.chats.open'), { order_id: order.id, complaint: true }, { preserveScroll: true })
 }
 
 function vehicleLabel(order) {
@@ -284,6 +303,13 @@ function customerName(order) {
 
 function customerAddress(order) {
     return localizedOrderValue(order, 'address')
+}
+
+function canViewCustomerPhone(order) {
+    if (!props.isCourier) return true
+
+    return Boolean(order?.courier_id)
+        && ['courier', 'delivered', 'returned'].includes(order?.status)
 }
 
 function pickupRemaining(order) {
@@ -346,7 +372,7 @@ function formatDateTime(value) {
     if (!value) return '—'
 
     try {
-        const language = { ar: 'ar-IQ', en: 'en-US', ku: 'ku-IQ' }[locale.value] || 'ar-IQ'
+        const language = { ar: 'ar-IQ-u-nu-latn', en: 'en-US', ku: 'ku-IQ-u-nu-latn' }[locale.value] || 'en-US'
         return new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
     } catch {
         return value
@@ -476,7 +502,8 @@ onUnmounted(() => window.clearInterval(ticker))
                 </div>
                 <div class="detail-row">
                     <span class="text-muted">{{ t('Phone') }}</span>
-                    <b class="mono">{{ selected.phone }}{{ selected.phone2 ? ' / ' + selected.phone2 : '' }}</b>
+                    <b v-if="canViewCustomerPhone(selected)" class="mono">{{ selected.phone }}{{ selected.phone2 ? ' / ' + selected.phone2 : '' }}</b>
+                    <b v-else class="customer-phone-locked" :aria-label="t('Phone')">•••••••••••</b>
                 </div>
                 <section v-if="isCourier && hasPickupLocation(selected)" class="mobile-pickup-location-card">
                     <div class="mobile-pickup-location-head">
@@ -607,8 +634,17 @@ onUnmounted(() => window.clearInterval(ticker))
                     {{ isCourier ? t('Chat with merchant') : t('Chat with courier') }}
                 </button>
 
-                <button v-if="['approved', 'courier'].includes(selected.status)" class="order-complaint" type="button" @click="openSupport">
+                <button v-if="!isCourier && ['approved', 'courier'].includes(selected.status)" class="order-complaint" type="button" @click="openComplaint(selected)">
                     {{ t('Contact Support') }}
+                </button>
+
+                <button v-else-if="['approved', 'courier'].includes(selected.status)" class="order-complaint" type="button" @click="openSupport">
+                    {{ t('Contact Support') }}
+                </button>
+
+                <button v-if="!isCourier && selected.status === 'returned'" class="order-recreate" type="button" :disabled="busy === selected.id" @click="recreateReturnedOrder(selected)">
+                    <span v-if="busy === selected.id" class="loader"></span>
+                    <span v-else>{{ t('Add New Order') }}</span>
                 </button>
 
                 <button v-if="!isCourier && selected.status === 'pending'" class="btn btn-ghost" style="width: 100%; margin-top: 10px" @click="openEdit">{{ t('Edit') }}</button>
@@ -625,6 +661,8 @@ onUnmounted(() => window.clearInterval(ticker))
 .mobile-pickup-location-card{display:grid;gap:8px;margin:14px 0;padding:13px;border:1.5px solid color-mix(in srgb,var(--success) 42%,var(--border));border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--success-tint) 72%,var(--surface)),var(--surface))}.mobile-pickup-location-head{display:flex;align-items:center;gap:9px}.mobile-pickup-location-icon{display:grid;place-items:center;width:38px;height:38px;flex:none;border-radius:11px;background:var(--success);color:#fff}.mobile-pickup-location-head span:last-child{display:grid;gap:2px;min-width:0}.mobile-pickup-location-head small{color:var(--ink-faint);font-size:9.5px;font-weight:800}.mobile-pickup-location-head b{overflow:hidden;color:var(--ink);font-size:12px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.mobile-pickup-location-card p{margin:0;color:var(--ink-soft);font-size:10px;font-weight:700;line-height:1.55}.mobile-pickup-location-action{display:flex;align-items:center;justify-content:center;gap:6px;min-height:38px;border-radius:10px;background:var(--primary);color:#fff;font-size:10.5px;font-weight:900;text-decoration:none;box-shadow:0 4px 10px rgba(11,110,104,.16)}
 .order-complaint{display:flex;align-items:center;justify-content:center;width:100%;margin-top:10px;padding:9px 12px;border:1px solid color-mix(in srgb,var(--danger) 24%,transparent);border-radius:10px;background:color-mix(in srgb,var(--danger-tint) 82%,transparent);color:var(--danger);font:inherit;font-size:11px;font-weight:900;cursor:pointer}
 .order-chat{border-color:color-mix(in srgb,var(--primary) 28%,transparent);background:var(--primary-tint);color:var(--primary-strong)}
+.customer-phone-locked{letter-spacing:1px;color:var(--ink-faint);font-size:12px}
+.order-recreate{display:flex;align-items:center;justify-content:center;width:100%;min-height:39px;margin-top:10px;border:1px solid color-mix(in srgb,var(--primary) 28%,transparent);border-radius:10px;background:var(--primary-tint);color:var(--primary-strong);font:900 11px var(--font);cursor:pointer}.order-recreate:disabled{opacity:.6;cursor:wait}
 .return-flow{display:grid;gap:10px;margin-top:15px;padding:13px;border:1px solid color-mix(in srgb,var(--danger) 30%,var(--border));border-radius:14px;background:color-mix(in srgb,var(--danger-tint) 48%,var(--surface))}.return-flow h4{margin:0;color:var(--ink);font-size:13px;font-weight:900}.return-flow p{margin:0;color:var(--ink-soft);font-size:10.5px;font-weight:700;line-height:1.65}.return-flow-button{width:100%;min-height:39px}.return-flow-cancel{border:0;background:transparent;color:var(--ink-soft);font:800 11px var(--font);cursor:pointer}.return-fee-field{display:flex;align-items:center;gap:8px;border:1px solid color-mix(in srgb,var(--danger) 26%,var(--border));border-radius:10px;background:var(--surface);padding:0 10px}.return-fee-field input{width:100%;min-height:39px;border:0;outline:0;background:transparent;color:var(--ink);font:900 14px var(--font)}.return-fee-field span{color:var(--ink-faint);font-size:10px;font-weight:800}.return-fee-presets{display:flex;flex-wrap:wrap;gap:6px}.return-fee-presets button{border:0;border-radius:8px;background:var(--surface-2);color:var(--ink-soft);font:800 10px var(--font);padding:6px 9px;cursor:pointer}.return-fee-summary{padding:8px 10px;border-radius:9px;background:var(--surface);color:var(--danger);font-size:11px}.return-confirmation{border-color:color-mix(in srgb,var(--accent) 32%,var(--border));background:color-mix(in srgb,var(--accent-tint) 50%,var(--surface))}.return-confirmation .return-fee-summary{color:var(--accent)}
 .courier-orders-overview .merchant-status-grid{gap:10px}
 .mobile-operational-section{margin:15px 0}.mobile-operational-section h4{margin:0 0 9px;color:var(--ink);font-size:12px;font-weight:900}.mobile-branch-route{display:grid;gap:5px;margin-top:9px;padding:11px 12px;border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border));border-radius:12px;background:color-mix(in srgb,var(--primary-tint) 62%,var(--surface));color:var(--primary-strong)}.mobile-route-label{font-size:10px;font-weight:900;color:var(--ink-soft)}.mobile-branch-route>b{font-size:12px}.mobile-branch-route small{color:var(--ink-soft);font-size:10px;font-weight:700}.mobile-order-timeline{display:grid;gap:0}.mobile-timeline-event{display:grid;grid-template-columns:28px 1fr;gap:9px;min-height:57px}.mobile-timeline-rail{position:relative;display:flex;justify-content:center}.mobile-timeline-rail::after{position:absolute;top:24px;bottom:-3px;width:1px;background:var(--border);content:""}.mobile-timeline-event:last-child .mobile-timeline-rail::after{display:none}.mobile-timeline-marker{position:relative;z-index:1;display:grid;place-items:center;width:23px;height:23px;border:1px solid var(--border);border-radius:50%;background:var(--surface);color:var(--ink-soft);font-size:11px;font-weight:900}.mobile-timeline-marker.is-created{border-color:color-mix(in srgb,var(--primary) 40%,var(--border));background:var(--primary-tint);color:var(--primary-strong)}.mobile-timeline-marker.is-status{border-color:color-mix(in srgb,var(--success) 44%,var(--border));background:var(--success-tint);color:var(--success)}.mobile-timeline-marker.is-movement{border-color:color-mix(in srgb,var(--accent) 42%,var(--border));background:var(--accent-tint);color:var(--accent)}.mobile-timeline-copy{display:grid;gap:2px;padding:1px 0 14px}.mobile-timeline-copy>b{font-size:11px;color:var(--ink)}.mobile-timeline-copy p{margin:0;color:var(--ink-soft);font-size:10px;line-height:1.55}.mobile-timeline-copy time{color:var(--ink-faint);font-size:9px}

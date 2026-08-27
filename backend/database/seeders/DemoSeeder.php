@@ -99,6 +99,22 @@ class DemoSeeder extends Seeder
         if ($baghdad = Province::query()->where('name_ar', 'بغداد')->value('id')) {
             $merchant->provinces()->syncWithoutDetaching([$baghdad => ['is_primary' => true]]);
             $courier->provinces()->syncWithoutDetaching([$baghdad => ['is_primary' => true]]);
+
+            // The platform network owns the operating branch selected on the
+            // mobile login screen. Keeping one active reference branch in the
+            // demo data lets registration, token clients, and branch-isolated
+            // queues exercise the exact same rule as production.
+            Branch::withoutGlobalScopes()->updateOrCreate([
+                'tenant_id' => Tenant::platform()->id,
+                'province_id' => $baghdad,
+            ], [
+                'code' => 'BGD-OPS',
+                'name_ar' => 'فرع بغداد التشغيلي',
+                'name_en' => 'Baghdad Operations',
+                'city' => 'بغداد',
+                'is_platform_managed' => true,
+                'is_active' => true,
+            ]);
         }
 
         Branch::updateOrCreate(

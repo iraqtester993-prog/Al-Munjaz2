@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ActivityLog;
+use App\Models\Branch;
 use App\Models\MobileSlide;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -13,15 +14,28 @@ use Inertia\Inertia;
 
 class AdminMobileContentController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
         return Inertia::render('Admin/MobileContent', [
             'slides' => MobileSlide::query()
+                ->with('branch:id,name_ar,name_en,name_ku,city')
                 ->orderBy('sort_order')
                 ->orderBy('id')
                 ->get()
                 ->map(fn (MobileSlide $slide) => $slide->dashboardPayload())
                 ->values(),
+            'branches' => Branch::withoutGlobalScopes()
+                ->where('is_platform_managed', true)
+                ->where('is_active', true)
+                ->orderBy('name_ar')
+                ->get(['id', 'name_ar', 'name_en', 'name_ku', 'city'])
+                ->map(fn (Branch $branch) => [
+                    'id' => $branch->id,
+                    'name_ar' => $branch->name_ar,
+                    'name_en' => $branch->name_en,
+                    'name_ku' => $branch->name_ku,
+                    'city' => $branch->city,
+                ])->values(),
         ]);
     }
 
@@ -71,10 +85,11 @@ class AdminMobileContentController extends Controller
     }
 
     /** @return array<string, mixed> */
-    private function validatedData(Request $request): array
+    protected function validatedData(Request $request): array
     {
         $data = $request->validate([
             'audience' => ['required', Rule::in(MobileSlide::AUDIENCES)],
+            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'title_ar' => ['required', 'string', 'max:160'],
             'title_en' => ['nullable', 'string', 'max:160'],
             'title_ku' => ['nullable', 'string', 'max:160'],
@@ -118,6 +133,16 @@ class AdminMobileContentController extends Controller
         }
         $data['title_ar'] = (string) $data['title_ar'];
 
+        if (! empty($data['branch_id']) && ! Branch::withoutGlobalScopes()
+            ->whereKey($data['branch_id'])
+            ->where('is_platform_managed', true)
+            ->where('is_active', true)
+            ->exists()) {
+            throw ValidationException::withMessages([
+                'branch_id' => __('Choose an active operational branch.'),
+            ]);
+        }
+
         return $data;
     }
 
@@ -125,7 +150,7 @@ class AdminMobileContentController extends Controller
      * @param array<string, mixed> $data
      * @return array<string, mixed>
      */
-    private function withUploadedImage(Request $request, array $data, ?MobileSlide $existing = null): array
+    protected function withUploadedImage(Request $request, array $data, ?MobileSlide $existing = null): array
     {
         unset($data['image']);
 
@@ -144,7 +169,7 @@ class AdminMobileContentController extends Controller
     }
 
     /** @param array<string, mixed> $data */
-    private function record(Request $request, string $action, MobileSlide $slide, array $data): void
+    protected function record(Request $request, string $action, MobileSlide $slide, array $data): void
     {
         ActivityLog::create([
             'tenant_id' => $request->user()->tenant_id,

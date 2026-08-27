@@ -8,7 +8,6 @@ use App\Models\Document;
 use App\Models\Notification;
 use App\Models\Order;
 use App\Models\Scopes\TenantScope;
-use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -19,7 +18,22 @@ class AdminUserController extends Controller
 {
     public function merchants(Request $request)
     {
-        return $this->roster('merchant', $request);
+        // Merchants are operational accounts, not merely tenant records.  A
+        // tenant can legitimately have more than one merchant operator, so
+        // the dashboard must list and manage the actual accounts directly.
+        $users = User::query()
+            ->with(['tenant.plan', 'wallet', 'provinces'])
+            ->where('role', 'merchant')
+            ->orderBy('name')
+            ->get();
+
+        $rows = $users->map(fn (User $user) => $this->merchantRow($user));
+
+        return Inertia::render('Admin/Roster', [
+            'role' => 'merchant',
+            'rows' => $rows->values(),
+            'filters' => $this->statusFilters($rows),
+        ]);
     }
 
     public function couriers(Request $request)
@@ -44,12 +58,7 @@ class AdminUserController extends Controller
             ->get();
 
         $rows = $users->map(fn (User $user) => $this->courierRow($user));
-        $filters = [
-            'all' => $rows->count(),
-            'active' => $rows->where('status', 'active')->count(),
-            'pending' => $rows->where('status', 'pending')->count(),
-            'suspended' => $rows->where('status', 'suspended')->count(),
-        ];
+        $filters = $this->statusFilters($rows);
         $roleFilters = ['all' => (clone $base)->count()];
         foreach (User::COURIER_ROLES as $courierRole) {
             $roleFilters[$courierRole] = (clone $base)->where('role', $courierRole)->count();
@@ -64,65 +73,18 @@ class AdminUserController extends Controller
         ]);
     }
 
-    protected function roster(string $role, Request $request)
+    /**
+     * @param \Illuminate\Support\Collection<int, array<string, mixed>> $rows
+     * @return array<string, int>
+     */
+    private function statusFilters($rows): array
     {
-        $kind = $role === 'courier' ? 'courier' : 'merchant';
-
-        $tenants = Tenant::query()
-            ->where('kind', $kind)
-            ->with('plan')
-            ->withCount('users')
-            ->get()
-            ->map(function (Tenant $tenant) use ($role) {
-                $user = $tenant->users()->first();
-
-                $stats = $role === 'courier'
-                    ? $this->courierStats($user)
-                    : $this->merchantStats($tenant);
-
-                return [
-                    'id' => $tenant->id,
-                    'name' => $tenant->name,
-                    'slug' => $tenant->slug,
-                    'status' => $tenant->status,
-                    'plan' => $tenant->plan?->slug,
-                    'trial_ends_at' => $tenant->trial_ends_at?->toDateString(),
-                    // Wallet belongs to the merchant account and is the
-                    // canonical balance used for payout authorization.
-                    'wallet_balance' => $user?->wallet?->balance ?? 0,
-                    'user' => $user ? [
-                        'id' => $user->id,
-                        'name' => $user->name,
-                        'phone' => $user->phone,
-                        'username' => $user->username,
-                        'status' => $user->status,
-                        'vehicle' => $user->vehicle,
-                        'is_online' => $user->is_online,
-                    ] : null,
-                    'docs' => Document::query()->where('user_id', $user?->id)->where('status', 'pending')->count(),
-                    'pendingDocs' => Document::query()->where('user_id', $user?->id)->where('status', 'pending')->get(['id'])->pluck('id'),
-                    'documents' => Document::query()->where('user_id', $user?->id)->latest('id')->get()->map(fn (Document $document) => [
-                        'id' => $document->id,
-                        'type' => $document->type,
-                        'status' => $document->status,
-                        'url' => route('admin.users.documents.show', [$user->id, $document->id]),
-                    ]),
-                    ...$stats,
-                ];
-            });
-
-        $filters = [
-            'all' => $tenants->count(),
-            'active' => $tenants->where('status', 'active')->count(),
-            'pending' => $tenants->where('status', 'pending')->count(),
-            'suspended' => $tenants->where('status', 'suspended')->count(),
+        return [
+            'all' => $rows->count(),
+            'active' => $rows->where('status', 'active')->count(),
+            'pending' => $rows->where('status', 'pending')->count(),
+            'suspended' => $rows->where('status', 'suspended')->count(),
         ];
-
-        return Inertia::render('Admin/Roster', [
-            'role' => $role,
-            'rows' => $tenants->values(),
-            'filters' => $filters,
-        ]);
     }
 
     protected function courierStats(?User $user): array
@@ -156,14 +118,68 @@ class AdminUserController extends Controller
         ];
     }
 
-    protected function merchantStats(Tenant $tenant): array
+    protected function merchantStats(User $merchant): array
     {
+        // New orders keep a direct merchant id.  The `created_by` fallback
+        // keeps historic records visible without making another merchant's
+        // data appear in this account review screen.
+        $orders = Order::withoutGlobalScope(TenantScope::class)
+            ->where(function ($query) use ($merchant): void {
+                $query
+                    ->where('merchant_id', $merchant->id)
+                    ->orWhere('created_by', $merchant->id);
+            });
+
         return [
-            'orders' => Order::withoutGlobalScope(TenantScope::class)->where('tenant_id', $tenant->id)->count(),
-            'delivered' => Order::withoutGlobalScope(TenantScope::class)->where('tenant_id', $tenant->id)->where('status', 'delivered')->count(),
-            'returned' => Order::withoutGlobalScope(TenantScope::class)->where('tenant_id', $tenant->id)->where('status', 'returned')->count(),
-            'collected' => Order::withoutGlobalScope(TenantScope::class)->where('tenant_id', $tenant->id)->where('status', 'delivered')->sum('price'),
+            'orders' => (clone $orders)->count(),
+            'delivered' => (clone $orders)->where('status', 'delivered')->count(),
+            'returned' => (clone $orders)->where('status', 'returned')->count(),
+            'collected' => (clone $orders)->where('status', 'delivered')->sum('price'),
         ];
+    }
+
+    /**
+     * Administrators can correct operational account data without changing a
+     * user's role or bypassing the separate activation/review workflow.
+     */
+    public function update(Request $request, User $user)
+    {
+        abort_unless($user->role === 'merchant' || $user->isCourierRole(), 404);
+
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:120'],
+            'username' => ['required', 'string', 'max:60', Rule::unique('users', 'username')->ignore($user->id)],
+            'email' => ['nullable', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
+            'phone' => ['required', 'string', 'max:30', Rule::unique('users', 'phone')->ignore($user->id)],
+            'shop_name' => ['nullable', 'string', 'max:120'],
+            'address' => ['nullable', 'string', 'max:255'],
+            'vehicle' => ['nullable', Rule::in(['bike', 'sedan', 'suv', 'truck'])],
+        ]);
+
+        $user->update([
+            'name' => $data['name'],
+            'username' => $data['username'],
+            'email' => $data['email'] ?? null,
+            'phone' => $data['phone'],
+            'shop_name' => $user->role === 'merchant' ? ($data['shop_name'] ?? null) : null,
+            'address' => $data['address'] ?? null,
+            'vehicle' => $user->isCourierRole() ? ($data['vehicle'] ?? null) : null,
+        ]);
+
+        ActivityLog::create([
+            'tenant_id' => $user->tenant_id,
+            'user_id' => $request->user()->id,
+            'action' => 'user.profile_updated_by_admin',
+            'subject_type' => User::class,
+            'subject_id' => $user->id,
+            'data' => [
+                'role' => $user->role,
+                'fields' => ['name', 'username', 'email', 'phone', 'shop_name', 'address', 'vehicle'],
+            ],
+            'ip' => $request->ip(),
+        ]);
+
+        return back()->with('success', __('Account data updated successfully.'));
     }
 
     public function status(Request $request, User $user)
@@ -180,13 +196,11 @@ class AdminUserController extends Controller
         }
 
         $user->update(['status' => $request->input('status')]);
-        // Platform administrators may belong to the platform tenant. Their
-        // personal access status must never suspend the shared operational
-        // network. Only customer and courier account states mirror into their
-        // own tenant record.
-        if (in_array($user->role, ['merchant', ...User::COURIER_ROLES], true)) {
-            $user->tenant?->update(['status' => $request->input('status')]);
-        }
+        // Account moderation is deliberately account-scoped.  A tenant may
+        // have several merchant operators or couriers, so suspending one
+        // person must not silently suspend every other account in that
+        // organisation.  Organisation-level suspension remains a separate
+        // platform/company operation.
 
         Notification::create([
             'tenant_id' => $user->tenant_id,
@@ -228,6 +242,7 @@ class AdminUserController extends Controller
             'plan' => $user->tenant?->plan?->slug,
             'trial_ends_at' => $user->tenant?->trial_ends_at?->toDateString(),
             'wallet_balance' => $user->wallet?->balance ?? $user->tenant?->wallet_balance ?? 0,
+            'cash_budget' => $user->wallet?->budget ?? 0,
             'user' => [
                 'id' => $user->id,
                 'name' => $user->name,
@@ -236,7 +251,12 @@ class AdminUserController extends Controller
                 'status' => $user->status,
                 'role' => $user->role,
                 'vehicle' => $user->vehicle,
+                'email' => $user->email,
+                'shop_name' => $user->shop_name,
+                'address' => $user->address,
+                'identity_number' => $user->identity_number,
                 'is_online' => $user->is_online,
+                'created_at' => $user->created_at?->toDateString(),
                 'provinces' => $user->provinces->map(fn ($province) => [
                     'id' => $province->id,
                     'name_ar' => $province->name_ar,
@@ -251,6 +271,54 @@ class AdminUserController extends Controller
                 'url' => route('admin.users.documents.show', [$user->id, $document->id]),
             ])->values(),
             ...$this->courierStats($user),
+        ];
+    }
+
+    private function merchantRow(User $user): array
+    {
+        $documents = Document::query()
+            ->where('user_id', $user->id)
+            ->latest('id')
+            ->get();
+
+        return [
+            'id' => $user->id,
+            'tenant_id' => $user->tenant_id,
+            'name' => $user->name,
+            'slug' => $user->tenant?->slug,
+            'status' => $user->status,
+            'role' => $user->role,
+            'plan' => $user->tenant?->plan?->slug,
+            'trial_ends_at' => $user->tenant?->trial_ends_at?->toDateString(),
+            'wallet_balance' => $user->wallet?->balance ?? 0,
+            'cash_budget' => $user->wallet?->budget ?? 0,
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'phone' => $user->phone,
+                'username' => $user->username,
+                'email' => $user->email,
+                'status' => $user->status,
+                'role' => $user->role,
+                'shop_name' => $user->shop_name,
+                'address' => $user->address,
+                'identity_number' => $user->identity_number,
+                'is_online' => $user->is_online,
+                'created_at' => $user->created_at?->toDateString(),
+                'provinces' => $user->provinces->map(fn ($province) => [
+                    'id' => $province->id,
+                    'name_ar' => $province->name_ar,
+                ])->values(),
+            ],
+            'docs' => $documents->where('status', 'pending')->count(),
+            'pendingDocs' => $documents->where('status', 'pending')->pluck('id')->values(),
+            'documents' => $documents->map(fn (Document $document) => [
+                'id' => $document->id,
+                'type' => $document->type,
+                'status' => $document->status,
+                'url' => route('admin.users.documents.show', [$user->id, $document->id]),
+            ])->values(),
+            ...$this->merchantStats($user),
         ];
     }
 

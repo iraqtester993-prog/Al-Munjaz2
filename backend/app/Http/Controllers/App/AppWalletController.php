@@ -51,6 +51,7 @@ class AppWalletController extends Controller
                 'status' => $financeRequest->status,
                 'amount' => (int) $financeRequest->amount,
                 'approved_amount' => $financeRequest->approved_amount !== null ? (int) $financeRequest->approved_amount : null,
+                'external_reference' => $financeRequest->external_reference,
                 'note' => $financeRequest->note,
                 'decision_note' => $financeRequest->decision_note,
                 'created_at' => $financeRequest->created_at?->toIso8601String(),
@@ -88,9 +89,10 @@ class AppWalletController extends Controller
 
         return Inertia::render('Mobile/Wallet', [
             'isCourier' => $isCourier,
-            // A courier's cash position is derived from delivered orders and
-            // approved handovers, not an editable/demo wallet balance.
-            'balance' => $isCourier ? $finance->cashOnHand($user->id) : (int) $wallet->balance,
+            // Courier balance is prepaid Qi/administrative credit. It is
+            // deliberately separate from their physical cash budget and
+            // net collections so the company-fee deduction is transparent.
+            'balance' => (int) $wallet->balance,
             'budget' => (int) $wallet->budget,
             'transactions' => $transactions,
             'requests' => $requests,
@@ -147,14 +149,18 @@ class AppWalletController extends Controller
         $deliveries = app(CourierOrderAccess::class)->assigned($user);
         $completed = (int) (clone $deliveries)->where('status', 'delivered')->count();
         $returned = (int) (clone $deliveries)->where('status', 'returned')->count();
-        $collections = (int) (clone $deliveries)->where('status', 'delivered')->sum('price');
+        $collections = $finance->collectionsTotal($user);
+        $companyFees = (int) (clone $deliveries)
+            ->where('status', 'delivered')
+            ->get(['price', 'fee'])
+            ->sum(fn (Order $order): int => min(max(0, (int) $order->price), max(0, (int) $order->fee)));
 
         return [
             'completed_deliveries' => $completed,
             'returned_deliveries' => $returned,
             'collections_total' => $collections,
+            'company_fees_total' => $companyFees,
             'cash_on_hand' => $finance->cashOnHand($user->id),
-            'recharge_capacity' => $finance->rechargeCapacity($user->id),
         ];
     }
 
@@ -212,9 +218,40 @@ class AppWalletController extends Controller
 
         $data = $request->validate([
             'amount' => ['required', 'integer', 'min:1000'],
+            'qi_reference' => ['required', 'string', 'max:120'],
             'note' => ['nullable', 'string', 'max:1000'],
         ]);
 
+        $qiReference = trim((string) $data['qi_reference']);
+        if ($qiReference === '') {
+            return back()->withErrors(['qi_reference' => __('Qi transaction reference is required.')]);
+        }
+
+        $finance->submit(
+            $user,
+            FinanceRequest::QI_TOPUP,
+            (int) $data['amount'],
+            null,
+            $data['note'] ?? null,
+            $qiReference,
+        );
+
+        return back()->with('success', __('Qi balance top-up request sent to administration.'));
+    }
+
+    public function budget(Request $request, FinanceRequestService $finance)
+    {
+        $user = $request->user();
+        abort_unless($user->isCourierRole(), 403);
+
+        $data = $request->validate([
+            'amount' => ['required', 'integer', 'min:1000'],
+            'note' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        // Cash budget is a declaration of the courier's available physical
+        // cash. It is posted only after administration has verified it, so a
+        // browser request can never self-credit a courier.
         $finance->submit(
             $user,
             FinanceRequest::BUDGET_RECHARGE,
@@ -223,13 +260,6 @@ class AppWalletController extends Controller
             $data['note'] ?? null,
         );
 
-        return back()->with('success', __('Budget recharge request sent to administration.'));
-    }
-
-    public function budget(Request $request)
-    {
-        // Kept as a forbidden compatibility endpoint for installed clients
-        // from older releases. New releases use the request/approval flow.
-        abort(403, __('Unauthorized access'));
+        return back()->with('success', __('Cash budget request sent to administration.'));
     }
 }

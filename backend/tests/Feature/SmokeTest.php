@@ -856,18 +856,26 @@ class SmokeTest extends TestCase
     {
         $admin = User::where('role', 'admin')->firstOrFail();
         $order = Order::where('status', 'pending')->firstOrFail();
+        // Baghdad is already represented by the seeded operating branch.
+        // A platform branch is deliberately one-per-governorate, so this test
+        // creates two distinct operational areas rather than bypassing the
+        // branch/province invariant.
+        $originProvince = Province::where('name_ar', 'البصرة')->firstOrFail();
+        $destinationProvince = Province::where('name_ar', 'أربيل')->firstOrFail();
 
         $this->actingAs($admin)->post('/dashboard/branches', [
             'code' => 'OPS-ORIGIN',
             'name_ar' => 'فرع شبكة الاستلام',
-            'city' => 'بغداد',
+            'city' => 'البصرة',
+            'province_id' => $originProvince->id,
             'phone' => '07710000000',
         ])->assertRedirect();
 
         $this->actingAs($admin)->post('/dashboard/branches', [
             'code' => 'OPS-DESTINATION',
             'name_ar' => 'فرع شبكة التوصيل',
-            'city' => 'البصرة',
+            'city' => 'أربيل',
+            'province_id' => $destinationProvince->id,
             'phone' => '07720000000',
         ])->assertRedirect();
 
@@ -913,6 +921,7 @@ class SmokeTest extends TestCase
     {
         $admin = User::where('role', 'admin')->firstOrFail();
         $platform = Tenant::platform();
+        $province = Province::where('name_ar', 'البصرة')->firstOrFail();
         $branch = Branch::withoutGlobalScopes()->create([
             'tenant_id' => $platform->id,
             'is_platform_managed' => true,
@@ -920,7 +929,8 @@ class SmokeTest extends TestCase
             'name_ar' => 'فرع العمليات',
             'name_en' => 'Operations Branch',
             'name_ku' => 'لقی کارپێکردن',
-            'city' => 'بغداد',
+            'city' => 'البصرة',
+            'province_id' => $province->id,
             'phone' => '07710000111',
             'address' => 'الكرادة',
             'is_active' => true,
@@ -930,17 +940,19 @@ class SmokeTest extends TestCase
         $outbound->update(['origin_branch_id' => $branch->id]);
         $inbound->update(['destination_branch_id' => $branch->id]);
 
-        $this->actingAs($admin)->get('/dashboard/branches')
+        $response = $this->actingAs($admin)->get('/dashboard/branches')
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Admin/Branches')
-                ->has('branches', 1)
-                ->where('branches.0.id', $branch->id)
-                ->where('branches.0.outbound_orders_count', 1)
-                ->where('branches.0.inbound_orders_count', 1)
-                ->where('branches.0.name_en', 'Operations Branch')
-                ->where('branches.0.name_ku', 'لقی کارپێکردن')
+                ->has('branches', 2)
             );
+
+        $branchPayload = collect($response->inertiaProps('branches'))->firstWhere('id', $branch->id);
+        $this->assertNotNull($branchPayload);
+        $this->assertSame(1, data_get($branchPayload, 'outbound_orders_count'));
+        $this->assertSame(1, data_get($branchPayload, 'inbound_orders_count'));
+        $this->assertSame('Operations Branch', data_get($branchPayload, 'name_en'));
+        $this->assertSame('لقی کارپێکردن', data_get($branchPayload, 'name_ku'));
 
         $this->actingAs($admin)->put("/dashboard/branches/{$branch->id}", [
             'code' => 'ops-manage-2',
@@ -948,6 +960,7 @@ class SmokeTest extends TestCase
             'name_en' => 'Baghdad Operations Branch',
             'name_ku' => 'لقی کارپێکردنی بەغدا',
             'city' => 'بغداد',
+            'province_id' => $province->id,
             'phone' => '07710000222',
             'address' => 'الكرادة — شارع 52',
         ])->assertRedirect();

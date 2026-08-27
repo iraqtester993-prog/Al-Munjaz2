@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { router } from '@inertiajs/vue3'
+import { router, useForm } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
 
@@ -14,6 +14,17 @@ const props = defineProps({
 
 const active = ref('all')
 const activeRole = ref(props.selectedRole)
+const detailsRow = ref(null)
+const editingRow = ref(null)
+const editForm = useForm({
+    name: '',
+    username: '',
+    email: '',
+    phone: '',
+    shop_name: '',
+    address: '',
+    vehicle: '',
+})
 
 const filterList = computed(() => [
     { key: 'all', label: t('All') },
@@ -101,6 +112,65 @@ function changeCourierRole(role) {
     activeRole.value = role
     router.get(route('admin.couriers'), { role }, { preserveScroll: true, preserveState: true, replace: true })
 }
+
+function provinceNames(row) {
+    return (row.user?.provinces || [])
+        .map((province) => province.name_ar || province.name_en || province.name_ku)
+        .filter(Boolean)
+        .join(' · ')
+}
+
+function openDetails(row) {
+    detailsRow.value = row
+}
+
+function closeDetails() {
+    detailsRow.value = null
+}
+
+function openEdit(row) {
+    if (!row.user) return
+    detailsRow.value = null
+    editingRow.value = row
+    editForm.clearErrors()
+    editForm.defaults({
+        name: row.user.name || '',
+        username: row.user.username || '',
+        email: row.user.email || '',
+        phone: row.user.phone || '',
+        shop_name: row.user.shop_name || '',
+        address: row.user.address || '',
+        vehicle: row.user.vehicle || '',
+    })
+    editForm.reset()
+}
+
+function closeEdit(force = false) {
+    if (editForm.processing && !force) return
+    editingRow.value = null
+    editForm.clearErrors()
+}
+
+function saveAccount() {
+    if (!editingRow.value?.user || editForm.processing) return
+
+    // This intentionally uses the same dashboard origin as the logged-in
+    // admin. It avoids a second hard-coded host and keeps the operation
+    // inside the authenticated dashboard session.
+    editForm.put(`/dashboard/users/${editingRow.value.user.id}`, {
+        preserveScroll: true,
+        onSuccess: () => closeEdit(true),
+    })
+}
+
+function vehicleLabel(value) {
+    return {
+        bike: t('Motorcycle'),
+        sedan: t('Car'),
+        suv: t('SUV'),
+        truck: t('Truck'),
+    }[value] || value || '—'
+}
 </script>
 
 <template>
@@ -139,20 +209,24 @@ function changeCourierRole(role) {
 
                 <div class="uc-meta">
                     <span>
-                        {{ t('Plan') }}
-                        <label>{{ row.plan || '—' }}</label>
+                        {{ t('Username') }}
+                        <label dir="ltr">{{ row.user?.username || '—' }}</label>
                     </span>
                     <span>
-                        {{ t('Wallet') }}
+                        {{ t('Balance') }}
                         <label class="mono">{{ fmt(row.wallet_balance) }} {{ t('IQD') }}</label>
                     </span>
                     <span v-if="isCourier">
-                        {{ t('Vehicle') }}
-                        <label>{{ row.user?.vehicle || '—' }}</label>
+                        {{ t('Budget') }}
+                        <label class="mono">{{ fmt(row.cash_budget) }} {{ t('IQD') }}</label>
                     </span>
-                    <span>
-                        {{ t('Trial until') }}
-                        <label>{{ row.trial_ends_at || '—' }}</label>
+                    <span v-else>
+                        {{ t('Shop Name') }}
+                        <label>{{ row.user?.shop_name || '—' }}</label>
+                    </span>
+                    <span v-if="provinceNames(row)">
+                        {{ t('Governorate') }}
+                        <label>{{ provinceNames(row) }}</label>
                     </span>
                 </div>
 
@@ -178,6 +252,8 @@ function changeCourierRole(role) {
                 </div>
 
                 <div style="display: flex; gap: 8px; flex-wrap: wrap">
+                    <button class="fbtn mini account-action" type="button" @click="openDetails(row)">{{ t('View Details') }}</button>
+                    <button class="fbtn mini account-action" type="button" @click="openEdit(row)">{{ t('Edit') }}</button>
                     <button v-if="row.status !== 'active'" class="fbtn mini" style="background: var(--success-tint); color: var(--success); border: none" @click="changeStatus(row, 'active')">{{ t('Activate') }}</button>
                     <button v-if="row.status === 'active'" class="fbtn mini" style="background: var(--warning-tint); color: var(--warning); border: none" @click="changeStatus(row, 'suspended')">{{ t('Suspend') }}</button>
                     <button v-if="row.status === 'pending'" class="fbtn mini" @click="changeStatus(row, 'rejected')">{{ t('Reject') }}</button>
@@ -185,10 +261,112 @@ function changeCourierRole(role) {
             </div>
         </div>
         <div v-else class="panel"><div class="empty">{{ t('No users found') }}</div></div>
+
+        <div v-if="detailsRow" class="dialog-backdrop" @click.self="closeDetails">
+            <section class="account-dialog" role="dialog" aria-modal="true" :aria-label="t('Account Details')">
+                <header class="dialog-header">
+                    <div>
+                        <small>{{ isCourier ? t('Courier') : t('Merchant') }}</small>
+                        <h3>{{ detailsRow.user?.name }}</h3>
+                    </div>
+                    <button type="button" :aria-label="t('Close')" @click="closeDetails">×</button>
+                </header>
+
+                <div class="account-summary">
+                    <span class="account-avatar">{{ detailsRow.user?.name?.charAt(0) }}</span>
+                    <div>
+                        <b>{{ detailsRow.user?.username }}</b>
+                        <small>{{ statusLabel(detailsRow.status) }} · {{ detailsRow.user?.is_online ? t('Online') : t('Offline') }}</small>
+                    </div>
+                    <button class="fbtn mini account-action" type="button" @click="openEdit(detailsRow)">{{ t('Edit') }}</button>
+                </div>
+
+                <dl class="account-data">
+                    <div><dt>{{ t('Phone') }}</dt><dd dir="ltr">{{ detailsRow.user?.phone || '—' }}</dd></div>
+                    <div><dt>{{ t('Email') }}</dt><dd dir="ltr">{{ detailsRow.user?.email || '—' }}</dd></div>
+                    <div><dt>{{ t('Governorate') }}</dt><dd>{{ provinceNames(detailsRow) || '—' }}</dd></div>
+                    <div><dt>{{ t('Created at') }}</dt><dd dir="ltr">{{ detailsRow.user?.created_at || '—' }}</dd></div>
+                    <div v-if="!isCourier"><dt>{{ t('Shop Name') }}</dt><dd>{{ detailsRow.user?.shop_name || '—' }}</dd></div>
+                    <div v-if="isCourier"><dt>{{ t('Vehicle') }}</dt><dd>{{ vehicleLabel(detailsRow.user?.vehicle) }}</dd></div>
+                    <div class="wide"><dt>{{ t('Address') }}</dt><dd>{{ detailsRow.user?.address || '—' }}</dd></div>
+                    <div v-if="detailsRow.user?.identity_number" class="wide"><dt>{{ t('Identity Number') }}</dt><dd dir="ltr">{{ detailsRow.user.identity_number }}</dd></div>
+                </dl>
+
+                <footer class="dialog-footer">
+                    <button class="fbtn mini" type="button" @click="closeDetails">{{ t('Close') }}</button>
+                </footer>
+            </section>
+        </div>
+
+        <div v-if="editingRow" class="dialog-backdrop" @click.self="closeEdit">
+            <form class="account-dialog" @submit.prevent="saveAccount">
+                <header class="dialog-header">
+                    <div>
+                        <small>{{ t('Account Details') }}</small>
+                        <h3>{{ t('Edit') }} · {{ editingRow.user?.name }}</h3>
+                    </div>
+                    <button type="button" :aria-label="t('Close')" @click="closeEdit">×</button>
+                </header>
+
+                <div class="edit-grid">
+                    <label>{{ t('Name') }}<input v-model="editForm.name" required maxlength="120" /></label>
+                    <label>{{ t('Username') }}<input v-model="editForm.username" required maxlength="60" dir="ltr" autocomplete="off" /></label>
+                    <label>{{ t('Phone') }}<input v-model="editForm.phone" required maxlength="30" dir="ltr" inputmode="tel" /></label>
+                    <label>{{ t('Email') }}<input v-model="editForm.email" type="email" maxlength="255" dir="ltr" /></label>
+                    <label v-if="!isCourier">{{ t('Shop Name') }}<input v-model="editForm.shop_name" maxlength="120" /></label>
+                    <label v-if="isCourier">{{ t('Vehicle') }}
+                        <select v-model="editForm.vehicle">
+                            <option value="">—</option>
+                            <option value="bike">{{ t('Motorcycle') }}</option>
+                            <option value="sedan">{{ t('Car') }}</option>
+                            <option value="suv">{{ t('SUV') }}</option>
+                            <option value="truck">{{ t('Truck') }}</option>
+                        </select>
+                    </label>
+                    <label class="wide">{{ t('Address') }}<textarea v-model="editForm.address" rows="3" maxlength="255" /></label>
+                </div>
+                <p v-if="Object.values(editForm.errors)[0]" class="form-error">{{ Object.values(editForm.errors)[0] }}</p>
+                <footer class="dialog-footer">
+                    <button class="fbtn mini" type="button" :disabled="editForm.processing" @click="closeEdit">{{ t('Cancel') }}</button>
+                    <button class="fbtn mini save-account" type="submit" :disabled="editForm.processing">{{ editForm.processing ? t('Saving…') : t('Save') }}</button>
+                </footer>
+            </form>
+        </div>
     </AdminShell>
 </template>
 
 <style scoped>
 .roster-role-filter { margin-bottom: 10px; }
 .courier-role-label { display: block; margin-top: 4px; color: var(--primary-strong); font-size: 9px; font-weight: 900; }
+.account-action { color: var(--primary-strong); background: var(--primary-tint); border: 0; }
+.dialog-backdrop { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(4, 12, 26, .62); backdrop-filter: blur(4px); }
+.account-dialog { width: min(100%, 600px); overflow: hidden; border: 1px solid var(--border); border-radius: 18px; color: var(--ink); background: var(--surface); box-shadow: 0 28px 76px rgba(0,0,0,.34); }
+.dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 17px 18px; border-bottom: 1px solid var(--border); }
+.dialog-header small { color: var(--primary); font-size: 9px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; }
+.dialog-header h3 { margin: 4px 0 0; font-size: 16px; }
+.dialog-header > button { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 9px; color: var(--ink-soft); background: var(--surface-2); font-size: 20px; cursor: pointer; }
+.account-summary { display: flex; align-items: center; gap: 10px; padding: 15px 18px; border-bottom: 1px solid var(--border); }
+.account-summary > div { display: grid; min-width: 0; gap: 2px; }
+.account-summary b { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.account-summary small { color: var(--ink-faint); font-size: 9px; font-weight: 700; }
+.account-summary .account-action { margin-inline-start: auto; }
+.account-avatar { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 11px; color: #062033; background: linear-gradient(135deg,var(--primary),#0ea5e9); font-size: 14px; font-weight: 900; }
+.account-data { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 0; margin: 0; padding: 0 18px; }
+.account-data > div { min-width: 0; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.account-data > div:nth-child(odd) { padding-inline-end: 14px; }
+.account-data > div:nth-child(even) { padding-inline-start: 14px; }
+.account-data .wide { grid-column: 1 / -1; padding-inline: 0; }
+.account-data dt { color: var(--ink-faint); font-size: 9px; font-weight: 850; }
+.account-data dd { overflow: hidden; margin: 4px 0 0; color: var(--ink); font-size: 11px; font-weight: 750; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
+.account-data .wide dd { white-space: normal; }
+.edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; padding: 18px; }
+.edit-grid label { display: grid; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 850; }
+.edit-grid .wide { grid-column: 1 / -1; }
+.edit-grid input,.edit-grid select,.edit-grid textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 10px; outline: 0; padding: 10px; color: var(--ink); background: var(--surface-2); font: 700 12px var(--font); }
+.edit-grid input:focus,.edit-grid select:focus,.edit-grid textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-tint); }
+.edit-grid textarea { resize: vertical; }
+.form-error { margin: -4px 18px 0; color: var(--danger); font-size: 10px; font-weight: 800; }
+.dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--border); }
+.save-account { color: #062033; background: linear-gradient(135deg,var(--primary),#0ea5e9); border: 0; }
+@media (max-width: 580px) { .dialog-backdrop { align-items: end; padding: 0; } .account-dialog { width: 100%; max-height: 92dvh; overflow-y: auto; border-radius: 18px 18px 0 0; } .account-data,.edit-grid { grid-template-columns: 1fr; } .account-data > div:nth-child(odd),.account-data > div:nth-child(even) { padding-inline: 0; } .dialog-footer { padding-bottom: max(14px, env(safe-area-inset-bottom)); } }
 </style>

@@ -6,6 +6,8 @@ import AdminShell from '../../Components/AdminShell.vue'
 
 const props = defineProps({
     slides: { type: Array, default: () => [] },
+    branches: { type: Array, default: () => [] },
+    branchMode: { type: Boolean, default: false },
 })
 
 const page = usePage()
@@ -16,13 +18,13 @@ const imagePreview = ref('')
 
 const text = {
     ar: {
-        title: 'محتوى التطبيق', eyebrow: 'مركز النشر', intro: 'تحكّم بالسلايدر الذي يظهر للتاجر والمندوب من نفس لوحة الإدارة.', new: 'إضافة سلايد', edit: 'تعديل السلايد', image: 'صورة السلايد', upload: 'رفع صورة', replace: 'استبدال الصورة', noImage: 'خلفية لونية تلقائية', audience: 'الفئة المستهدفة', all: 'الكل', merchant: 'التاجر', courier: 'المندوب', active: 'منشور الآن', order: 'ترتيب الظهور', schedule: 'جدولة النشر', starts: 'يبدأ في', ends: 'ينتهي في', Arabic: 'العربية', English: 'الإنجليزية', Kurdish: 'الكردية', heading: 'العنوان', body: 'النص التوضيحي', tag: 'وسم صغير', button: 'نص الزر', link: 'رابط الزر', save: 'حفظ السلايد', cancel: 'إلغاء', delete: 'حذف', empty: 'لا توجد سلايدات منشورة بعد. أضف أول رسالة تظهر في واجهة التطبيق.', published: 'منشور', hidden: 'مخفي', saveError: 'راجع الحقول المظللة ثم أعد المحاولة.', deleteConfirm: 'هل تريد حذف هذا السلايد نهائياً؟', preview: 'معاينة التطبيق', activeNow: 'ظاهر حالياً', scheduled: 'مجدول', expired: 'منتهي', audienceAll: 'للتاجر والمندوب', imageHint: 'PNG أو JPG أو WebP حتى 5 MB.', safeLink: 'مسار داخلي مثل /app/orders أو رابط https://', close: 'إغلاق', audienceHint: 'يظهر فقط للفئة المحددة أو للجميع.', calendarHint: 'اترك التاريخين فارغين للنشر المفتوح.', actionHint: 'اختياري — عند ضغط المستخدم على الزر.', unsaved: 'لا يظهر في التطبيق إلا بعد الحفظ والنشر.',
+        title: 'محتوى التطبيق', eyebrow: 'مركز النشر', intro: 'تحكّم بالسلايدر الذي يظهر للتاجر والمندوب من نفس لوحة الإدارة.', new: 'إضافة سلايد', edit: 'تعديل السلايد', image: 'صورة السلايد', upload: 'رفع صورة', replace: 'استبدال الصورة', noImage: 'خلفية لونية تلقائية', audience: 'الفئة المستهدفة', all: 'الكل', merchant: 'التاجر', courier: 'المندوب', active: 'منشور الآن', order: 'ترتيب الظهور', schedule: 'جدولة النشر', starts: 'يبدأ في', ends: 'ينتهي في', Arabic: 'العربية', English: 'الإنجليزية', Kurdish: 'الكردية', heading: 'العنوان', body: 'النص التوضيحي', tag: 'وسم صغير', button: 'نص الزر', link: 'رابط الزر', save: 'حفظ السلايد', cancel: 'إلغاء', delete: 'حذف', empty: 'لا توجد سلايدات منشورة بعد. أضف أول رسالة تظهر في واجهة التطبيق.', published: 'منشور', hidden: 'مخفي', saveError: 'راجع الحقول المظللة ثم أعد المحاولة.', deleteConfirm: 'هل تريد حذف هذا السلايد نهائياً؟', preview: 'معاينة التطبيق', activeNow: 'ظاهر حالياً', scheduled: 'مجدول', expired: 'منتهي', audienceAll: 'للتاجر والمندوب', imageHint: 'PNG أو JPG أو WebP حتى 5 MB.', safeLink: 'مسار داخلي مثل /app/orders أو رابط https://', close: 'إغلاق', audienceHint: 'يظهر فقط للفئة المحددة أو للجميع.', calendarHint: 'اترك التاريخين فارغين للنشر المفتوح.', actionHint: 'اختياري — عند ضغط المستخدم على الزر.', unsaved: 'لا يظهر في التطبيق إلا بعد الحفظ والنشر.', scope: 'نطاق الظهور', globalScope: 'كل الفروع (عام)', branchScope: 'فرع محدد',
     },
     en: {
-        title: 'Mobile Content', eyebrow: 'Publishing Center', intro: 'Manage the home slider shown to merchants and couriers from the same dashboard.', new: 'Add Slide', edit: 'Edit Slide', image: 'Slide Image', upload: 'Upload Image', replace: 'Replace Image', noImage: 'Automatic colour background', audience: 'Audience', all: 'Everyone', merchant: 'Merchant', courier: 'Courier', active: 'Published now', order: 'Display order', schedule: 'Publishing schedule', starts: 'Starts at', ends: 'Ends at', Arabic: 'Arabic', English: 'English', Kurdish: 'Kurdish', heading: 'Heading', body: 'Supporting text', tag: 'Small tag', button: 'Button text', link: 'Button link', save: 'Save Slide', cancel: 'Cancel', delete: 'Delete', empty: 'No published slides yet. Add the first message for the mobile app.', published: 'Published', hidden: 'Hidden', saveError: 'Review the highlighted fields and try again.', deleteConfirm: 'Delete this slide permanently?', preview: 'App preview', activeNow: 'Visible now', scheduled: 'Scheduled', expired: 'Expired', audienceAll: 'Merchant and courier', imageHint: 'PNG, JPG, or WebP up to 5 MB.', safeLink: 'Internal path such as /app/orders or an https:// link', close: 'Close', audienceHint: 'It appears only to the selected audience or everyone.', calendarHint: 'Leave both dates blank for open publishing.', actionHint: 'Optional — used when the person taps the button.', unsaved: 'It reaches the app only after it is saved and published.',
+        title: 'Mobile Content', eyebrow: 'Publishing Center', intro: 'Manage the home slider shown to merchants and couriers from the same dashboard.', new: 'Add Slide', edit: 'Edit Slide', image: 'Slide Image', upload: 'Upload Image', replace: 'Replace Image', noImage: 'Automatic colour background', audience: 'Audience', all: 'Everyone', merchant: 'Merchant', courier: 'Courier', active: 'Published now', order: 'Display order', schedule: 'Publishing schedule', starts: 'Starts at', ends: 'Ends at', Arabic: 'Arabic', English: 'English', Kurdish: 'Kurdish', heading: 'Heading', body: 'Supporting text', tag: 'Small tag', button: 'Button text', link: 'Button link', save: 'Save Slide', cancel: 'Cancel', delete: 'Delete', empty: 'No published slides yet. Add the first message for the mobile app.', published: 'Published', hidden: 'Hidden', saveError: 'Review the highlighted fields and try again.', deleteConfirm: 'Delete this slide permanently?', preview: 'App preview', activeNow: 'Visible now', scheduled: 'Scheduled', expired: 'Expired', audienceAll: 'Merchant and courier', imageHint: 'PNG, JPG, or WebP up to 5 MB.', safeLink: 'Internal path such as /app/orders or an https:// link', close: 'Close', audienceHint: 'It appears only to the selected audience or everyone.', calendarHint: 'Leave both dates blank for open publishing.', actionHint: 'Optional — used when the person taps the button.', unsaved: 'It reaches the app only after it is saved and published.', scope: 'Display scope', globalScope: 'All branches (global)', branchScope: 'Specific branch',
     },
     ku: {
-        title: 'ناوەڕۆکی ئەپ', eyebrow: 'ناوەندی بڵاوکردنەوە', intro: 'سلایدەری سەرەکی بۆ بازرگان و گەیەنەر لەم داشبۆردەوە بەڕێوەببە.', new: 'زیادکردنی سلاید', edit: 'دەستکاریکردنی سلاید', image: 'وێنەی سلاید', upload: 'بارکردنی وێنە', replace: 'گۆڕینی وێنە', noImage: 'پاشبنەمای ڕەنگی خۆکار', audience: 'ئامانج', all: 'هەمووان', merchant: 'بازرگان', courier: 'گەیەنەر', active: 'ئێستا بڵاوکراوە', order: 'ڕیزبەندی نیشاندان', schedule: 'کاتی بڵاوکردنەوە', starts: 'دەستپێدەکات لە', ends: 'کۆتایی دێت لە', Arabic: 'عەرەبی', English: 'ئینگلیزی', Kurdish: 'کوردی', heading: 'ناونیشان', body: 'دەقی ڕوونکەرەوە', tag: 'تاگی بچووک', button: 'دەقی دوگمە', link: 'بەستەری دوگمە', save: 'پاشەکەوتکردنی سلاید', cancel: 'هەڵوەشاندنەوە', delete: 'سڕینەوە', empty: 'هێشتا هیچ سلایدێکی بڵاوکراو نییە. یەکەم پەیام بۆ ئەپی مۆبایل زیاد بکە.', published: 'بڵاوکراوە', hidden: 'شاراوە', saveError: 'خانە دیاریکراوەکان بپشکنە و دووبارە هەوڵ بدە.', deleteConfirm: 'دڵنیایت لەم سڕینەوەیە؟', preview: 'پێشبینینی ئەپ', activeNow: 'ئێستا دیارە', scheduled: 'کات‌بەندی کراوە', expired: 'بەسەرچووە', audienceAll: 'بازرگان و گەیەنەر', imageHint: 'PNG، JPG یان WebP تا ٥ MB.', safeLink: 'ڕێڕەوی ناوخۆ وەک /app/orders یان بەستەری https://', close: 'داخستن', audienceHint: 'تەنها بۆ ئەو ئامانجە یان هەمووان پیشان دەدرێت.', calendarHint: 'بۆ بڵاوکردنەوەی کراوە هەردوو بەروار بەتاڵ بهێڵە.', actionHint: 'ئارەزوومەندانە — کاتێک بەکارهێنەر دوگمەکە دەکاتەوە.', unsaved: 'تەنها دوای پاشەکەوتکردن و بڵاوکردنەوە دەگاتە ئەپ.',
+        title: 'ناوەڕۆکی ئەپ', eyebrow: 'ناوەندی بڵاوکردنەوە', intro: 'سلایدەری سەرەکی بۆ بازرگان و گەیەنەر لەم داشبۆردەوە بەڕێوەببە.', new: 'زیادکردنی سلاید', edit: 'دەستکاریکردنی سلاید', image: 'وێنەی سلاید', upload: 'بارکردنی وێنە', replace: 'گۆڕینی وێنە', noImage: 'پاشبنەمای ڕەنگی خۆکار', audience: 'ئامانج', all: 'هەمووان', merchant: 'بازرگان', courier: 'گەیەنەر', active: 'ئێستا بڵاوکراوە', order: 'ڕیزبەندی نیشاندان', schedule: 'کاتی بڵاوکردنەوە', starts: 'دەستپێدەکات لە', ends: 'کۆتایی دێت لە', Arabic: 'عەرەبی', English: 'ئینگلیزی', Kurdish: 'کوردی', heading: 'ناونیشان', body: 'دەقی ڕوونکەرەوە', tag: 'تاگی بچووک', button: 'دەقی دوگمە', link: 'بەستەری دوگمە', save: 'پاشەکەوتکردنی سلاید', cancel: 'هەڵوەشاندنەوە', delete: 'سڕینەوە', empty: 'هێشتا هیچ سلایدێکی بڵاوکراو نییە. یەکەم پەیام بۆ ئەپی مۆبایل زیاد بکە.', published: 'بڵاوکراوە', hidden: 'شاراوە', saveError: 'خانە دیاریکراوەکان بپشکنە و دووبارە هەڵوێست بدە.', deleteConfirm: 'دڵنیایت لەم سڕینەوەیە؟', preview: 'پێشبینینی ئەپ', activeNow: 'ئێستا دیارە', scheduled: 'کات‌بەندی کراوە', expired: 'بەسەرچووە', audienceAll: 'بازرگان و گەیەنەر', imageHint: 'PNG، JPG یان WebP تا ٥ MB.', safeLink: 'ڕێڕەوی ناوخۆ وەک /app/orders یان بەستەری https://', close: 'داخستن', audienceHint: 'تەنها بۆ ئەو ئامانجە یان هەمووان پیشان دەدرێت.', calendarHint: 'بۆ بڵاوکردنەوەی کراوە هەردوو بەروار بەتاڵ بهێڵە.', actionHint: 'ئارەزوومەندانە — کاتێک بەکارهێنەر دوگمەکە دەکاتەوە.', unsaved: 'تەنها دوای پاشەکەوتکردن و بڵاوکردنەوە دەگاتە ئەپ.', scope: 'مەودای نیشاندان', globalScope: 'هەموو لقەکان (گشتی)', branchScope: 'لقی دیاریکراو',
     },
 }
 
@@ -30,7 +32,7 @@ const locale = computed(() => page.props.locale || 'ar')
 const l = (key) => text[locale.value]?.[key] || text.ar[key] || key
 
 const blank = () => ({
-    audience: 'all', title_ar: '', title_en: '', title_ku: '',
+    audience: 'all', branch_id: props.branchMode ? (props.branches[0]?.id || '') : '', title_ar: '', title_en: '', title_ku: '',
     body_ar: '', body_en: '', body_ku: '',
     tag_ar: '', tag_en: '', tag_ku: '',
     cta_ar: '', cta_en: '', cta_ku: '',
@@ -53,7 +55,7 @@ function openEdit(slide) {
     editing.value = slide
     form.clearErrors()
     Object.assign(form, {
-        audience: slide.audience || 'all',
+        audience: slide.audience || 'all', branch_id: slide.branch_id || '',
         title_ar: slide.title_ar || '', title_en: slide.title_en || '', title_ku: slide.title_ku || '',
         body_ar: slide.body_ar || '', body_en: slide.body_en || '', body_ku: slide.body_ku || '',
         tag_ar: slide.tag_ar || '', tag_en: slide.tag_en || '', tag_ku: slide.tag_ku || '',
@@ -88,19 +90,27 @@ function submit() {
         preserveScroll: true,
         onSuccess: closeModal,
     }
-    if (editing.value) form.put(route('admin.content.update', editing.value.id), options)
-    else form.post(route('admin.content.store'), options)
+    if (editing.value) form.put(route(contentRoute('update'), editing.value.id), options)
+    else form.post(route(contentRoute('store')), options)
 }
 
 function removeSlide(slide) {
     if (!window.confirm(l('deleteConfirm'))) return
-    router.delete(route('admin.content.destroy', slide.id), { preserveScroll: true })
+    router.delete(route(contentRoute('destroy'), slide.id), { preserveScroll: true })
+}
+
+function contentRoute(action) {
+    return props.branchMode ? `admin.branch.content.${action}` : `admin.content.${action}`
 }
 
 function audienceLabel(audience) {
     if (audience === 'merchant') return l('merchant')
     if (audience === 'courier') return l('courier')
     return l('audienceAll')
+}
+
+function branchLabel(slide) {
+    return slide.branch_name || l('globalScope')
 }
 
 function publicationState(slide) {
@@ -117,7 +127,7 @@ watch(() => props.slides.length, (length) => {
 </script>
 
 <template>
-    <AdminShell :title="l('title')">
+    <AdminShell :title="l('title')" :branch-mode="branchMode">
         <section class="content-heading">
             <div>
                 <p class="eyebrow">{{ l('eyebrow') }}</p>
@@ -131,7 +141,7 @@ watch(() => props.slides.length, (length) => {
             <article v-for="slide in slides" :key="slide.id" class="slide-card" :class="{ muted: !slide.is_active }">
                 <div class="slide-preview" :style="slide.image_url ? { backgroundImage: `linear-gradient(135deg, rgba(5, 37, 33, .74), rgba(5, 37, 33, .14)), url(${slide.image_url})` } : {}">
                     <span class="slide-state" :class="publicationState(slide).className">{{ publicationState(slide).label }}</span>
-                    <div><small>{{ audienceLabel(slide.audience) }}</small><h3>{{ slide.title_ar }}</h3><p>{{ slide.body_ar }}</p></div>
+                    <div><small>{{ audienceLabel(slide.audience) }} · {{ branchLabel(slide) }}</small><h3>{{ slide.title_ar }}</h3><p>{{ slide.body_ar }}</p></div>
                 </div>
                 <div class="slide-meta">
                     <span>#{{ slide.sort_order }}</span>
@@ -163,6 +173,7 @@ watch(() => props.slides.length, (length) => {
 
                     <div class="control-grid">
                         <label><span>{{ l('audience') }}</span><select v-model="form.audience"><option value="all">{{ l('all') }}</option><option value="merchant">{{ l('merchant') }}</option><option value="courier">{{ l('courier') }}</option></select><small>{{ l('audienceHint') }}</small></label>
+                        <label><span>{{ l('scope') }}</span><select v-model="form.branch_id"><option v-if="!branchMode" value="">{{ l('globalScope') }}</option><option v-for="branch in branches" :key="branch.id" :value="branch.id">{{ branch.name_ar || branch.name_en }}{{ branch.city ? ` — ${branch.city}` : '' }}</option></select><small>{{ form.branch_id ? l('branchScope') : l('globalScope') }}</small></label>
                         <label><span>{{ l('order') }}</span><input v-model.number="form.sort_order" type="number" min="0" max="10000" required /><small v-if="form.errors.sort_order" class="error">{{ form.errors.sort_order }}</small></label>
                         <label class="toggle-row"><span><b>{{ l('active') }}</b><small>{{ l('published') }}</small></span><input v-model="form.is_active" type="checkbox" /></label>
                     </div>

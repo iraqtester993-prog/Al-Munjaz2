@@ -16,16 +16,36 @@ const branding = computed(() => page.props.branding || {
     name: t('Al-Munjaz Al-Saree'),
     logo_url: '/logo.png',
 })
+const provinces = computed(() => Array.isArray(page.props.provinces) ? page.props.provinces : [])
 const roles = computed(() => [
     { key: 'merchant', label: t('Merchant App'), desc: t('My orders, statement, wallet'), icon: 'shop' },
     { key: 'courier', label: t('Courier App'), desc: t('My deliveries, collections, wallet'), icon: 'bike' },
 ])
 
-const form = useForm({ username: '', password: '', role: 'merchant' })
+const form = useForm({ username: '', password: '', role: 'merchant', province_id: '' })
 
 function chooseRole(role) {
     form.role = role
+    form.province_id = ''
     view.value = 'login'
+}
+
+function localizedProvince(province) {
+    return province?.[`name_${locale.value}`]
+        || province?.name_ar
+        || province?.name_en
+        || province?.name_ku
+        || ''
+}
+
+function provinceLabel(province) {
+    const provinceName = localizedProvince(province)
+    const branchName = province?.[`branch_name_${locale.value}`]
+        || province?.branch_name_ar
+        || province?.branch_name_en
+        || province?.branch_name
+
+    return branchName && branchName !== provinceName ? `${provinceName} — ${branchName}` : provinceName
 }
 
 function toggleTheme() {
@@ -60,6 +80,7 @@ function icon(name) {
         arrow: 'M15 18l-6-6 6-6',
         user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 8a8 8 0 0 1 16 0',
         lock: 'M6.5 10V7.5a5.5 5.5 0 0 1 11 0V10M5 10h14v11H5z',
+        pin: 'M12 21s-7-5.8-7-11.5a7 7 0 0 1 14 0C19 15.2 12 21 12 21Z M12 12a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z',
         sun: 'M12 3v2M12 19v2M5.6 5.6 7 7M17 17l1.4 1.4M3 12h2M19 12h2M5.6 18.4 7 17M17 7l1.4-1.4M16.5 12a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Z',
         moon: 'M20 15.2A8.5 8.5 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z',
     }
@@ -114,6 +135,17 @@ function icon(name) {
             </div>
 
             <form class="login-card-ref" @submit.prevent="submit">
+                <label v-if="provinces.length">
+                    <span>{{ t('Governorate') }}</span>
+                    <div class="auth-input-wrap auth-select-wrap">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="icon('pin')" /></svg>
+                        <select v-model="form.province_id" required>
+                            <option disabled value="">{{ t('Governorate') }}</option>
+                            <option v-for="province in provinces" :key="province.id" :value="province.id">{{ provinceLabel(province) }}</option>
+                        </select>
+                    </div>
+                    <small v-if="errors.province_id" class="login-error">{{ errors.province_id }}</small>
+                </label>
                 <label>
                     <span>{{ t('Username or phone') }}</span>
                     <div class="auth-input-wrap">
@@ -174,6 +206,8 @@ function icon(name) {
 .auth-input-wrap { position:relative; display:flex; align-items:center; gap:9px; padding:0 12px; min-height:46px; border:1.5px solid rgba(255,255,255,.25); border-radius:11px; background:rgba(255,255,255,.11); color:rgba(255,255,255,.74); }
 .auth-input-wrap:focus-within { border-color:rgba(255,255,255,.72); background:rgba(255,255,255,.17); }
 .auth-input-wrap input { min-width:0; flex:1; width:100%; color:#fff; border:0; outline:0; font:inherit; font-size:12px; background:transparent; }
+.auth-input-wrap select { min-width:0; flex:1; width:100%; color:#fff; border:0; outline:0; appearance:none; font:inherit; font-size:12px; background:transparent; }
+.auth-input-wrap select option { color:var(--ink); background:var(--surface); }
 .auth-input-wrap input::placeholder { color:rgba(255,255,255,.48); }
 .show-password { padding:2px; color:rgba(255,255,255,.88); font:inherit; font-size:9.5px; font-weight:800; white-space:nowrap; }
 .login-error { display:block; padding-top:5px; color:#ffd0cb; font-size:10px; font-weight:800; }

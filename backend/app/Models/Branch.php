@@ -16,7 +16,7 @@ class Branch extends Model
 
     protected $fillable = [
         'tenant_id', 'is_platform_managed', 'code', 'name_ar', 'name_en', 'name_ku', 'city', 'phone',
-        'address', 'cash_balance', 'is_active',
+        'province_id', 'address', 'cash_balance', 'is_active',
     ];
 
     protected function casts(): array
@@ -30,6 +30,17 @@ class Branch extends Model
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
+    }
+
+    /**
+     * The operational province served by this branch.  It is deliberately
+     * independent from a merchant's own province pivot: a user can only join
+     * an operating area after an active platform branch has been configured
+     * for it.
+     */
+    public function province(): BelongsTo
+    {
+        return $this->belongsTo(Province::class);
     }
 
     public function users(): HasMany

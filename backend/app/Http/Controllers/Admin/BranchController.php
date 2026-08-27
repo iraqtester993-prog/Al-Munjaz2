@@ -8,6 +8,7 @@ use App\Models\Branch;
 use App\Models\Cashbox;
 use App\Models\BranchMembership;
 use App\Models\Order;
+use App\Models\Province;
 use App\Models\Scopes\TenantScope;
 use App\Models\Tenant;
 use App\Models\User;
@@ -23,6 +24,7 @@ class BranchController extends Controller
     {
         $platformTenant = Tenant::platform();
         $branches = $this->networkBranches()
+            ->with('province:id,name_ar,name_en,name_ku')
             ->with(['members' => fn ($members) => $members->select('users.id', 'users.name', 'users.username', 'users.role', 'users.status')])
             ->withCount([
                 'users',
@@ -38,6 +40,13 @@ class BranchController extends Controller
                 'name_en' => $branch->name_en,
                 'name_ku' => $branch->name_ku,
                 'city' => $branch->city,
+                'province_id' => $branch->province_id,
+                'province' => $branch->province ? [
+                    'id' => $branch->province->id,
+                    'name_ar' => $branch->province->name_ar,
+                    'name_en' => $branch->province->name_en,
+                    'name_ku' => $branch->province->name_ku,
+                ] : null,
                 'phone' => $branch->phone,
                 'address' => $branch->address,
                 'cash_balance' => $branch->cash_balance,
@@ -57,6 +66,7 @@ class BranchController extends Controller
                     'username' => $user->username,
                     'role' => $user->pivot?->access_role === BranchMembership::OWNER ? 'owner' : 'branch_manager',
                     'status' => $user->status,
+                    'permissions' => $user->dashboard_permissions ?? [],
                 ])->values(),
             ]);
 
@@ -71,14 +81,22 @@ class BranchController extends Controller
                 ->whereIn('role', ['owner', 'branch_manager'])
                 ->orderBy('name')
                 ->orderBy('id')
-                ->get(['id', 'name', 'username', 'role'])
+                ->get(['id', 'name', 'username', 'role', 'dashboard_permissions'])
                 ->map(fn (User $user) => [
                     'id' => $user->id,
                     'name' => $user->name,
                     'username' => $user->username,
                     'role' => $user->role,
+                    'permissions' => $user->dashboard_permissions ?? [],
                 ])
                 ->values(),
+            'provinces' => Province::query()
+                ->whereNull('tenant_id')
+                ->orderBy('sort_order')
+                ->orderBy('name_ar')
+                ->get(['id', 'name_ar', 'name_en', 'name_ku'])
+                ->values(),
+            'dashboardPermissions' => User::DASHBOARD_PERMISSIONS,
         ]);
     }
 
@@ -144,7 +162,7 @@ class BranchController extends Controller
     public function update(Request $request, int $branch)
     {
         $branch = $this->findNetworkBranch($branch);
-        $before = $branch->only(['code', 'name_ar', 'name_en', 'name_ku', 'city', 'phone', 'address']);
+        $before = $branch->only(['code', 'name_ar', 'name_en', 'name_ku', 'city', 'province_id', 'phone', 'address']);
 
         $branch->update($this->validatedBranchData($request, $branch));
 
@@ -209,9 +227,18 @@ class BranchController extends Controller
         $platformTenant = Tenant::platform();
         $uniqueCode = Rule::unique('branches', 'code')
             ->where('tenant_id', $platformTenant->id);
+        // The mobile sign-in deliberately asks for a governorate, not an
+        // arbitrary branch name. Keep one active network branch per province
+        // so selecting Baghdad always resolves to the Baghdad branch without
+        // an unsafe hidden default.
+        $uniqueProvince = Rule::unique('branches', 'province_id')
+            ->where('tenant_id', $platformTenant->id)
+            ->where('is_platform_managed', true)
+            ->whereNull('deleted_at');
 
         if ($branch) {
             $uniqueCode->ignore($branch->id);
+            $uniqueProvince->ignore($branch->id);
         }
 
         $data = $request->validate([
@@ -220,6 +247,7 @@ class BranchController extends Controller
             'name_en' => ['nullable', 'string', 'max:120'],
             'name_ku' => ['nullable', 'string', 'max:120'],
             'city' => ['required', 'string', 'max:60'],
+            'province_id' => ['required', 'integer', Rule::exists('provinces', 'id')->whereNull('tenant_id'), $uniqueProvince],
             'phone' => ['nullable', 'string', 'max:30'],
             'address' => ['nullable', 'string', 'max:255'],
         ]);
@@ -249,6 +277,8 @@ class BranchController extends Controller
             'access_username' => ['nullable', 'string', 'alpha_dash', 'min:3', 'max:60', Rule::unique('users', 'username')],
             'access_password' => ['nullable', 'string', 'min:10', 'max:120'],
             'access_role' => ['required', Rule::in(['owner', 'branch_manager'])],
+            'access_permissions' => ['nullable', 'array'],
+            'access_permissions.*' => [Rule::in(User::DASHBOARD_PERMISSIONS)],
         ]);
 
         $username = filled($data['access_username'] ?? null)
@@ -270,6 +300,7 @@ class BranchController extends Controller
             'status' => 'active',
             'locale' => 'ar',
             'theme' => 'light',
+            'dashboard_permissions' => $this->resolvedPermissions($data['access_role'], $data['access_permissions'] ?? null),
         ]);
 
         $branch->members()->attach($user->id, [
@@ -298,6 +329,8 @@ class BranchController extends Controller
         $data = $request->validate([
             'existing_user_id' => ['required', 'integer', Rule::exists('users', 'id')],
             'access_role' => ['required', Rule::in(['owner', 'branch_manager'])],
+            'access_permissions' => ['nullable', 'array'],
+            'access_permissions.*' => [Rule::in(User::DASHBOARD_PERMISSIONS)],
         ]);
 
         $user = User::query()
@@ -322,6 +355,12 @@ class BranchController extends Controller
                 : BranchMembership::MANAGER,
         ]);
 
+        if (array_key_exists('access_permissions', $data)) {
+            $user->update([
+                'dashboard_permissions' => $this->resolvedPermissions($user->role, $data['access_permissions']),
+            ]);
+        }
+
         return $user;
     }
 
@@ -345,6 +384,21 @@ class BranchController extends Controller
         // The markers guarantee an immediately usable strong password while
         // the random segment keeps it unguessable. It is shown exactly once.
         return 'Mn!'.Str::random(14).'7';
+    }
+
+    /** @param array<int, string>|null $requested */
+    private function resolvedPermissions(string $role, ?array $requested): array
+    {
+        if ($role === 'owner') {
+            return User::DASHBOARD_PERMISSIONS;
+        }
+
+        $permissions = $requested ?? [
+            'overview', 'orders', 'merchants', 'couriers',
+            'courier_locations', 'content', 'notifications',
+        ];
+
+        return array_values(array_unique(array_intersect($permissions, User::DASHBOARD_PERMISSIONS)));
     }
 
     private function hasOpenRouteOrders(Branch $branch): bool

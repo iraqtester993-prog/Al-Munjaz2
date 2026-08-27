@@ -90,6 +90,14 @@ function canClaim(order) {
     return props.stats.onDuty && Number(props.stats.budget || 0) >= Number(order.price || 0)
 }
 
+// A new job is only a pickup offer. The customer's number becomes visible
+// after the courier has moved the parcel into their custody, never while an
+// offer is merely being reviewed.
+function canViewCustomerPhone(order) {
+    return Boolean(order?.courier_id)
+        && ['courier', 'delivered', 'returned'].includes(order?.status)
+}
+
 function openDetails(order) {
     selected.value = order
 }
@@ -160,29 +168,18 @@ onUnmounted(() => window.clearInterval(ticker))
                     <div class="available-order-head">
                         <div>
                             <h4>{{ customerName(order) }}</h4>
-                            <p><span class="mono">{{ order.track_no }}</span><b>•</b>{{ customerAddress(order) }}</p>
+                            <p><span class="mono">{{ order.track_no }}</span><b>•</b><span class="available-address">{{ customerAddress(order) }}</span></p>
                         </div>
-                        <span class="new-order-chip">{{ t('Available New Orders') }}</span>
+                        <span class="new-order-chip">{{ t('New Order') }}</span>
                     </div>
 
                     <div class="available-summary">
                         <strong class="mono">{{ fmt(order.price) }} <small>{{ t('IQD') }}</small></strong>
-                        <span class="available-badges">
-                            <span v-if="order.order_type" class="order-type-badge">
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13ZM8 9h8M8 12h8M8 15h5"/></svg>
-                                {{ orderTypeLabel(order) }}
-                            </span>
-                            <span class="vehicle-badge">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8"/></svg>
-                                {{ vehicleLabel(order) }}
-                            </span>
+                        <span class="vehicle-badge">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8"/></svg>
+                            {{ vehicleLabel(order) }}
                         </span>
                     </div>
-
-                    <p v-if="order.vehicle_note || order.notes" class="order-note"><b>{{ t('Notes') }}:</b> {{ order.vehicle_note || order.notes }}</p>
-                    <p v-if="!canClaim(order)" class="availability-warning">
-                        {{ stats.onDuty ? t('Budget is lower than the order value.') : t('Enable availability before accepting the order.') }}
-                    </p>
                 </div>
 
                 <footer class="available-order-footer">
@@ -222,7 +219,7 @@ onUnmounted(() => window.clearInterval(ticker))
         <SheetModal :open="!!selected" :title="selected?.track_no" :subtitle="customerName(selected)" @close="selected = null">
             <template v-if="selected">
                 <div class="detail-row"><span class="text-muted">{{ t('Customer') }}</span><b>{{ customerName(selected) }}</b></div>
-                <div class="detail-row"><span class="text-muted">{{ t('Phone') }}</span><b class="mono">{{ selected.phone }}</b></div>
+                <div class="detail-row"><span class="text-muted">{{ t('Phone') }}</span><b v-if="canViewCustomerPhone(selected)" class="mono">{{ selected.phone }}</b><b v-else class="customer-phone-locked" :aria-label="t('Phone')">•••••••••••</b></div>
                 <div class="detail-row"><span class="text-muted">{{ t('Address') }}</span><b>{{ customerAddress(selected) }}</b></div>
                 <div class="detail-row"><span class="text-muted">{{ t('Order amount') }}</span><b class="mono">{{ fmt(selected.price) }} {{ t('IQD') }}</b></div>
                 <div class="detail-row"><span class="text-muted">{{ t('Order Type') }}</span><b>{{ orderTypeLabel(selected) }}</b></div>
@@ -285,23 +282,20 @@ onUnmounted(() => window.clearInterval(ticker))
 .available-heading span { padding:3px 10px; border-radius:20px; background:var(--surface-2); color:var(--ink-faint); font-size:10.5px; font-weight:800; }
 .available-list { display:grid; gap:10px; }
 .available-order-card { overflow:hidden; border:1.5px solid color-mix(in srgb, var(--primary) 42%, var(--border)); border-radius:18px; background:linear-gradient(145deg, color-mix(in srgb, var(--primary-tint) 84%, var(--surface)), color-mix(in srgb, var(--primary-tint) 52%, var(--surface))); box-shadow:0 6px 16px rgba(11,110,104,.12); cursor:pointer; }
-.available-order-main { padding:12px 13px 10px; }
+.available-order-main { padding:10px 12px 8px; }
 .available-order-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
-.available-order-head h4 { margin:0 0 3px; color:var(--ink); font-size:14px; font-weight:900; }
-.available-order-head p { display:flex; flex-wrap:wrap; align-items:center; gap:5px; margin:0; color:var(--ink-faint); font-size:10px; font-weight:700; }
+.available-order-head h4 { margin:0 0 2px; color:var(--ink); font-size:13px; font-weight:900; }
+.available-order-head p { display:flex; align-items:center; gap:5px; min-width:0; margin:0; color:var(--ink-faint); font-size:9.5px; font-weight:700; }
 .available-order-head p b { color:var(--ink-faint); }
-.new-order-chip { flex:none; padding:4px 8px; border-radius:20px; background:var(--primary); color:#fff; box-shadow:0 2px 6px rgba(11,110,104,.2); font-size:9.5px; font-weight:900; }
-.available-summary { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:11px; }
-.available-summary > strong { color:var(--primary-strong); font-size:17px; font-weight:900; }
+.available-address{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.new-order-chip { flex:none; padding:3px 7px; border-radius:20px; background:var(--primary); color:#fff; box-shadow:0 2px 6px rgba(11,110,104,.2); font-size:8.5px; font-weight:900; }
+.available-summary { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:7px; }
+.available-summary > strong { color:var(--primary-strong); font-size:16px; font-weight:900; }
 .available-summary > strong small { font-family:var(--font); color:var(--ink-faint); font-size:10px; }
-.available-badges{display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0;flex-wrap:wrap}.vehicle-badge,.order-type-badge { display:inline-flex; align-items:center; gap:6px; max-width:135px; padding:6px 10px; border:1px solid color-mix(in srgb, var(--primary) 26%, var(--border)); border-radius:10px; background:color-mix(in srgb, var(--primary-tint) 78%, var(--surface)); color:var(--primary-strong); font-size:10px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }.order-type-badge{border-color:color-mix(in srgb,var(--accent) 28%,var(--border));background:color-mix(in srgb,var(--accent-tint) 70%,var(--surface));color:var(--accent)}
-.order-note { margin:9px 0 0; padding:6px 8px; border-radius:8px; background:var(--surface-2); color:var(--ink-soft); font-size:10.5px; font-weight:700; line-height:1.45; }
-.order-note b { color:var(--primary-strong); }
-.availability-warning { margin:8px 0 0; color:var(--danger); font-size:10px; font-weight:800; }
-.available-order-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px; border-top:1px solid var(--border); background:var(--surface-2); }
-.pickup-clock { display:flex; align-items:center; gap:6px; font-size:10.5px; font-weight:900; }
+.vehicle-badge { display:inline-flex; align-items:center; gap:5px; max-width:126px; padding:5px 8px; border:1px solid color-mix(in srgb, var(--primary) 26%, var(--border)); border-radius:9px; background:color-mix(in srgb, var(--primary-tint) 78%, var(--surface)); color:var(--primary-strong); font-size:9px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.available-order-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 11px; border-top:1px solid var(--border); background:var(--surface-2); }
+.pickup-clock { display:flex; align-items:center; gap:5px; min-width:0; font-size:9.5px; font-weight:900; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .pickup-clock i { width:8px; height:8px; flex:none; border-radius:50%; animation:new-order-pulse 1.35s ease-in-out infinite; }
-.view-order { padding:7px 11px; border-radius:9px; background:var(--primary); color:#fff; box-shadow:0 3px 8px rgba(11,110,104,.2); font:inherit; font-size:10px; font-weight:900; }
+.view-order { padding:6px 9px; border-radius:8px; background:var(--primary); color:#fff; box-shadow:0 3px 8px rgba(11,110,104,.2); font:inherit; font-size:9px; font-weight:900; white-space:nowrap; }
 .expiry-track { height:4px; overflow:hidden; background:var(--surface-3); }
 .expiry-track i { display:block; height:100%; border-radius:0 2px 2px 0; transition:width 1s linear, background .4s; }
 .availability-empty { padding:34px 16px; border:1px dashed var(--border); border-radius:17px; text-align:center; color:var(--ink-soft); }
@@ -331,4 +325,5 @@ onUnmounted(() => window.clearInterval(ticker))
 .customer-whatsapp { width:100%; margin-top:10px; }
 .claim-explain { margin:13px 0; padding:9px 10px; border-radius:10px; background:var(--danger-tint); color:var(--danger); font-size:11px; font-weight:800; line-height:1.7; }
 .claim-order { width:100%; margin-top:14px; }
+.customer-phone-locked{letter-spacing:1px;color:var(--ink-faint);font-size:12px}
 </style>

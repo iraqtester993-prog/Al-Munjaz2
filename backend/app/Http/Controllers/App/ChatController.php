@@ -118,11 +118,37 @@ class ChatController extends Controller
 
         $data = $request->validate([
             'order_id' => ['nullable', 'integer', 'exists:orders,id'],
+            'complaint' => ['nullable', 'boolean'],
         ]);
 
         if (! empty($data['order_id'])) {
             $order = Order::withoutGlobalScope(TenantScope::class)->findOrFail($data['order_id']);
             $this->ensureOrderChatAccess($order, $user);
+
+            // A complaint must always reach operations, even when the order
+            // already has a courier. The merchant-to-courier conversation is
+            // retained separately so operational support has a clear audited
+            // thread with the order context instead of an ambiguous reply.
+            if ($request->boolean('complaint')) {
+                abort_unless($user->role === 'merchant', 403);
+
+                $chat = Chat::withoutGlobalScope(TenantScope::class)->firstOrCreate(
+                    [
+                        'tenant_id' => $order->tenant_id,
+                        'user_id' => $user->id,
+                        'counterparty_type' => 'order_support',
+                        'order_id' => $order->id,
+                    ],
+                    [
+                        'title_ar' => 'شكوى / تأخر — '.$order->track_no,
+                        'title_en' => 'Order support — '.$order->track_no,
+                        'last_message' => '',
+                        'last_at' => now(),
+                    ]
+                );
+
+                return redirect()->route('app.chats.show', $chat);
+            }
 
             // An order may have a pickup courier and a delivery courier. Each
             // one receives an isolated direct conversation with the merchant;
@@ -204,7 +230,7 @@ class ChatController extends Controller
     public function adminIndex(Request $request)
     {
         $chats = Chat::withoutGlobalScope(TenantScope::class)
-            ->with('user:id,name,phone')
+            ->with(['user:id,name,phone', 'order:id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status'])
             ->orderByDesc('last_at')
             ->get()
             ->map(fn (Chat $chat) => [
@@ -216,6 +242,7 @@ class ChatController extends Controller
                 'unread' => $this->unreadFor($chat, $request->user()),
                 'user' => $chat->user ? ['name' => $chat->user->name, 'phone' => $chat->user->phone] : null,
                 'counterparty_type' => $chat->counterparty_type,
+                'order' => $this->adminOrderContext($chat->order),
             ]);
 
         return Inertia::render('Admin/Chat', ['chats' => $chats]);
@@ -228,7 +255,7 @@ class ChatController extends Controller
         $messages = $this->messagesFor($chat, $request->user());
 
         return Inertia::render('Admin/Chat', [
-            'chats' => Chat::withoutGlobalScope(TenantScope::class)->with('user:id,name,phone')->orderByDesc('last_at')->get()->map(fn (Chat $c) => [
+            'chats' => Chat::withoutGlobalScope(TenantScope::class)->with(['user:id,name,phone', 'order:id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status'])->orderByDesc('last_at')->get()->map(fn (Chat $c) => [
                 'id' => $c->id,
                 'title_ar' => $c->title_ar,
                 'title_en' => $c->title_en,
@@ -237,12 +264,14 @@ class ChatController extends Controller
                 'unread' => $this->unreadFor($c, $request->user()),
                 'user' => $c->user ? ['name' => $c->user->name, 'phone' => $c->user->phone] : null,
                 'counterparty_type' => $c->counterparty_type,
+                'order' => $this->adminOrderContext($c->order),
             ]),
             'activeChat' => [
                 'id' => $chat->id,
                 'title_ar' => $chat->title_ar,
                 'title_en' => $chat->title_en,
                 'user' => $chat->user ? ['name' => $chat->user->name, 'phone' => $chat->user->phone] : null,
+                'order' => $this->adminOrderContext($chat->loadMissing('order')->order),
             ],
             'messages' => $messages,
         ]);
@@ -501,5 +530,17 @@ class ChatController extends Controller
         return $chat->counterparty_type === 'order_chat' && $chat->counterparty_id === $user->id
             ? 'counterparty_read_at'
             : 'user_read_at';
+    }
+
+    private function adminOrderContext(?Order $order): ?array
+    {
+        return $order ? [
+            'id' => $order->id,
+            'track_no' => $order->track_no,
+            'customer_name' => $order->customer_name_ar ?: $order->customer_name_en,
+            'phone' => $order->phone,
+            'address' => $order->address_ar ?: $order->address_en,
+            'status' => $order->status,
+        ] : null;
     }
 }

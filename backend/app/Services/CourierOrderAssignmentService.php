@@ -63,6 +63,16 @@ class CourierOrderAssignmentService
 
             $this->ensure($wallet->budget >= $delivery->price, 'ميزانية المندوب أقل من قيمة الطلب.');
 
+            // The courier's Qi balance pays the platform fee only when the
+            // order is delivered, but checking the quoted fee before the
+            // job is accepted prevents a courier from completing work that
+            // cannot be settled later.
+            $companyFee = min(max(0, (int) $delivery->price), max(0, (int) $delivery->fee));
+            $this->ensure(
+                (int) $wallet->balance >= $companyFee,
+                'رصيد المندوب لا يغطي رسوم الشركة لهذا الطلب.'
+            );
+
             // A pending order has an availability deadline. Once assigned,
             // the same field becomes the expected pickup deadline configured
             // by the administrator.

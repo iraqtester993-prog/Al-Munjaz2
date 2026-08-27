@@ -492,18 +492,98 @@ class OrderWorkflowService
     }
 
     /**
-     * Record the three accounting facts of a delivered COD order:
+     * Record a delivered COD order without mixing physical courier cash with
+     * the courier's prepaid Qi credit:
      *
-     * - the assigned delivery courier collected the order value;
-     * - the merchant earned the order value; and
-     * - the platform delivery fee reduced that merchant receivable.
+     * - the courier collection is the order value after the company fee;
+     * - the company fee is debited from the courier's Qi wallet; and
+     * - the merchant receives the full order value because the courier pays
+     *   it from the cash budget used when accepting the job.
      *
-     * Wallet is the canonical available-balance store.  The tenant column is
-     * mirrored only for compatibility with legacy dashboard data and is never
-     * used to authorize a payout.
+     * Every entry is guarded independently so retries cannot debit a wallet
+     * or post a collection twice.
      */
     protected function postDeliveredSettlement(Order $order): void
     {
+        $orderValue = max(0, (int) $order->price);
+        $fee = min($orderValue, max(0, (int) $order->fee));
+        $netCollection = $orderValue - $fee;
+        $courierId = $order->delivery_courier_id ?: $order->courier_id;
+
+        if ($courierId) {
+            $courier = User::withoutGlobalScopes()->find($courierId);
+
+            if ($courier && $courier->isCourierRole()) {
+                $alreadyCollected = Transaction::withoutGlobalScope(TenantScope::class)
+                    ->where('order_id', $order->id)
+                    ->where('user_id', $courier->id)
+                    ->where('type', 'collected')
+                    ->where('direction', 1)
+                    ->exists();
+
+                $feePosted = Transaction::withoutGlobalScope(TenantScope::class)
+                    ->where('order_id', $order->id)
+                    ->where('user_id', $courier->id)
+                    ->where('type', 'delivery_fee')
+                    ->where('direction', -1)
+                    ->exists();
+
+                if (! $feePosted && $fee > 0) {
+                    Wallet::firstOrCreate(['user_id' => $courier->id], ['balance' => 0, 'budget' => 0]);
+                    $courierWallet = Wallet::query()
+                        ->where('user_id', $courier->id)
+                        ->lockForUpdate()
+                        ->firstOrFail();
+
+                    $this->ensure(
+                        (int) $courierWallet->balance >= $fee,
+                        'رصيد المندوب لا يغطي رسوم الشركة لهذا الطلب.'
+                    );
+
+                    $courierWallet->decrement('balance', $fee);
+
+                    Transaction::create([
+                        'tenant_id' => $courier->tenant_id ?? $order->tenant_id,
+                        'user_id' => $courier->id,
+                        'type' => 'delivery_fee',
+                        'amount' => $fee,
+                        'direction' => -1,
+                        'ref' => $order->track_no,
+                        'order_id' => $order->id,
+                        'date' => today(),
+                        'note' => 'استقطاع رسوم الشركة من رصيد Qi بعد تسليم الطلب.',
+                    ]);
+
+                    Notification::create([
+                        'tenant_id' => $courier->tenant_id,
+                        'user_id' => $courier->id,
+                        'type' => 'finance',
+                        'title_ar' => 'استقطاع رسوم الطلب',
+                        'title_en' => 'Delivery fee deducted',
+                        'title_ku' => 'کرێی گەیاندن کەمکرایەوە',
+                        'body_ar' => 'تم استقطاع '.number_format($fee).' د.ع من رصيد Qi للطلب '.$order->track_no.'.',
+                        'body_en' => number_format($fee).' IQD was deducted from your Qi balance for '.$order->track_no.'.',
+                        'body_ku' => number_format($fee).' IQD was deducted from your Qi balance for '.$order->track_no.'.',
+                        'data' => ['order_id' => $order->id, 'type' => 'delivery_fee', 'amount' => $fee],
+                    ]);
+                }
+
+                if (! $alreadyCollected) {
+                    Transaction::create([
+                        'tenant_id' => $courier->tenant_id ?? $order->tenant_id,
+                        'user_id' => $courier->id,
+                        'type' => 'collected',
+                        'amount' => $netCollection,
+                        'direction' => 1,
+                        'ref' => $order->track_no,
+                        'order_id' => $order->id,
+                        'date' => today(),
+                        'note' => 'تحصيل صافٍ بعد خصم رسوم الشركة عند تسليم الطلب.',
+                    ]);
+                }
+            }
+        }
+
         $merchantId = $order->merchant_id ?: $order->created_by;
         if (! $merchantId) {
             return;
@@ -521,38 +601,9 @@ class OrderWorkflowService
             ->where('direction', 1)
             ->exists();
 
-        // Older migrated records already have a merchant settlement.  Do not
-        // manufacture a second fee or collection entry for historical data.
+        // Older migrated records already have their merchant settlement.
         if ($alreadyPosted) {
             return;
-        }
-
-        $orderValue = max(0, (int) $order->price);
-        // Wallet balances are unsigned.  A malformed rule must not make a
-        // merchant balance negative, so cap the immediately collectible fee
-        // at the actual COD amount.  Normal rules are always below it.
-        $fee = min($orderValue, max(0, (int) $order->fee));
-        $courierId = $order->delivery_courier_id ?: $order->courier_id;
-
-        if ($courierId && ! Transaction::withoutGlobalScope(TenantScope::class)
-            ->where('order_id', $order->id)
-            ->where('user_id', $courierId)
-            ->where('type', 'collected')
-            ->where('direction', 1)
-            ->exists()) {
-            $courier = User::withoutGlobalScopes()->find($courierId);
-
-            Transaction::create([
-                'tenant_id' => $courier?->tenant_id ?? $order->tenant_id,
-                'user_id' => $courierId,
-                'type' => 'collected',
-                'amount' => $orderValue,
-                'direction' => 1,
-                'ref' => $order->track_no,
-                'order_id' => $order->id,
-                'date' => today(),
-                'note' => 'تحصيل نقدي عند تسليم الطلب.',
-            ]);
         }
 
         Wallet::firstOrCreate(
@@ -576,23 +627,8 @@ class OrderWorkflowService
             'note' => 'استحقاق التاجر بعد تسليم الطلب.',
         ]);
 
-        if ($fee > 0) {
-            Transaction::create([
-                'tenant_id' => $merchant->tenant_id,
-                'user_id' => $merchant->id,
-                'type' => 'delivery_fee',
-                'amount' => $fee,
-                'direction' => -1,
-                'ref' => $order->track_no,
-                'order_id' => $order->id,
-                'date' => today(),
-                'note' => 'رسوم التوصيل المستحقة عند تسليم الطلب.',
-            ]);
-        }
-
-        $netReceivable = $orderValue - $fee;
-        if ($netReceivable > 0) {
-            $wallet->increment('balance', $netReceivable);
+        if ($orderValue > 0) {
+            $wallet->increment('balance', $orderValue);
         }
 
         // `tenants.wallet_balance` exists in the original schema.  Keep it

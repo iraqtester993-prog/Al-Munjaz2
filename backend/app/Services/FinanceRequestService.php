@@ -8,6 +8,7 @@ use App\Models\FinanceRequest;
 use App\Models\Notification;
 use App\Models\Scopes\TenantScope;
 use App\Models\Tenant;
+use App\Models\Order;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Models\Wallet;
@@ -24,17 +25,34 @@ use Illuminate\Validation\ValidationException;
  */
 class FinanceRequestService
 {
-    public function submit(User $user, string $type, int $amount, ?int $branchId = null, ?string $note = null): FinanceRequest
+    public function submit(
+        User $user,
+        string $type,
+        int $amount,
+        ?int $branchId = null,
+        ?string $note = null,
+        ?string $externalReference = null,
+    ): FinanceRequest
     {
         $this->ensure(in_array($type, FinanceRequest::TYPES, true), 'نوع العملية المالية غير صالح.');
         $this->ensure($amount >= 1000, 'الحد الأدنى للعملية هو 1,000 د.ع.');
 
-        if (in_array($type, [FinanceRequest::CASH_HANDOVER, FinanceRequest::BUDGET_RECHARGE], true)) {
+        if (in_array($type, [FinanceRequest::CASH_HANDOVER, FinanceRequest::BUDGET_RECHARGE, FinanceRequest::QI_TOPUP], true)) {
             $this->ensure($user->isCourierRole(), 'هذه العملية متاحة للمندوب فقط.');
         }
 
         if ($type === FinanceRequest::MERCHANT_PAYOUT) {
             $this->ensure($user->role === 'merchant', 'طلب التسوية متاح للتاجر فقط.');
+        }
+
+        if ($type === FinanceRequest::QI_TOPUP && filled($externalReference)) {
+            $this->ensure(
+                ! FinanceRequest::withoutGlobalScope(TenantScope::class)
+                    ->where('type', FinanceRequest::QI_TOPUP)
+                    ->where('external_reference', $externalReference)
+                    ->exists(),
+                'رقم عملية Qi مستخدم مسبقاً في طلب شحن آخر.'
+            );
         }
 
         if ($branchId) {
@@ -74,23 +92,22 @@ class FinanceRequestService
             'amount' => $amount,
             'status' => FinanceRequest::PENDING,
             'reference' => $this->reference(),
+            'external_reference' => $externalReference,
             'note' => $note,
         ]);
     }
 
     /**
-     * The courier's actual cash exposure is derived from completed deliveries
-     * minus cash handovers already recorded by administration.  It is not a
-     * browser-supplied number and it does not depend on a demo wallet value.
+     * Physical cash still held by a courier is based on net collections
+     * (delivery value less the company fee) minus approved branch handovers.
+     * It is never a browser-supplied number and is separate from the Qi
+     * wallet credit used for future fee deductions.
      */
     public function cashOnHand(int $courierId): int
     {
         $courier = User::withoutGlobalScopes()->find($courierId);
         $delivered = $courier && $courier->isCourierRole()
-            ? (int) app(CourierOrderAccess::class)
-                ->assigned($courier)
-                ->where('status', 'delivered')
-                ->sum('price')
+            ? $this->collectionsTotal($courier)
             : 0;
 
         $handedOver = (int) Transaction::withoutGlobalScope(TenantScope::class)
@@ -102,22 +119,35 @@ class FinanceRequestService
         return max(0, $delivered - $handedOver);
     }
 
-    /** Amount of physically settled cash that can support another recharge. */
-    public function rechargeCapacity(int $courierId): int
+    /**
+     * Courier collections are what remains after the platform fee on every
+     * delivered order. Keeping this computation on persisted orders also
+     * makes old data present correctly after the fee policy changes.
+     */
+    public function collectionsTotal(User|int $courier): int
     {
-        $handedOver = (int) Transaction::withoutGlobalScope(TenantScope::class)
-            ->where('user_id', $courierId)
-            ->where('type', FinanceRequest::CASH_HANDOVER)
-            ->where('direction', -1)
-            ->sum('amount');
+        $courier = $courier instanceof User
+            ? $courier
+            : User::withoutGlobalScopes()->find($courier);
 
-        $recharged = (int) Transaction::withoutGlobalScope(TenantScope::class)
-            ->where('user_id', $courierId)
-            ->where('type', FinanceRequest::BUDGET_RECHARGE)
-            ->where('direction', 1)
-            ->sum('amount');
+        if (! $courier || ! $courier->isCourierRole()) {
+            return 0;
+        }
 
-        return max(0, $handedOver - $recharged);
+        return app(CourierOrderAccess::class)
+            ->assigned($courier)
+            ->where('status', 'delivered')
+            ->get(['price', 'fee'])
+            ->sum(fn (Order $order): int => self::netCollectionForOrder($order));
+    }
+
+    /** The net collection is used by the wallet, dashboard, and settlement ledger. */
+    public static function netCollectionForOrder(Order $order): int
+    {
+        $orderValue = max(0, (int) $order->price);
+        $companyFee = min($orderValue, max(0, (int) $order->fee));
+
+        return $orderValue - $companyFee;
     }
 
     public function approve(int $requestId, User $admin, int $approvedAmount, ?int $branchId = null, ?string $note = null): FinanceRequest
@@ -140,6 +170,7 @@ class FinanceRequestService
             $transaction = match ($request->type) {
                 FinanceRequest::CASH_HANDOVER => $this->approveCashHandover($request, $user, $wallet, $approvedAmount, $effectiveBranchId),
                 FinanceRequest::BUDGET_RECHARGE => $this->approveBudgetRecharge($request, $user, $wallet, $approvedAmount),
+                FinanceRequest::QI_TOPUP => $this->approveQiTopUp($request, $user, $wallet, $approvedAmount),
                 FinanceRequest::MERCHANT_PAYOUT => $this->approveMerchantPayout($request, $user, $wallet, $approvedAmount),
                 default => throw ValidationException::withMessages(['request' => ['نوع العملية المالية غير صالح.']]),
             };
@@ -232,15 +263,29 @@ class FinanceRequestService
 
     private function approveBudgetRecharge(FinanceRequest $request, User $user, Wallet $wallet, int $amount): Transaction
     {
-        $this->ensure($user->isCourierRole(), 'شحن الميزانية متاح للمندوب فقط.');
-        $this->ensure(
-            $amount <= $this->rechargeCapacity($user->id),
-            'لا يمكن شحن ميزانية أكبر من النقدية المسلّمة وغير المستخدمة.'
-        );
+        $this->ensure($user->isCourierRole(), 'إضافة الميزانية متاحة للمندوب فقط.');
 
         $wallet->increment('budget', $amount);
 
-        return $this->ledger($request, $user, FinanceRequest::BUDGET_RECHARGE, $amount, 1, 'شحن ميزانية بعد اعتماد تسليم النقدية');
+        return $this->ledger($request, $user, FinanceRequest::BUDGET_RECHARGE, $amount, 1, 'إضافة نقدية إلى ميزانية المندوب بعد اعتماد الإدارة');
+    }
+
+    private function approveQiTopUp(FinanceRequest $request, User $user, Wallet $wallet, int $amount): Transaction
+    {
+        $this->ensure($user->isCourierRole(), 'شحن رصيد Qi متاح للمندوب فقط.');
+
+        $wallet->increment('balance', $amount);
+
+        return $this->ledger(
+            $request,
+            $user,
+            FinanceRequest::QI_TOPUP,
+            $amount,
+            1,
+            $request->external_reference
+                ? 'شحن رصيد Qi بالمرجع '.$request->external_reference
+                : 'إضافة رصيد Qi من الإدارة',
+        );
     }
 
     private function approveMerchantPayout(FinanceRequest $request, User $user, Wallet $wallet, int $amount): Transaction
@@ -322,7 +367,8 @@ class FinanceRequestService
     {
         $labels = [
             FinanceRequest::CASH_HANDOVER => ['تسليم النقدية', 'Cash handover'],
-            FinanceRequest::BUDGET_RECHARGE => ['شحن الميزانية', 'Budget recharge'],
+            FinanceRequest::BUDGET_RECHARGE => ['إضافة الميزانية النقدية', 'Cash budget added'],
+            FinanceRequest::QI_TOPUP => ['شحن رصيد Qi', 'Qi balance top up'],
             FinanceRequest::MERCHANT_PAYOUT => ['تسوية المستحقات', 'Payout settlement'],
         ];
         [$ar, $en] = $labels[$request->type] ?? ['العملية المالية', 'Financial request'];

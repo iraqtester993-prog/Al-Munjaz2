@@ -15,11 +15,20 @@ class FinanceRequest extends Model
 
     public const BUDGET_RECHARGE = 'budget_recharge';
 
+    /**
+     * A customer-visible Qi payment declaration. It remains pending until an
+     * administrator verifies the provider reference and credits the courier
+     * wallet. The provider integration can later approve the same request
+     * programmatically without changing the ledger contract.
+     */
+    public const QI_TOPUP = 'qi_topup';
+
     public const MERCHANT_PAYOUT = 'merchant_payout';
 
     public const TYPES = [
         self::CASH_HANDOVER,
         self::BUDGET_RECHARGE,
+        self::QI_TOPUP,
         self::MERCHANT_PAYOUT,
     ];
 
@@ -33,7 +42,7 @@ class FinanceRequest extends Model
 
     protected $fillable = [
         'tenant_id', 'user_id', 'branch_id', 'type', 'amount', 'approved_amount',
-        'status', 'reference', 'note', 'decision_note', 'processed_by', 'processed_at',
+        'status', 'reference', 'external_reference', 'note', 'decision_note', 'processed_by', 'processed_at',
     ];
 
     protected function casts(): array

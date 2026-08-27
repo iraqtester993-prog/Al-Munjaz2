@@ -27,6 +27,10 @@ const user = computed(() => page.props.auth?.user)
 const isCourier = computed(() => ['courier', 'pickup_courier', 'delivery_courier', 'transporter'].includes(user.value?.role))
 const locale = computed(() => page.props.locale || 'ar')
 const theme = ref(user.value?.theme || document.body?.dataset.theme || 'light')
+const contentEl = ref(null)
+const pullDistance = ref(0)
+const isPulling = ref(false)
+const isRefreshing = ref(false)
 const liveNotificationUnread = ref(Number(page.props.notificationUnread || 0))
 const notificationUnread = computed(() => {
     const override = props.notificationBadge
@@ -72,6 +76,65 @@ function goBack() {
     }
 
     router.visit(route('app'))
+}
+
+// Mobile browsers do not provide a reliable native refresh gesture inside an
+// app-like, nested scrolling shell. Keep the gesture local to the current
+// page and reload through Inertia so a pull never leaves the user's tab.
+let pullStartY = 0
+let canPull = false
+const refreshThreshold = 72
+
+function onContentTouchStart(event) {
+    if (isRefreshing.value || event.touches.length !== 1) return
+
+    const target = contentEl.value
+    canPull = Boolean(target && target.scrollTop <= 0)
+    pullStartY = event.touches[0].clientY
+    pullDistance.value = 0
+}
+
+function onContentTouchMove(event) {
+    if (!canPull || isRefreshing.value || event.touches.length !== 1) return
+
+    const delta = event.touches[0].clientY - pullStartY
+    if (delta <= 0) {
+        pullDistance.value = 0
+        isPulling.value = false
+        return
+    }
+
+    // A small resistance makes the gesture feel native while avoiding a
+    // large content shift when someone simply scrolls at the top.
+    pullDistance.value = Math.min(96, delta * 0.42)
+    isPulling.value = pullDistance.value > 4
+}
+
+function onContentTouchEnd() {
+    const shouldRefresh = canPull && pullDistance.value >= refreshThreshold
+    canPull = false
+    isPulling.value = false
+    pullDistance.value = 0
+
+    if (!shouldRefresh || isRefreshing.value) return
+
+    isRefreshing.value = true
+    router.reload({
+        preserveScroll: true,
+        preserveState: true,
+        onFinish: () => {
+            isRefreshing.value = false
+        },
+    })
+}
+
+function visitTab(tab) {
+    if (active(tab)) return
+
+    router.visit(tab.url, {
+        preserveScroll: true,
+        preserveState: true,
+    })
 }
 
 function syncLiveNotificationCount(event) {
@@ -152,14 +215,35 @@ function icon(name) {
                 <slot name="actions" />
             </header>
 
-            <main class="app-content" :class="[{ 'without-tabs': hideTabs }, contentClass]">
+            <div
+                class="app-pull-refresh"
+                :class="{ visible: isPulling || isRefreshing, ready: pullDistance >= refreshThreshold, refreshing: isRefreshing }"
+                :style="{ transform: `translate(-50%, ${Math.min(60, pullDistance)}px)` }"
+                role="status"
+                :aria-live="isRefreshing ? 'polite' : 'off'"
+            >
+                <svg class="pull-refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 11a8 8 0 1 0 2 5.3" /><path d="M20 4v7h-7" />
+                </svg>
+                <span>{{ isRefreshing ? t('Refreshing…') : t('Pull to refresh') }}</span>
+            </div>
+
+            <main
+                ref="contentEl"
+                class="app-content"
+                :class="[{ 'without-tabs': hideTabs }, contentClass]"
+                @touchstart.passive="onContentTouchStart"
+                @touchmove.passive="onContentTouchMove"
+                @touchend="onContentTouchEnd"
+                @touchcancel="onContentTouchEnd"
+            >
                 <slot />
             </main>
 
             <slot name="fab" />
 
             <nav v-if="!hideTabs" class="bottom-tabs">
-                <button v-for="tab in tabs" :key="tab.route" class="tab-btn" :class="{ active: active(tab) }" @click="$inertia.visit(tab.url)">
+                <button v-for="tab in tabs" :key="tab.route" class="tab-btn" :class="{ active: active(tab) }" @click="visitTab(tab)">
                     <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path :d="icon(tab.icon)" />
                     </svg>
@@ -170,3 +254,40 @@ function icon(name) {
         </div>
     </div>
 </template>
+
+<style scoped>
+.app-pull-refresh {
+    position: absolute;
+    top: 66px;
+    left: 50%;
+    z-index: 31;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--surface) 96%, transparent);
+    box-shadow: 0 6px 18px rgba(15, 27, 26, .12);
+    color: var(--ink-soft);
+    font-size: 9.5px;
+    font-weight: 850;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .16s ease, transform .18s ease, color .16s ease;
+}
+
+.app-pull-refresh.visible { opacity: 1; }
+.app-pull-refresh.ready { color: var(--primary-strong); }
+.app-pull-refresh.refreshing { color: var(--primary-strong); }
+.pull-refresh-icon { width: 14px; height: 14px; }
+.app-pull-refresh.ready .pull-refresh-icon { transform: rotate(180deg); }
+.app-pull-refresh.refreshing .pull-refresh-icon { animation: pull-spin .75s linear infinite; }
+
+.tab-btn { transition: color .16s ease, transform .16s ease; }
+.tab-btn:active { transform: scale(.92); }
+.tab-btn.active svg { filter: drop-shadow(0 2px 4px color-mix(in srgb, var(--primary) 26%, transparent)); }
+
+@keyframes pull-spin { to { transform: rotate(360deg); } }
+</style>

@@ -4,11 +4,14 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\ActivityLog;
+use App\Models\Branch;
 use App\Models\Order;
 use App\Models\OrderStatusLog;
 use App\Models\Scopes\TenantScope;
 use App\Models\Setting;
+use App\Models\Tenant;
 use App\Models\User;
+use App\Services\CustomerContactVisibility;
 use App\Services\CourierOrderAccess;
 use App\Services\OrderWorkflowService;
 use App\Services\PricingService;
@@ -46,7 +49,7 @@ class OrderController extends Controller
 
         return response()->json(
             $query->paginate(min($request->integer('per_page', 20), 100))
-                ->through(fn (Order $order) => $this->orderData($order)),
+                ->through(fn (Order $order) => $this->orderData($order, $user)),
         );
     }
 
@@ -61,7 +64,7 @@ class OrderController extends Controller
         $this->authorizeOrder($user, $order);
 
         return response()->json([
-            'data' => $this->orderData($order->load('courier:id,name,phone', 'statusLogs')),
+            'data' => $this->orderData($order->load('courier:id,name,phone', 'statusLogs'), $user),
         ]);
     }
 
@@ -106,7 +109,10 @@ class OrderController extends Controller
             'المحافظة المختارة غير مفعلة لحسابك.',
         );
 
-        $order = DB::transaction(function () use ($data, $request, $tenant, $user): Order {
+        $operatingBranch = $this->operatingBranchForUser($user, (int) $data['province_id']);
+        abort_unless($operatingBranch, 422, 'اختر محافظة مرتبطة بفرع نشط قبل إنشاء الطلب.');
+
+        $order = DB::transaction(function () use ($data, $request, $tenant, $user, $operatingBranch): Order {
             $availabilityMinutes = max(1, min((int) Setting::get('order_expiry_minutes', 30), 1440));
             $quote = app(PricingService::class)->quote(
                 $user,
@@ -136,6 +142,8 @@ class OrderController extends Controller
                 'pickup_deadline_at' => now()->addMinutes($availabilityMinutes),
                 'merchant_id' => $user->id,
                 'created_by' => $user->id,
+                'branch_id' => $operatingBranch->id,
+                'origin_branch_id' => $operatingBranch->id,
             ]);
 
             OrderStatusLog::create([
@@ -159,7 +167,7 @@ class OrderController extends Controller
             return $order;
         });
 
-        return response()->json(['data' => $this->orderData($order)], 201);
+        return response()->json(['data' => $this->orderData($order, $user)], 201);
     }
 
     public function updateStatus(Request $request, Order $order): JsonResponse
@@ -198,7 +206,7 @@ class OrderController extends Controller
         app(OrderWorkflowService::class)->changeStatus($order, $data['status'], $user, $data['note'] ?? null);
 
         return response()->json([
-            'data' => $this->orderData($this->findOrder($order->id)->load('courier:id,name,phone')),
+            'data' => $this->orderData($this->findOrder($order->id)->load('courier:id,name,phone'), $user),
         ]);
     }
 
@@ -227,7 +235,7 @@ class OrderController extends Controller
         );
 
         return response()->json([
-            'data' => $this->orderData($this->findOrder($order->id)->load('courier:id,name,phone')),
+            'data' => $this->orderData($this->findOrder($order->id)->load('courier:id,name,phone'), $user),
         ]);
     }
 
@@ -244,7 +252,7 @@ class OrderController extends Controller
         );
 
         return response()->json([
-            'data' => $this->orderData($this->findOrder($order->id)->load('courier:id,name,phone')),
+            'data' => $this->orderData($this->findOrder($order->id)->load('courier:id,name,phone'), $user),
         ]);
     }
 
@@ -353,8 +361,27 @@ class OrderController extends Controller
         return $track;
     }
 
-    private function orderData(Order $order): array
+    private function operatingBranchForUser(User $user, int $provinceId): ?Branch
     {
+        $branches = Branch::withoutGlobalScopes()
+            ->where('tenant_id', Tenant::platform()->id)
+            ->where('is_platform_managed', true)
+            ->where('is_active', true)
+            ->where('province_id', $provinceId);
+
+        if ((int) $user->branch_id > 0) {
+            return $branches->whereKey($user->branch_id)->first();
+        }
+
+        // Compatibility for pre-branch accounts: choose only the first
+        // active platform branch in an explicitly authorised province.
+        return $branches->orderBy('name_ar')->first();
+    }
+
+    private function orderData(Order $order, User $viewer): array
+    {
+        $phoneRevealed = app(CustomerContactVisibility::class)->canReveal($order, $viewer);
+
         return [
             'id' => $order->id,
             'track_no' => $order->track_no,
@@ -362,8 +389,9 @@ class OrderController extends Controller
             'customer_name' => $order->customer_name_ar,
             'customer_name_ar' => $order->customer_name_ar,
             'customer_name_en' => $order->customer_name_en,
-            'phone' => $order->phone,
-            'phone2' => $order->phone2,
+            'phone' => $phoneRevealed ? $order->phone : null,
+            'phone2' => $phoneRevealed ? $order->phone2 : null,
+            'phone_revealed' => $phoneRevealed,
             'address' => $order->address_ar,
             'address_ar' => $order->address_ar,
             'address_en' => $order->address_en,

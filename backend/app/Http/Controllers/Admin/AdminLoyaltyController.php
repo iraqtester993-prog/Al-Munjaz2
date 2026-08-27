@@ -117,7 +117,7 @@ class AdminLoyaltyController extends Controller
             'ip' => $request->ip(),
         ]);
 
-        return back()->with('success', __('Loyalty reward setting saved.'));
+        return back()->with('success', __('Courier point setting saved.'));
     }
 
     /**
@@ -173,7 +173,7 @@ class AdminLoyaltyController extends Controller
         ]);
 
         return back()->with('success', $data['operation'] === 'credit'
-            ? __('Loyalty points added successfully.')
-            : __('Loyalty points deducted successfully.'));
+            ? __('Courier points added successfully.')
+            : __('Courier points deducted successfully.'));
     }
 }

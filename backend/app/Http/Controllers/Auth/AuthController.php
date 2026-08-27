@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Models\Branch;
 use App\Models\Document;
 use App\Models\Tenant;
 use App\Models\User;
@@ -14,6 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Support\Collection;
 use Inertia\Inertia;
 
 class AuthController extends Controller
@@ -31,7 +33,12 @@ class AuthController extends Controller
 
     public function loginForm()
     {
-        return Inertia::render('Auth/Login');
+        return Inertia::render('Auth/Login', [
+            // Only provinces backed by an active operational branch are
+            // selectable. This prevents a new courier or merchant from
+            // entering an area that the platform cannot actually serve.
+            'provinces' => $this->operatingAreas(),
+        ]);
     }
 
     public function login(Request $request)
@@ -40,6 +47,7 @@ class AuthController extends Controller
             'username' => ['required', 'string'],
             'password' => ['required', 'string'],
             'role' => ['required', 'in:merchant,courier'],
+            'province_id' => ['nullable', 'integer', 'exists:provinces,id'],
         ]);
 
         $user = User::where('username', $credentials['username'])->first();
@@ -64,9 +72,37 @@ class AuthController extends Controller
             return back()->withErrors(['username' => __('auth.rejected')]);
         }
 
+        $area = null;
+        $areas = $this->operatingAreas();
+        if ($areas->isNotEmpty()) {
+            $provinceId = (int) ($credentials['province_id'] ?? 0);
+            if (! $provinceId) {
+                return back()->withErrors(['province_id' => 'اختر المحافظة التي يعمل ضمنها الفرع قبل تسجيل الدخول.']);
+            }
+
+            $area = $areas->firstWhere('id', $provinceId);
+            if (! $area) {
+                return back()->withErrors(['province_id' => 'المحافظة المختارة ليست ضمن الفروع النشطة.']);
+            }
+
+            if (! $user->provinces()->whereKey($provinceId)->exists()) {
+                return back()->withErrors(['province_id' => 'هذا الحساب غير مفعّل للمحافظة المختارة.']);
+            }
+        }
+
         Auth::login($user, true);
 
         $request->session()->regenerate();
+        if ($area) {
+            // The selected operating province is not cosmetic. Persist the
+            // active branch on the account so order queues, content and
+            // administration queries share the same server-side boundary.
+            if ((int) $user->branch_id !== (int) $area['branch_id']) {
+                $user->forceFill(['branch_id' => (int) $area['branch_id']])->save();
+            }
+            $request->session()->put('operating_branch_id', (int) $area['branch_id']);
+            $request->session()->put('operating_province_id', (int) $area['id']);
+        }
 
         return redirect()->intended($this->homeFor($user));
     }
@@ -103,7 +139,7 @@ class AuthController extends Controller
     {
         return Inertia::render('Auth/Register', [
             'role' => $role,
-            'provinces' => Province::query()->whereNull('tenant_id')->orderBy('sort_order')->get(['id', 'name_ar', 'name_en', 'name_ku']),
+            'provinces' => $this->operatingAreas(),
             'courierUploadLimits' => $this->courierUploadLimits(),
             'vehicles' => [
                 'bike' => ['ar' => 'دراجة نارية', 'en' => 'Motorcycle', 'ku' => 'ماتۆڕسکلێت'],
@@ -137,6 +173,11 @@ class AuthController extends Controller
         ], $this->courierDocumentMessages($uploadLimits));
 
         $validator->after(function ($validator) use ($request, $isCourier, $uploadLimits): void {
+            $provinceId = (int) $request->input('province_id');
+            if ($provinceId && ! $this->operatingAreas()->contains('id', $provinceId)) {
+                $validator->errors()->add('province_id', 'المحافظة المختارة ليست ضمن الفروع النشطة حالياً.');
+            }
+
             if (! $isCourier) {
                 return;
             }
@@ -154,6 +195,11 @@ class AuthController extends Controller
         $data = $validator->validate();
 
         $user = DB::transaction(function () use ($data, $isCourier, $request): User {
+            $branch = $this->activeBranchForProvince((int) $data['province_id']);
+            if (! $branch) {
+                abort(422, 'المحافظة المختارة ليست ضمن الفروع النشطة حالياً.');
+            }
+
             $tenant = Tenant::create([
                 'slug' => 't'.Str::lower(Str::random(12)),
                 'name' => $isCourier ? ($data['name'].' — مندوب') : $data['shop'],
@@ -164,6 +210,7 @@ class AuthController extends Controller
 
             $user = User::create([
                 'tenant_id' => $tenant->id,
+                'branch_id' => $branch->id,
                 'name' => $data['name'],
                 'username' => $data['phone'],
                 'phone' => $data['phone'],
@@ -273,6 +320,10 @@ class AuthController extends Controller
         $request->session()->forget(self::OTP_SESSION_KEY);
         Auth::login($user, true);
         $request->session()->regenerate();
+        if ($user->branch_id) {
+            $request->session()->put('operating_branch_id', (int) $user->branch_id);
+            $request->session()->put('operating_province_id', (int) $user->provinces()->value('provinces.id'));
+        }
 
         return redirect()->intended($this->homeFor($user))
             ->with('success', __('auth.account_activated'));
@@ -358,6 +409,54 @@ class AuthController extends Controller
             'resend_available_at' => $now->copy()->addSeconds($this->otpResendCooldownSeconds())->timestamp,
             'attempts' => 0,
         ]);
+    }
+
+    /**
+     * @return Collection<int, array{id:int,name_ar:string,name_en:?string,name_ku:?string,branch_id:int,branch_name:string}>
+     */
+    private function operatingAreas(): Collection
+    {
+        return Branch::withoutGlobalScopes()
+            ->where('branches.tenant_id', Tenant::platform()->id)
+            ->where('branches.is_platform_managed', true)
+            ->where('branches.is_active', true)
+            ->whereNotNull('branches.province_id')
+            ->join('provinces', 'provinces.id', '=', 'branches.province_id')
+            ->orderBy('provinces.sort_order')
+            ->orderBy('branches.name_ar')
+            ->get([
+                'provinces.id',
+                'provinces.name_ar',
+                'provinces.name_en',
+                'provinces.name_ku',
+                'branches.id as branch_id',
+                'branches.name_ar as branch_name',
+            ])
+            // One operating login path per province. When an owner creates
+            // more than one branch in the same province, the first active
+            // branch by name is the default until a future branch selector is
+            // intentionally added to the sign-in flow.
+            ->unique('id')
+            ->values()
+            ->map(fn ($area) => [
+                'id' => (int) $area->id,
+                'name_ar' => (string) $area->name_ar,
+                'name_en' => $area->name_en,
+                'name_ku' => $area->name_ku,
+                'branch_id' => (int) $area->branch_id,
+                'branch_name' => (string) $area->branch_name,
+            ]);
+    }
+
+    private function activeBranchForProvince(int $provinceId): ?Branch
+    {
+        return Branch::withoutGlobalScopes()
+            ->where('tenant_id', Tenant::platform()->id)
+            ->where('is_platform_managed', true)
+            ->where('is_active', true)
+            ->where('province_id', $provinceId)
+            ->orderBy('name_ar')
+            ->first();
     }
 
     private function temporaryOtpCode(): string

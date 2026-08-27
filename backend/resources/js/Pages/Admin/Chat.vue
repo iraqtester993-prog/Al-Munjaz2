@@ -132,6 +132,9 @@ onBeforeUnmount(() => {
                     <div>
                         <b>{{ activeChat.user?.name || activeChat.title_ar }}</b>
                         <div class="text-muted" style="font-size: 10.5px">{{ activeChat.user?.phone }}</div>
+                        <div v-if="activeChat.order" class="text-muted" style="font-size: 9.5px">
+                            {{ activeChat.order.track_no }} · {{ activeChat.order.customer_name }} · {{ activeChat.order.phone }}
+                        </div>
                     </div>
                 </div>
                 <div ref="threadEl" class="thread" style="height: 0; flex: 1; min-height: 200px">

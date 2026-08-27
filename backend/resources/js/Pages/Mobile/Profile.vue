@@ -98,7 +98,7 @@ function submitVerification() {
     })
 }
 function openSupport() { router.post(route('app.chats.open')) }
-function formatMoney(value) { return new Intl.NumberFormat(locale.value === 'ar' ? 'ar-IQ' : locale.value === 'ku' ? 'ku-IQ' : 'en-US').format(Number(value || 0)) }
+function formatMoney(value) { return fmt(value) }
 function logout() { router.post(route('logout')) }
 </script>
 

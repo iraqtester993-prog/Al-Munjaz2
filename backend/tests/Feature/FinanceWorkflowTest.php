@@ -28,7 +28,7 @@ class FinanceWorkflowTest extends TestCase
         $this->seed(DemoSeeder::class);
     }
 
-    public function test_courier_cash_handover_and_budget_recharge_are_approved_once_by_administration(): void
+    public function test_courier_cash_handover_and_cash_budget_are_approved_once_by_administration(): void
     {
         $courier = User::where('username', 'مندوب')->firstOrFail();
         $admin = User::where('role', 'admin')->firstOrFail();
@@ -90,7 +90,7 @@ class FinanceWorkflowTest extends TestCase
             ->count());
 
         $this->actingAs($courier)
-            ->post('/app/wallet/recharge', ['amount' => 1000, 'note' => 'شحن من التسليم المعتمد'])
+            ->post('/app/wallet/budget', ['amount' => 1000, 'note' => 'نقد متاح لاستلام الطلبات'])
             ->assertRedirect();
 
         $recharge = FinanceRequest::withoutGlobalScopes()
@@ -123,6 +123,52 @@ class FinanceWorkflowTest extends TestCase
             ->where('finance_request_id', $recharge->id)
             ->count());
         $this->assertSame($startingBudget + 1000, (int) $courier->wallet->fresh()->budget);
+    }
+
+    public function test_qi_topup_needs_a_provider_reference_and_administrator_approval_before_crediting_the_courier(): void
+    {
+        $courier = User::where('username', 'مندوب')->firstOrFail();
+        $admin = User::where('role', 'admin')->firstOrFail();
+        $startingBalance = (int) $courier->wallet->balance;
+
+        $this->actingAs($courier)
+            ->post('/app/wallet/recharge', [
+                'amount' => 20000,
+                'qi_reference' => 'QI-TEST-20260827-01',
+                'note' => 'تحويل اختبار',
+            ])
+            ->assertRedirect();
+
+        $topup = FinanceRequest::withoutGlobalScopes()
+            ->where('user_id', $courier->id)
+            ->where('type', FinanceRequest::QI_TOPUP)
+            ->firstOrFail();
+
+        $this->assertSame(FinanceRequest::PENDING, $topup->status);
+        $this->assertSame('QI-TEST-20260827-01', $topup->external_reference);
+        $this->assertSame($startingBalance, (int) $courier->wallet->fresh()->balance);
+
+        $this->actingAs($admin)
+            ->post("/dashboard/finance/requests/{$topup->id}/approve", [
+                'approved_amount' => 20000,
+                'decision_note' => 'تمت مطابقة عملية Qi',
+            ])
+            ->assertRedirect();
+
+        $this->assertSame($startingBalance + 20000, (int) $courier->wallet->fresh()->balance);
+        $this->assertDatabaseHas('transactions', [
+            'finance_request_id' => $topup->id,
+            'type' => FinanceRequest::QI_TOPUP,
+            'amount' => 20000,
+            'direction' => 1,
+        ]);
+
+        $this->actingAs($courier)
+            ->post('/app/wallet/recharge', [
+                'amount' => 20000,
+                'qi_reference' => 'QI-TEST-20260827-01',
+            ])
+            ->assertSessionHasErrors('finance');
     }
 
     public function test_merchant_payout_requires_an_administrator_approval_before_debiting_the_wallet(): void

@@ -195,15 +195,14 @@ function localizedBranch(branch) {
 }
 
 function formatMoney(value) {
-    const language = locale.value === 'ar' ? 'ar-IQ' : locale.value === 'ku' ? 'ku-IQ' : 'en-US'
-    return `${new Intl.NumberFormat(language, { maximumFractionDigits: 0 }).format(Number(value || 0))} ${text('currency')}`
+    return `${new Intl.NumberFormat('en-US', { numberingSystem: 'latn', maximumFractionDigits: 0 }).format(Number(value || 0))} ${text('currency')}`
 }
 
 function formatDate(value) {
     if (!value) return '—'
     try {
-        const language = locale.value === 'ar' ? 'ar-IQ' : locale.value === 'ku' ? 'ku-IQ' : 'en-US'
-        return new Intl.DateTimeFormat(language, { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${value}T00:00:00`))
+        const language = locale.value === 'ar' ? 'ar-IQ-u-nu-latn' : locale.value === 'ku' ? 'ku-IQ-u-nu-latn' : 'en-US'
+        return new Intl.DateTimeFormat(language, { day: 'numeric', month: 'short', year: 'numeric', numberingSystem: 'latn' }).format(new Date(`${value}T00:00:00`))
     } catch (_) {
         return value
     }
@@ -360,7 +359,7 @@ onMounted(() => applyTheme(theme.value))
             <section v-if="branches.length" class="metric-grid" :aria-label="text('portal')">
                 <article v-for="metric in metrics" :key="metric.key" class="metric-card">
                     <span class="metric-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path :d="icon(metric.icon)" /></svg></span>
-                    <div><strong>{{ metric.value }}</strong><span>{{ metric.label }}</span></div>
+                    <div><strong class="mono">{{ fmt(metric.value) }}</strong><span>{{ metric.label }}</span></div>
                 </article>
             </section>
 
@@ -372,7 +371,7 @@ onMounted(() => applyTheme(theme.value))
                         <button v-for="branch in branches" :key="branch.id" class="branch-card" type="button" @click="selectBranch(branch)">
                             <span class="branch-status" :class="{ inactive: !branch.is_active }">{{ branch.is_active ? text('active') : text('inactive') }}</span>
                             <div class="branch-card-title"><span class="branch-symbol">⌂</span><div><h3>{{ localizedBranch(branch) }}</h3><p>{{ branch.city || text('noData') }} · {{ branch.code }}</p></div></div>
-                            <div class="branch-card-data"><span>{{ text('activeOrders') }}<b>{{ branch.orders?.active || 0 }}</b></span><span>{{ text('deliveredOrders') }}<b>{{ branch.orders?.delivered || 0 }}</b></span><span>{{ text('cashBalance') }}<b>{{ formatMoney(branch.cash_balance) }}</b></span></div>
+                            <div class="branch-card-data"><span>{{ text('activeOrders') }}<b class="mono">{{ fmt(branch.orders?.active || 0) }}</b></span><span>{{ text('deliveredOrders') }}<b class="mono">{{ fmt(branch.orders?.delivered || 0) }}</b></span><span>{{ text('cashBalance') }}<b>{{ formatMoney(branch.cash_balance) }}</b></span></div>
                         </button>
                     </div>
 
@@ -381,7 +380,7 @@ onMounted(() => applyTheme(theme.value))
                             <div class="branch-card-title"><span class="branch-symbol">⌂</span><div><span class="eyebrow">{{ text('branchCode') }} · {{ selectedBranch.code }}</span><h2>{{ localizedBranch(selectedBranch) }}</h2><p>{{ selectedBranch.city || text('noData') }}</p></div></div>
                             <div class="detail-badges"><span class="branch-status" :class="{ inactive: !selectedBranch.is_active }">{{ selectedBranch.is_active ? text('active') : text('inactive') }}</span><span class="access-badge">{{ accessLabel(selectedBranch.access_role) }}</span></div>
                         </div>
-                        <div class="detail-stat-grid"><div><span>{{ text('totalOrders') }}</span><b>{{ selectedBranch.orders?.total || 0 }}</b></div><div><span>{{ text('activeOrders') }}</span><b>{{ selectedBranch.orders?.active || 0 }}</b></div><div><span>{{ text('deliveredOrders') }}</span><b>{{ selectedBranch.orders?.delivered || 0 }}</b></div><div><span>{{ text('todayOrders') }}</span><b>{{ selectedBranch.orders?.today || 0 }}</b></div></div>
+                        <div class="detail-stat-grid"><div><span>{{ text('totalOrders') }}</span><b class="mono">{{ fmt(selectedBranch.orders?.total || 0) }}</b></div><div><span>{{ text('activeOrders') }}</span><b class="mono">{{ fmt(selectedBranch.orders?.active || 0) }}</b></div><div><span>{{ text('deliveredOrders') }}</span><b class="mono">{{ fmt(selectedBranch.orders?.delivered || 0) }}</b></div><div><span>{{ text('todayOrders') }}</span><b class="mono">{{ fmt(selectedBranch.orders?.today || 0) }}</b></div></div>
                         <div class="detail-info-grid"><div><span>{{ text('cashBalance') }}</span><b class="money">{{ formatMoney(selectedBranch.cash_balance) }}</b></div><div><span>{{ text('contact') }}</span><b>{{ selectedBranch.phone || selectedBranch.address || text('noContact') }}</b></div><div><span>{{ text('city') }}</span><b>{{ selectedBranch.city || '—' }}</b></div><div><span>{{ text('address') }}</span><b>{{ selectedBranch.address || '—' }}</b></div></div>
                     </article>
                 </div>

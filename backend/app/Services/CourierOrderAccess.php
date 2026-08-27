@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Order;
+use App\Models\Branch;
 use App\Models\Scopes\TenantScope;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
@@ -42,22 +43,38 @@ class CourierOrderAccess
         }
 
         $provinceIds = $this->provinceIds($courier);
+        $branchId = $this->operatingBranchId($courier);
 
-        return $this->base()
+        $orders = $this->base()
             ->where('status', 'pending')
             ->whereNull('courier_id')
             ->whereNotNull('province_id')
-            ->whereIn('province_id', $provinceIds)
             ->where(function (Builder $query): void {
                 $query->whereNull('pickup_deadline_at')
                     ->orWhere('pickup_deadline_at', '>', now());
             });
+
+        if ($branchId) {
+            return $orders->where(function (Builder $orderBranches) use ($branchId): void {
+                $orderBranches
+                    ->where('branch_id', $branchId)
+                    ->orWhere('origin_branch_id', $branchId);
+            });
+        }
+
+        return $orders->whereIn('province_id', $provinceIds);
     }
 
     public function canClaim(Order $order, User $courier): bool
     {
         if ($courier->role !== 'courier' || $order->status !== 'pending' || $order->courier_id !== null || ! $order->province_id) {
             return false;
+        }
+
+        $branchId = $this->operatingBranchId($courier);
+        if ($branchId) {
+            return (int) $order->branch_id === $branchId
+                || (int) $order->origin_branch_id === $branchId;
         }
 
         return $this->canServeProvince($courier, (int) $order->province_id);
@@ -75,6 +92,20 @@ class CourierOrderAccess
             ->pluck('provinces.id')
             ->map(fn ($id) => (int) $id)
             ->all();
+    }
+
+    private function operatingBranchId(User $courier): ?int
+    {
+        $branchId = (int) $courier->branch_id;
+        if ($branchId <= 0) {
+            return null;
+        }
+
+        return Branch::withoutGlobalScopes()
+            ->whereKey($branchId)
+            ->where('is_platform_managed', true)
+            ->where('is_active', true)
+            ->exists() ? $branchId : null;
     }
 
     protected function base(): Builder

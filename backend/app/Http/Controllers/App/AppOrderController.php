@@ -13,12 +13,14 @@ use App\Models\Setting;
 use App\Models\User;
 use App\Services\CourierOrderAccess;
 use App\Services\CourierOrderAssignmentService;
+use App\Services\CustomerContactVisibility;
 use App\Services\OrderWorkflowService;
 use App\Services\PricingService;
 use App\Tenancy\TenantContext;
 use DateTimeInterface;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 
@@ -46,11 +48,16 @@ class AppOrderController extends Controller
         }
 
         if ($q) {
-            $query->where(function ($builder) use ($q) {
+            $query->where(function ($builder) use ($q, $isCourier) {
                 $builder->where('track_no', 'like', "%{$q}%")
                     ->orWhere('customer_name_ar', 'like', "%{$q}%")
-                    ->orWhere('customer_name_en', 'like', "%{$q}%")
-                    ->orWhere('phone', 'like', "%{$q}%");
+                    ->orWhere('customer_name_en', 'like', "%{$q}%");
+
+                // A courier cannot use search as a side channel to probe a
+                // customer's number before the order is physically with them.
+                if (! $isCourier) {
+                    $builder->orWhere('phone', 'like', "%{$q}%");
+                }
             });
         }
 
@@ -97,14 +104,19 @@ class AppOrderController extends Controller
                 ->get(['id', 'name_ar', 'name_en', 'name_ku', 'city'])
                 ->keyBy('id');
 
-        $orders = $orderRecords->map(fn (Order $o) => [
+        $viewer = $request->user();
+        $orders = $orderRecords->map(function (Order $o) use ($isCourier, $viewer, $movementBranches): array {
+            $phoneRevealed = app(CustomerContactVisibility::class)->canReveal($o, $viewer);
+
+            return [
             'id' => $o->id,
             'track_no' => $o->track_no,
             'source' => $o->source,
             'customer_name_ar' => $o->customer_name_ar,
             'customer_name_en' => $o->customer_name_en,
-            'phone' => $o->phone,
-            'phone2' => $o->phone2,
+            'phone' => $phoneRevealed ? $o->phone : null,
+            'phone2' => $phoneRevealed ? $o->phone2 : null,
+            'phone_revealed' => $phoneRevealed,
             'address_ar' => $o->address_ar,
             'address_en' => $o->address_en,
             'pickup_latitude' => $o->pickup_latitude === null ? null : (float) $o->pickup_latitude,
@@ -144,7 +156,8 @@ class AppOrderController extends Controller
                 ? $this->branchPayload($o->destinationBranch)
                 : null,
             'timeline' => $this->timelinePayload($o, $movementBranches),
-        ])->values();
+            ];
+        })->values();
 
         $counts = $isCourier
             ? [
@@ -202,6 +215,9 @@ class AppOrderController extends Controller
             'المحافظة المختارة غير مفعلة لحسابك.'
         );
 
+        $operatingBranch = $this->operatingBranchForUser($user, (int) $data['province_id']);
+        abort_unless($operatingBranch, 422, 'اختر محافظة مرتبطة بفرع نشط قبل إنشاء الطلب.');
+
         $order = new Order($data);
         $order->tenant_id = $tenant->id;
         $order->source = 'merchant';
@@ -230,6 +246,8 @@ class AppOrderController extends Controller
         $order->pickup_deadline_at = now()->addMinutes($availabilityMinutes);
         $order->merchant_id = $user->id;
         $order->created_by = $user->id;
+        $order->branch_id = $operatingBranch->id;
+        $order->origin_branch_id = $operatingBranch->id;
         $order->save();
 
         OrderStatusLog::create([
@@ -281,6 +299,9 @@ class AppOrderController extends Controller
             'المحافظة المختارة غير مفعلة لحسابك.'
         );
 
+        $operatingBranch = $this->operatingBranchForUser($request->user(), (int) $data['province_id']);
+        abort_unless($operatingBranch, 422, 'اختر محافظة مرتبطة بفرع نشط قبل تعديل الطلب.');
+
         $quote = app(PricingService::class)->quote(
             $request->user(),
             (int) $data['province_id'],
@@ -298,6 +319,8 @@ class AppOrderController extends Controller
             'fee' => $quote['fee'],
             'return_fee' => $quote['return_fee'],
             'pricing_rule_id' => $quote['rule']?->id,
+            'branch_id' => $operatingBranch->id,
+            'origin_branch_id' => $operatingBranch->id,
         ]);
 
         return back()->with('success', __('orders.updated', ['track' => $order->track_no]));
@@ -379,6 +402,77 @@ class AppOrderController extends Controller
         return back()->with('success', 'تم تأكيد إعادة الطلب إلى التاجر وتحديث السجل التشغيلي والمالي.');
     }
 
+    /**
+     * A returned parcel remains historical evidence.  The merchant can start
+     * a new delivery from it, but never mutate the completed return back into
+     * an active order.  This keeps both the archive and financial trail
+     * truthful while sparing the merchant from retyping the order details.
+     */
+    public function recreate(Request $request, Order $order)
+    {
+        $this->authorizeOrder($order, $request);
+        abort_unless($request->user()->role === 'merchant', 403, 'إعادة إنشاء الطلب متاحة للتاجر فقط.');
+        abort_unless($order->status === 'returned', 422, 'يمكن إعادة إنشاء الطلبات المرتجعة فقط.');
+
+        $newOrder = DB::transaction(function () use ($order, $request): Order {
+            $new = $order->replicate([
+                'track_no', 'status', 'workflow_stage', 'courier_id',
+                'pickup_courier_id', 'delivery_courier_id', 'branch_id',
+                'origin_branch_id', 'destination_branch_id', 'accepted_at',
+                'picked_at', 'delivered_at', 'returned_at',
+                'returned_to_merchant_at', 'return_fee_applied',
+                'return_fee_charged_at', 'pickup_deadline_at',
+            ]);
+
+            $new->forceFill([
+                'track_no' => 'ALM-'.mt_rand(100000, 999999),
+                'merchant_id' => $request->user()->id,
+                'created_by' => $request->user()->id,
+                'status' => 'pending',
+                'workflow_stage' => 'created',
+                'courier_id' => null,
+                'pickup_courier_id' => null,
+                'delivery_courier_id' => null,
+                'branch_id' => null,
+                'origin_branch_id' => null,
+                'destination_branch_id' => null,
+                'date' => today(),
+                'accepted_at' => null,
+                'picked_at' => null,
+                'delivered_at' => null,
+                'returned_at' => null,
+                'returned_to_merchant_at' => null,
+                'return_fee_applied' => 0,
+                'return_fee_charged_at' => null,
+                'pickup_deadline_at' => now()->addMinutes(max(1, min((int) Setting::get('order_expiry_minutes', 30), 1440))),
+            ]);
+            $new->save();
+
+            OrderStatusLog::create([
+                'tenant_id' => $new->tenant_id,
+                'order_id' => $new->id,
+                'from_status' => null,
+                'to_status' => 'pending',
+                'user_id' => $request->user()->id,
+                'note' => 'إعادة إنشاء من الطلب المرتجع '.$order->track_no,
+            ]);
+
+            return $new;
+        });
+
+        ActivityLog::create([
+            'tenant_id' => $newOrder->tenant_id,
+            'user_id' => $request->user()->id,
+            'action' => 'order.recreated_from_return',
+            'subject_type' => 'order',
+            'subject_id' => $newOrder->id,
+            'data' => ['source_order_id' => $order->id, 'source_track_no' => $order->track_no],
+            'ip' => $request->ip(),
+        ]);
+
+        return back()->with('success', 'تم إنشاء طلب جديد من الطلب المرتجع: '.$newOrder->track_no);
+    }
+
     public function claim(Request $request, Order $order)
     {
         $courier = $request->user();
@@ -415,6 +509,26 @@ class AppOrderController extends Controller
         if ($request->user()->role === 'merchant') {
             abort_unless($order->tenant_id === $request->user()->tenant_id, 403);
         }
+    }
+
+    private function operatingBranchForUser(User $user, int $provinceId): ?Branch
+    {
+        $branchId = (int) $user->branch_id;
+
+        $branches = Branch::withoutGlobalScopes()
+            ->where('tenant_id', \App\Models\Tenant::platform()->id)
+            ->where('is_platform_managed', true)
+            ->where('is_active', true)
+            ->where('province_id', $provinceId);
+
+        if ($branchId > 0) {
+            return $branches->whereKey($branchId)->first();
+        }
+
+        // Legacy accounts created before branch selection was introduced may
+        // not have a branch assignment. The first active branch for their
+        // authorised province is a safe one-time compatibility fallback.
+        return $branches->orderBy('name_ar')->first();
     }
 
     /**

@@ -25,7 +25,9 @@ class AppReportController extends Controller
             'period' => ['nullable', Rule::in(['all', 'today'])],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', 'after_or_equal:from'],
-            'status' => ['nullable', Rule::in(array_merge(['all'], Order::STATUSES))],
+            // The archive is intentionally not a second live-order list. It
+            // contains only completed deliveries and completed returns.
+            'status' => ['nullable', Rule::in(['all', 'delivered', 'returned'])],
             'province_id' => ['nullable', 'integer', 'exists:provinces,id'],
         ]);
 
@@ -36,7 +38,11 @@ class AppReportController extends Controller
             'status' => $data['status'] ?? 'all',
             'province_id' => isset($data['province_id']) ? (int) $data['province_id'] : null,
         ];
-        $query = Order::query()->with('province')->latest('date')->latest('id');
+        $query = Order::query()
+            ->with('province')
+            ->whereIn('status', ['delivered', 'returned'])
+            ->latest('date')
+            ->latest('id');
 
         if ($period === 'today') {
             $query->whereDate('date', today());
@@ -56,10 +62,11 @@ class AppReportController extends Controller
 
         $orders = $query->get();
 
-        $statusCounts = collect(Order::STATUSES)
+        $archiveStatuses = ['delivered', 'returned'];
+        $statusCounts = collect($archiveStatuses)
             ->mapWithKeys(fn (string $status) => [$status => $orders->where('status', $status)->count()])
             ->all();
-        $statusValues = collect(Order::STATUSES)
+        $statusValues = collect($archiveStatuses)
             ->mapWithKeys(fn (string $status) => [$status => (int) $orders->where('status', $status)->sum('price')])
             ->all();
         $provinceIds = $orders->pluck('province_id')->filter()->unique()->values();
@@ -101,7 +108,7 @@ class AppReportController extends Controller
             'period' => $period,
             'filters' => $filters,
             'summary' => $summary,
-            'statusOptions' => Order::STATUSES,
+            'statusOptions' => $archiveStatuses,
             'provinceOptions' => $provinceOptions,
             'provinceDistribution' => $provinceDistribution,
             'orders' => $orders->map(fn (Order $order) => [
