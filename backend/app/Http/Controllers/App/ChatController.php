@@ -191,9 +191,34 @@ class ChatController extends Controller
                 return redirect()->route('app.chats.show', $chat);
             }
 
-            // Before an assignment there is no second operational party.
-            // Keep the historical order-support path for a merchant who
-            // needs to ask the operations team about that order.
+            // A courier is allowed to ask the merchant about an available
+            // offer before accepting it. The conversation remains scoped to
+            // this exact order and courier, so it never exposes another
+            // courier's messages or a tenant-wide support thread.
+            if ($user->isCourierRole()) {
+                $merchantId = $this->merchantIdForOrder($order, $user);
+                abort_unless($merchantId, 422, 'لا يوجد حساب تاجر صالح لهذه الطلبية.');
+
+                $chat = Chat::withoutGlobalScope(TenantScope::class)->firstOrCreate(
+                    [
+                        'tenant_id' => $order->tenant_id,
+                        'counterparty_type' => 'order_chat',
+                        'order_id' => $order->id,
+                        'counterparty_id' => $user->id,
+                    ],
+                    [
+                        'user_id' => $merchantId,
+                        'title_ar' => 'محادثة الطلب — '.$order->track_no,
+                        'title_en' => 'Order chat — '.$order->track_no,
+                        'last_message' => '',
+                        'last_at' => now(),
+                    ]
+                );
+
+                return redirect()->route('app.chats.show', $chat);
+            }
+
+            // A merchant without a courier keeps the historical support path.
             abort_unless($user->role === 'merchant', 403);
 
             $chat = Chat::withoutGlobalScope(TenantScope::class)->firstOrCreate(
@@ -330,7 +355,10 @@ class ChatController extends Controller
         $isAssignedCourier = $chat->counterparty_type === 'order_chat'
             && $chat->counterparty_id === $user->id
             && $chat->order
-            && app(CourierOrderAccess::class)->assigned($user)->whereKey($chat->order->id)->exists();
+            && (
+                app(CourierOrderAccess::class)->assigned($user)->whereKey($chat->order->id)->exists()
+                || app(CourierOrderAccess::class)->available($user)->whereKey($chat->order->id)->exists()
+            );
 
         abort_unless($isAssignedCourier, 403);
     }
@@ -429,16 +457,25 @@ class ChatController extends Controller
         $assignedOrderIds = $user->isCourierRole()
             ? app(CourierOrderAccess::class)->assigned($user)->select('id')
             : null;
+        $availableOrderIds = $user->isCourierRole()
+            ? app(CourierOrderAccess::class)->available($user)->select('id')
+            : null;
 
-        return $query->where(function (Builder $chats) use ($user, $assignedOrderIds): void {
+        return $query->where(function (Builder $chats) use ($user, $assignedOrderIds, $availableOrderIds): void {
             $chats->where('user_id', $user->id)
-                ->orWhere(function (Builder $directChats) use ($user, $assignedOrderIds): void {
+                ->orWhere(function (Builder $directChats) use ($user, $assignedOrderIds, $availableOrderIds): void {
                     $directChats
                         ->where('counterparty_type', 'order_chat')
                         ->where('counterparty_id', $user->id);
 
                     if ($assignedOrderIds) {
-                        $directChats->whereIn('order_id', $assignedOrderIds);
+                        $directChats->where(function (Builder $orderAccess) use ($assignedOrderIds, $availableOrderIds): void {
+                            $orderAccess->whereIn('order_id', $assignedOrderIds);
+
+                            if ($availableOrderIds) {
+                                $orderAccess->orWhereIn('order_id', $availableOrderIds);
+                            }
+                        });
                     } else {
                         $directChats->whereRaw('1 = 0');
                     }
@@ -454,11 +491,13 @@ class ChatController extends Controller
             return;
         }
 
-        abort_unless(
-            $user->isCourierRole()
-                && app(CourierOrderAccess::class)->assigned($user)->whereKey($order->id)->exists(),
-            403,
-        );
+        abort_unless($user->isCourierRole(), 403);
+
+        $access = app(CourierOrderAccess::class);
+        $canAccess = $access->assigned($user)->whereKey($order->id)->exists()
+            || $access->available($user)->whereKey($order->id)->exists();
+
+        abort_unless($canAccess, 403);
     }
 
     /** @return array<int, int> */
@@ -481,6 +520,12 @@ class ChatController extends Controller
         $courierIds = $this->assignedCourierIds($order);
 
         if ($actor->isCourierRole() && in_array((int) $actor->id, $courierIds, true)) {
+            return (int) $actor->id;
+        }
+
+        // For an available offer the authenticated courier is the intended
+        // counterparty for a pre-acceptance clarification conversation.
+        if ($actor->isCourierRole() && $courierIds === []) {
             return (int) $actor->id;
         }
 

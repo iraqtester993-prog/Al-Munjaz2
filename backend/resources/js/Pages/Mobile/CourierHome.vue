@@ -69,6 +69,20 @@ function orderTypeLabel(order) {
     return order?.order_type || t('Not specified')
 }
 
+const deliverySteps = computed(() => ([
+    { status: 'pending', label: t('Pending') },
+    { status: 'approved', label: t('Approved') },
+    { status: 'courier', label: t('With Courier') },
+    { status: 'delivered', label: t('Delivered') },
+    { status: 'returned', label: t('Returned') },
+]))
+
+function deliveryStepIndex(order) {
+    const index = deliverySteps.value.findIndex((step) => step.status === order?.status)
+
+    return index < 0 ? 0 : index
+}
+
 function localizedOrderValue(order, key) {
     const preferred = locale.value === 'en' ? 'en' : locale.value === 'ku' ? 'ku' : 'ar'
 
@@ -219,42 +233,54 @@ onUnmounted(() => window.clearInterval(ticker))
             </div>
         </section>
 
-        <SheetModal :open="!!selected" :title="selected?.track_no" :subtitle="customerName(selected)" @close="selected = null">
+        <SheetModal :open="!!selected" @close="selected = null">
             <template v-if="selected">
-                <div class="detail-row"><span class="text-muted">{{ t('Customer') }}</span><b>{{ customerName(selected) }}</b></div>
-                <div class="detail-row"><span class="text-muted">{{ t('Phone') }}</span><b v-if="canViewCustomerPhone(selected)" class="mono">{{ selected.phone }}</b><b v-else class="customer-phone-locked" :aria-label="t('Phone')">•••••••••••</b></div>
-                <div class="detail-row"><span class="text-muted">{{ t('Address') }}</span><b>{{ customerAddress(selected) }}</b></div>
-                <div class="detail-row"><span class="text-muted">{{ t('Order amount') }}</span><b class="mono">{{ fmt(selected.price) }} {{ t('IQD') }}</b></div>
-                <div class="detail-row"><span class="text-muted">{{ t('Order Type') }}</span><b>{{ orderTypeLabel(selected) }}</b></div>
-                <div class="detail-row"><span class="text-muted">{{ t('Delivery Vehicle') }}</span><b>{{ vehicleLabel(selected) }}</b></div>
-                <div v-if="selected.vehicle_note || selected.notes" class="detail-row detail-note"><span class="text-muted">{{ t('Notes') }}</span><b>{{ selected.vehicle_note || selected.notes }}</b></div>
-                <div class="detail-row"><span class="text-muted">{{ t('Available Budget') }}</span><b class="mono">{{ fmt(stats.budget) }} {{ t('IQD') }}</b></div>
-                <div v-if="selected.pickup_deadline_at" class="detail-row"><span class="text-muted">{{ t('Time to reach the merchant') }}</span><b class="mono" :style="{ color: countdownColor(selected) }">{{ remainingText(selected) }}</b></div>
-
-                <section v-if="hasPickupLocation(selected)" class="courier-pickup-location-card">
-                    <div class="courier-pickup-location-head">
-                        <span class="courier-pickup-location-icon" aria-hidden="true">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 5.2-8 11-8 11S4 15.2 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" /></svg>
+                <section class="order-detail-status">
+                    <div class="order-detail-status-head">
+                        <StatusBadge :status="selected.status" />
+                        <span class="order-detail-track mono">{{ selected.track_no }}</span>
+                        <span class="order-detail-icon" aria-hidden="true">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8"/></svg>
                         </span>
-                        <span><small>{{ t('Merchant pickup location') }}</small><b>{{ pickupLocationLabel(selected, t('Merchant pickup location')) }}</b></span>
                     </div>
-                    <p>{{ t('The merchant saved this pickup point with the order.') }}</p>
-                    <a v-if="selected.courier_id" class="courier-pickup-location-action" :href="pickupNavigationHref(selected)">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 3-7.5 18-3.7-7.8L2 9.5 21 3Z" /><path d="m9.8 13.2 4.4-4.4" /></svg>
-                        {{ t('Open navigation apps') }}
-                    </a>
-                    <span v-else class="courier-pickup-location-locked">{{ t('Accept the order to open navigation.') }}</span>
+                    <div class="order-detail-steps" :style="{ '--active-step': deliveryStepIndex(selected) }">
+                        <span v-for="(step, index) in deliverySteps" :key="step.status" class="order-detail-step" :class="{ active: index === deliveryStepIndex(selected), done: index < deliveryStepIndex(selected) }">
+                            <i>{{ index + 1 }}</i><b>{{ step.label }}</b>
+                        </span>
+                    </div>
+                </section>
+
+                <section class="order-detail-section">
+                    <h3>{{ t('Order Details') }}</h3>
+                    <div class="detail-row"><span class="text-muted">{{ t('Customer') }}</span><b>{{ customerName(selected) }}</b></div>
+                    <div class="detail-row"><span class="text-muted">{{ t('Phone') }}</span><b v-if="canViewCustomerPhone(selected)" class="mono">{{ selected.phone }}</b><b v-else class="customer-phone-locked" :aria-label="t('Phone')">•••••••••••</b></div>
+                    <div class="detail-row"><span class="text-muted">{{ t('Address') }}</span><b>{{ customerAddress(selected) }}</b></div>
+                    <div class="detail-row"><span class="text-muted">{{ t('Order Type') }}</span><b>{{ orderTypeLabel(selected) }}</b></div>
+                    <div class="detail-row"><span class="text-muted">{{ t('Delivery Vehicle') }}</span><b class="delivery-vehicle-pill">{{ vehicleLabel(selected) }}</b></div>
+                    <div v-if="selected.vehicle_note || selected.notes" class="detail-note-box"><b>{{ t('Order Note') }}:</b> {{ selected.vehicle_note || selected.notes }}</div>
+                    <div class="detail-row detail-price"><span class="text-muted">{{ t('Order amount') }}</span><b class="mono">{{ fmt(selected.price) }} {{ t('IQD') }}</b></div>
+                    <div class="detail-row"><span class="text-muted">{{ t('Available Budget') }}</span><b class="mono">{{ fmt(stats.budget) }} {{ t('IQD') }}</b></div>
+                    <div v-if="selected.pickup_deadline_at" class="detail-row"><span class="text-muted">{{ t('Time to reach the merchant') }}</span><b class="mono" :style="{ color: countdownColor(selected) }">{{ remainingText(selected) }}</b></div>
                 </section>
 
                 <section v-if="selected.merchant" class="courier-merchant-card">
                     <span class="merchant-card-label">{{ t('Merchant') }}</span>
                     <div class="merchant-card-profile">
                         <span class="merchant-avatar">{{ selected.merchant.name?.slice(0, 1) }}</span>
-                        <span><b>{{ selected.merchant.name }}</b><small v-if="selected.merchant.address">{{ selected.merchant.address }}</small><small v-if="selected.merchant.phone" class="mono">{{ selected.merchant.phone }}</small></span>
+                        <span>
+                            <b>{{ selected.merchant.name }}</b>
+                            <small v-if="selected.merchant.address" class="merchant-info-row"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 10c0 5.2-8 11-8 11S4 15.2 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{{ selected.merchant.address }}</small>
+                            <small v-if="selected.merchant.phone" class="merchant-info-row mono"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7A2 2 0 0 1 22 16.9Z"/></svg>{{ selected.merchant.phone }}</small>
+                        </span>
+                    </div>
+                    <div v-if="hasPickupLocation(selected)" class="merchant-location-row">
+                        <span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 10c0 5.2-8 11-8 11S4 15.2 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{{ pickupLocationLabel(selected, t('Merchant pickup location')) }}</span>
+                        <a v-if="selected.courier_id" :href="pickupNavigationHref(selected)">{{ t('Open navigation apps') }}</a>
+                        <small v-else>{{ t('Accept the order to open navigation.') }}</small>
                     </div>
                     <div class="merchant-card-actions">
                         <a v-if="whatsappUrl(selected.merchant.phone)" :href="whatsappUrl(selected.merchant.phone)" target="_blank" rel="noopener">{{ t('WhatsApp') }}</a>
-                        <button v-if="selected.courier_id" type="button" @click="openOrderChat(selected)">{{ t('Chat') }}</button>
+                        <button type="button" @click="openOrderChat(selected)">{{ t('Chat') }}</button>
                     </div>
                 </section>
 
@@ -263,6 +289,7 @@ onUnmounted(() => window.clearInterval(ticker))
                 <button class="btn btn-primary claim-order" type="button" :disabled="!canClaim(selected) || claiming" @click="claim">
                     <span v-if="claiming" class="loader"></span><span v-else>{{ t('Accept Order') }}</span>
                 </button>
+                <button class="btn order-detail-close" type="button" @click="selected = null">{{ t('Close') }}</button>
             </template>
         </SheetModal>
     </AppShell>
@@ -314,19 +341,7 @@ onUnmounted(() => window.clearInterval(ticker))
 .assigned-icon { width:37px; height:37px; display:grid; place-items:center; flex:none; border-radius:11px; background:var(--st-courier-tint); color:var(--st-courier); }
 .courier-assigned-row small { display:block; margin-top:1px; color:var(--ink-faint); font-size:10px; }
 .order-end :deep(.badge) { margin-top:5px; }
-.detail-note { align-items:flex-start; }
-.courier-pickup-location-card{display:grid;gap:8px;margin-top:14px;padding:13px;border:1.5px solid color-mix(in srgb,var(--success) 42%,var(--border));border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--success-tint) 74%,var(--surface)),var(--surface))}.courier-pickup-location-head{display:flex;align-items:center;gap:9px}.courier-pickup-location-icon{display:grid;place-items:center;width:37px;height:37px;flex:none;border-radius:11px;color:#fff;background:var(--success)}.courier-pickup-location-head span:last-child{display:grid;gap:2px;min-width:0}.courier-pickup-location-head small{color:var(--ink-faint);font-size:9.5px;font-weight:800}.courier-pickup-location-head b{overflow:hidden;color:var(--ink);font-size:12px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.courier-pickup-location-card p{margin:0;color:var(--ink-soft);font-size:10px;font-weight:700;line-height:1.55}.courier-pickup-location-action{display:flex;align-items:center;justify-content:center;gap:6px;min-height:37px;border-radius:10px;color:#fff;background:var(--primary);font-size:10.5px;font-weight:900;text-decoration:none;box-shadow:0 4px 10px rgba(11,110,104,.16)}.courier-pickup-location-locked{display:block;padding:8px 9px;border-radius:9px;color:var(--ink-soft);background:var(--surface-2);font-size:9.5px;font-weight:800;text-align:center}
-.courier-merchant-card { margin-top:14px; padding:13px; border:1.5px solid color-mix(in srgb, var(--primary) 25%, transparent); border-radius:14px; background:var(--primary-tint); }
-.merchant-card-label { display:block; margin-bottom:9px; color:var(--primary-strong); font-size:11px; font-weight:900; }
-.merchant-card-profile { display:flex; align-items:center; gap:9px; }
-.merchant-avatar { width:39px; height:39px; display:grid; place-items:center; flex:none; border-radius:50%; background:var(--primary); color:#fff; font-size:15px; font-weight:900; }
-.merchant-card-profile b, .merchant-card-profile small { display:block; }
-.merchant-card-profile b { color:var(--ink); font-size:12.5px; font-weight:900; }
-.merchant-card-profile small { margin-top:2px; color:var(--ink-faint); font-size:10px; font-weight:700; }
-.merchant-card-actions { display:flex; gap:6px; margin-top:10px; }
-.merchant-card-actions a, .merchant-card-actions button, .customer-whatsapp { flex:1; display:flex; align-items:center; justify-content:center; min-height:34px; border-radius:8px; font:inherit; font-size:10.5px; font-weight:900; text-decoration:none; }
-.merchant-card-actions a, .customer-whatsapp { background:rgba(25,135,84,.12); color:#198754; }
-.merchant-card-actions button { border:0; background:var(--primary); color:#fff; }
+.order-detail-status{margin:-2px 0 18px;padding-bottom:15px;border-bottom:1px solid var(--border)}.order-detail-status-head{display:flex;align-items:center;gap:8px}.order-detail-status-head :deep(.badge){margin-inline-end:auto}.order-detail-track{color:var(--primary-strong);font-size:16px;font-weight:950}.order-detail-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;color:var(--primary-strong);background:var(--primary-tint)}.order-detail-steps{position:relative;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px;margin-top:19px}.order-detail-steps::before{position:absolute;top:12px;inset-inline:10%;height:2px;background:var(--border);content:''}.order-detail-step{position:relative;z-index:1;display:grid;justify-items:center;gap:5px;min-width:0;color:var(--ink-faint);text-align:center}.order-detail-step i{display:grid;place-items:center;width:25px;height:25px;border:2px solid var(--border);border-radius:50%;background:var(--surface);font-family:var(--font-mono,var(--font));font-size:10px;font-style:normal;font-weight:900}.order-detail-step b{overflow:hidden;max-width:100%;font-size:8.5px;font-weight:850;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}.order-detail-step.done{color:var(--success)}.order-detail-step.done i{border-color:var(--success);background:var(--success-tint)}.order-detail-step.active{color:var(--warning)}.order-detail-step.active i{border-color:var(--warning);box-shadow:0 0 0 4px var(--warning-tint);color:var(--warning)}.order-detail-section{display:grid;gap:0}.order-detail-section h3{margin:0 0 10px;color:var(--ink);font-size:15px;font-weight:950}.detail-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:7px 0}.detail-row>span{flex:none}.detail-row>b{min-width:0;color:var(--ink);font-size:12px;font-weight:850;text-align:left}.delivery-vehicle-pill{padding:5px 10px;border:1px solid color-mix(in srgb,var(--primary) 28%,var(--border));border-radius:10px;color:var(--primary-strong)!important;background:var(--primary-tint);white-space:nowrap}.detail-note-box{margin:8px 0;padding:9px 11px;border-radius:10px;color:var(--ink-soft);background:var(--surface-2);font-size:10.5px;font-weight:750;line-height:1.6}.detail-note-box b{color:var(--danger)}.detail-price{margin-top:1px;border-top:1px solid var(--border)}.detail-price>b{color:var(--primary-strong);font-size:14px}.courier-merchant-card{display:grid;gap:10px;margin-top:16px;padding:13px;border:1.5px solid color-mix(in srgb,var(--primary) 34%,var(--border));border-radius:16px;background:linear-gradient(135deg,color-mix(in srgb,var(--primary-tint) 82%,var(--surface)),var(--surface-2))}.merchant-card-label{display:block;color:var(--primary-strong);font-size:11px;font-weight:900}.merchant-card-profile{display:flex;align-items:center;gap:10px}.merchant-avatar{width:43px;height:43px;display:grid;place-items:center;flex:none;border-radius:50%;background:var(--primary);color:#fff;font-size:17px;font-weight:950}.merchant-card-profile>span:last-child{min-width:0;flex:1}.merchant-card-profile b,.merchant-card-profile small{display:block}.merchant-card-profile b{overflow:hidden;color:var(--ink);font-size:13px;font-weight:950;text-overflow:ellipsis;white-space:nowrap}.merchant-card-profile small{margin-top:3px;color:var(--ink-faint);font-size:10px;font-weight:750}.merchant-info-row{display:flex!important;align-items:center;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.merchant-info-row svg{flex:none}.merchant-location-row{display:grid;gap:5px;padding:9px 10px;border-radius:10px;background:rgba(11,110,104,.07)}.merchant-location-row>span{display:flex;align-items:center;gap:5px;color:var(--primary-strong);font-size:10.5px;font-weight:850}.merchant-location-row>span svg{flex:none}.merchant-location-row a{color:var(--primary-strong);font-size:10px;font-weight:950;text-decoration:underline}.merchant-location-row small{color:var(--ink-faint);font-size:9.5px;font-weight:750}.merchant-card-actions{display:flex;gap:7px}.merchant-card-actions a,.merchant-card-actions button,.customer-whatsapp{flex:1;display:flex;align-items:center;justify-content:center;min-height:38px;border-radius:10px;font:inherit;font-size:11px;font-weight:900;text-decoration:none}.merchant-card-actions a,.customer-whatsapp{background:rgba(25,135,84,.12);color:#198754}.merchant-card-actions button{border:0;background:var(--primary);color:#fff}.order-detail-close{width:100%;margin-top:9px;border:1px solid var(--border);color:var(--ink);background:var(--surface-2)}
 .customer-whatsapp { width:100%; margin-top:10px; }
 .claim-explain { margin:13px 0; padding:9px 10px; border-radius:10px; background:var(--danger-tint); color:var(--danger); font-size:11px; font-weight:800; line-height:1.7; }
 .claim-order { width:100%; margin-top:14px; }
