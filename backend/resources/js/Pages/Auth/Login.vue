@@ -27,7 +27,10 @@ const form = useForm({ username: '', password: '', role: 'merchant', province_id
 function chooseRole(role) {
     form.role = role
     form.province_id = ''
-    view.value = 'login'
+    // New users go directly to registration and become authenticated after
+    // their OTP is confirmed. Existing accounts can still use the small
+    // sign-in action below.
+    router.visit(route('register', role))
 }
 
 function localizedProvince(province) {
@@ -122,6 +125,7 @@ function icon(name) {
             </div>
 
             <PwaInstallBanner />
+            <p class="existing-account-link"><button type="button" @click="view = 'login'">{{ t('Already have an account?') }} {{ t('Sign In') }}</button></p>
         </section>
 
         <section v-else class="login-pane">
@@ -214,4 +218,5 @@ function icon(name) {
 .login-submit { width:100%; min-height:46px; margin-top:3px; border-radius:12px; background:#fff; color:var(--primary-strong); font:inherit; font-size:13px; font-weight:900; box-shadow:0 8px 20px -6px rgba(0,0,0,.28); }
 .register-link-ref { margin:17px 0 0; text-align:center; color:rgba(255,255,255,.76); font-size:11.5px; font-weight:600; }
 .register-link-ref a { color:#fff; font-weight:900; text-decoration:underline; cursor:pointer; }
+.existing-account-link{margin:18px 0 0;text-align:center}.existing-account-link button{color:rgba(255,255,255,.9);font:800 11px var(--font);text-decoration:underline;text-underline-offset:3px}
 </style>

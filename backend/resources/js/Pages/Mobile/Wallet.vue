@@ -28,6 +28,22 @@ const handover = ref({ amount: '', branch_id: '', note: '' })
 const budgetCash = ref({ amount: '', note: '' })
 const qiTopup = ref({ amount: '', qi_reference: '', note: '' })
 
+function moneyDigits(value) {
+    return String(value ?? '').replace(/[^0-9]/g, '')
+}
+
+function formattedAmount(model) {
+    return computed({
+        get: () => String(model.value.amount ?? '') === '' ? '' : fmt(Number(model.value.amount || 0)),
+        set: (value) => { model.value.amount = moneyDigits(value) },
+    })
+}
+
+const withdrawAmountInput = formattedAmount(withdraw)
+const handoverAmountInput = formattedAmount(handover)
+const budgetCashAmountInput = formattedAmount(budgetCash)
+const qiTopupAmountInput = formattedAmount(qiTopup)
+
 const typeMap = {
     withdrawal: { key: 'Withdrawal', tint: 'var(--danger-tint)', color: 'var(--danger)', icon: 'out' },
     cash_added: { key: 'Cash Added', tint: 'var(--success-tint)', color: 'var(--success)', icon: 'in' },
@@ -339,7 +355,7 @@ function submitQiTopup() {
         <SheetModal :open="showWithdraw" :title="t('Request Withdrawal')" :subtitle="t('Administration confirms the settlement before your balance changes.')" @close="showWithdraw = false">
             <div class="field">
                 <label>{{ t('Amount') }} ({{ t('Min') }} 1,000)</label>
-                <input v-model="withdraw.amount" type="number" min="1000" :placeholder="t('Amount')" dir="ltr" />
+                <input v-model="withdrawAmountInput" type="text" inputmode="numeric" :placeholder="t('Amount')" dir="ltr" />
             </div>
             <div class="field">
                 <label>{{ t('Gateway') }}</label>
@@ -357,7 +373,7 @@ function submitQiTopup() {
         <SheetModal :open="showHandover" :title="t('Hand Over Cash')" :subtitle="t('The branch cashbox changes only after administration approval.')" @close="showHandover = false">
             <div class="field">
                 <label>{{ t('Amount') }} ({{ t('Net cash available') }}: {{ fmt(cashOnHand) }})</label>
-                <input v-model="handover.amount" type="number" min="1000" :max="cashOnHand" :placeholder="t('Amount')" dir="ltr" />
+                <input v-model="handoverAmountInput" type="text" inputmode="numeric" :placeholder="t('Amount')" dir="ltr" />
             </div>
             <div class="field">
                 <label>{{ t('Receiving Branch') }}</label>
@@ -378,7 +394,7 @@ function submitQiTopup() {
         <SheetModal :open="showBudget" :title="t('Add Cash Budget')" :subtitle="t('Declare cash available to receive merchant orders. Administration verifies it before it becomes usable.')" @close="showBudget = false">
             <div class="field">
                 <label>{{ t('Amount') }}</label>
-                <input v-model="budgetCash.amount" type="number" min="1000" :placeholder="t('Amount')" dir="ltr" />
+                <input v-model="budgetCashAmountInput" type="text" inputmode="numeric" :placeholder="t('Amount')" dir="ltr" />
             </div>
             <div class="field">
                 <label>{{ t('Note (optional)') }}</label>
@@ -392,7 +408,7 @@ function submitQiTopup() {
         <SheetModal :open="showQiTopup" :title="t('Recharge Qi Balance')" :subtitle="t('Send the Qi transaction reference for administrative verification before the balance is credited.')" @close="showQiTopup = false">
             <div class="field">
                 <label>{{ t('Amount') }}</label>
-                <input v-model="qiTopup.amount" type="number" min="1000" :placeholder="t('Amount')" dir="ltr" />
+                <input v-model="qiTopupAmountInput" type="text" inputmode="numeric" :placeholder="t('Amount')" dir="ltr" />
             </div>
             <div class="field">
                 <label>{{ t('Qi Transaction Reference') }}</label>

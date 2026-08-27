@@ -34,6 +34,17 @@ const returnFlow = ref(null)
 const now = ref(Date.now())
 let ticker
 
+function moneyDigits(value) {
+    return String(value ?? '').replace(/[^0-9]/g, '')
+}
+
+const returnFeeInput = computed({
+    get: () => String(returnFlow.value?.fee ?? '') === '' ? '' : fmt(Number(returnFlow.value.fee || 0)),
+    set: (value) => {
+        if (returnFlow.value) returnFlow.value.fee = moneyDigits(value)
+    },
+})
+
 const filters = computed(() => {
     const list = [{ key: 'all', label: t('All') }]
     for (const s of ['pending', 'approved', 'courier', 'delivered', 'returned', 'cancelled', 'damaged', 'rejected']) {
@@ -43,6 +54,7 @@ const filters = computed(() => {
 })
 
 const merchantStatusCards = computed(() => [
+    { key: 'all', label: t('All Orders'), tone: 'all', count: props.counts.all ?? props.orders.length ?? 0 },
     { key: 'pending', label: t('Pending'), tone: 'pending', count: props.counts.pending ?? 0 },
     { key: 'approved', label: t('Approved'), tone: 'approved', count: props.counts.approved ?? 0 },
     { key: 'courier', label: t('With Courier'), tone: 'courier', count: props.counts.courier ?? 0 },
@@ -476,7 +488,7 @@ onUnmounted(() => window.clearInterval(ticker))
                         </span>
                     </span>
                 </div>
-                <p v-if="o.vehicle_note || o.notes" class="mobile-order-note"><b>{{ t('Notes') }}:</b> {{ o.vehicle_note || o.notes }}</p>
+                <p v-if="o.vehicle_note || o.notes" class="mobile-order-note"><b>{{ t('Order Note') }}:</b> {{ o.vehicle_note || o.notes }}</p>
                 <footer v-if="o.status === 'approved' && pickupText(o)" class="mobile-order-timer"><i></i> {{ t('Time to reach the merchant') }}: <b class="mono">{{ pickupText(o) }}</b></footer>
             </article>
         </div>
@@ -595,7 +607,7 @@ onUnmounted(() => window.clearInterval(ticker))
                         <h4>{{ t('Return fee') }}</h4>
                         <p>{{ t('Enter the delivery fee for this returned order.') }}</p>
                         <div class="return-fee-field">
-                            <input v-model="returnFlow.fee" type="number" min="1" max="1000000" inputmode="numeric" dir="ltr" :placeholder="t('Amount')">
+                            <input v-model="returnFeeInput" type="text" inputmode="numeric" dir="ltr" :placeholder="t('Amount')">
                             <span>{{ t('IQD') }}</span>
                         </div>
                         <div class="return-fee-presets"><button v-for="amount in [1000, 2000, 3000, 5000]" :key="amount" type="button" @click="returnFlow.fee = amount">{{ fmt(amount) }}</button></div>
@@ -666,5 +678,6 @@ onUnmounted(() => window.clearInterval(ticker))
 .order-recreate{display:flex;align-items:center;justify-content:center;width:100%;min-height:39px;margin-top:10px;border:1px solid color-mix(in srgb,var(--primary) 28%,transparent);border-radius:10px;background:var(--primary-tint);color:var(--primary-strong);font:900 11px var(--font);cursor:pointer}.order-recreate:disabled{opacity:.6;cursor:wait}
 .return-flow{display:grid;gap:10px;margin-top:15px;padding:13px;border:1px solid color-mix(in srgb,var(--danger) 30%,var(--border));border-radius:14px;background:color-mix(in srgb,var(--danger-tint) 48%,var(--surface))}.return-flow h4{margin:0;color:var(--ink);font-size:13px;font-weight:900}.return-flow p{margin:0;color:var(--ink-soft);font-size:10.5px;font-weight:700;line-height:1.65}.return-flow-button{width:100%;min-height:39px}.return-flow-cancel{border:0;background:transparent;color:var(--ink-soft);font:800 11px var(--font);cursor:pointer}.return-fee-field{display:flex;align-items:center;gap:8px;border:1px solid color-mix(in srgb,var(--danger) 26%,var(--border));border-radius:10px;background:var(--surface);padding:0 10px}.return-fee-field input{width:100%;min-height:39px;border:0;outline:0;background:transparent;color:var(--ink);font:900 14px var(--font)}.return-fee-field span{color:var(--ink-faint);font-size:10px;font-weight:800}.return-fee-presets{display:flex;flex-wrap:wrap;gap:6px}.return-fee-presets button{border:0;border-radius:8px;background:var(--surface-2);color:var(--ink-soft);font:800 10px var(--font);padding:6px 9px;cursor:pointer}.return-fee-summary{padding:8px 10px;border-radius:9px;background:var(--surface);color:var(--danger);font-size:11px}.return-confirmation{border-color:color-mix(in srgb,var(--accent) 32%,var(--border));background:color-mix(in srgb,var(--accent-tint) 50%,var(--surface))}.return-confirmation .return-fee-summary{color:var(--accent)}
 .courier-orders-overview .merchant-status-grid{gap:10px}
+.merchant-status-card.all .merchant-status-icon{background:var(--primary-tint);color:var(--primary-strong)}.merchant-status-card.all strong{color:var(--primary-strong)}.mobile-order-note{border:1px solid color-mix(in srgb,var(--danger) 18%,transparent);background:color-mix(in srgb,var(--danger-tint) 70%,var(--surface))}.mobile-order-note b{color:var(--danger)}
 .mobile-operational-section{margin:15px 0}.mobile-operational-section h4{margin:0 0 9px;color:var(--ink);font-size:12px;font-weight:900}.mobile-branch-route{display:grid;gap:5px;margin-top:9px;padding:11px 12px;border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border));border-radius:12px;background:color-mix(in srgb,var(--primary-tint) 62%,var(--surface));color:var(--primary-strong)}.mobile-route-label{font-size:10px;font-weight:900;color:var(--ink-soft)}.mobile-branch-route>b{font-size:12px}.mobile-branch-route small{color:var(--ink-soft);font-size:10px;font-weight:700}.mobile-order-timeline{display:grid;gap:0}.mobile-timeline-event{display:grid;grid-template-columns:28px 1fr;gap:9px;min-height:57px}.mobile-timeline-rail{position:relative;display:flex;justify-content:center}.mobile-timeline-rail::after{position:absolute;top:24px;bottom:-3px;width:1px;background:var(--border);content:""}.mobile-timeline-event:last-child .mobile-timeline-rail::after{display:none}.mobile-timeline-marker{position:relative;z-index:1;display:grid;place-items:center;width:23px;height:23px;border:1px solid var(--border);border-radius:50%;background:var(--surface);color:var(--ink-soft);font-size:11px;font-weight:900}.mobile-timeline-marker.is-created{border-color:color-mix(in srgb,var(--primary) 40%,var(--border));background:var(--primary-tint);color:var(--primary-strong)}.mobile-timeline-marker.is-status{border-color:color-mix(in srgb,var(--success) 44%,var(--border));background:var(--success-tint);color:var(--success)}.mobile-timeline-marker.is-movement{border-color:color-mix(in srgb,var(--accent) 42%,var(--border));background:var(--accent-tint);color:var(--accent)}.mobile-timeline-copy{display:grid;gap:2px;padding:1px 0 14px}.mobile-timeline-copy>b{font-size:11px;color:var(--ink)}.mobile-timeline-copy p{margin:0;color:var(--ink-soft);font-size:10px;line-height:1.55}.mobile-timeline-copy time{color:var(--ink-faint);font-size:9px}
 </style>

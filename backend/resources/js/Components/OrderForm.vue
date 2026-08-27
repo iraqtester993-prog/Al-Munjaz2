@@ -99,6 +99,17 @@ const pickupCoordinates = computed(() => {
     return `${Number(form.pickup_latitude).toFixed(6)}, ${Number(form.pickup_longitude).toFixed(6)}`
 })
 
+// Money is stored as plain digits for the API, while the person entering it
+// sees the same Latin-digit grouping used everywhere else in the app.
+function moneyDigits(value) {
+    return String(value ?? '').replace(/[^0-9]/g, '')
+}
+
+const priceInput = computed({
+    get: () => String(form.price ?? '') === '' ? '' : fmt(Number(form.price || 0)),
+    set: (value) => { form.price = moneyDigits(value) },
+})
+
 function provinceName(province) {
     const preferred = locale.value === 'en' ? 'en' : locale.value === 'ku' ? 'ku' : 'ar'
 
@@ -387,7 +398,7 @@ function submit() {
             </div>
             <div class="field" :class="{ 'has-error': form.errors.price }">
                 <label>{{ t('Price') }}</label>
-                <input v-model="form.price" type="number" min="1" :placeholder="t('Price')" />
+                <input v-model="priceInput" type="text" inputmode="numeric" dir="ltr" :placeholder="t('Price')" />
                 <span v-if="form.errors.price" class="field-error">{{ form.errors.price }}</span>
             </div>
             <div class="field">

@@ -127,21 +127,21 @@ svg{display:block; flex-shrink:0;}
 .tb-actions{display:flex; align-items:center; gap:6px; margin-inline-start:auto; flex:none;}
 .notif-badge{position:absolute; top:-4px; inset-inline-end:-4px; min-width:16px; height:16px; border-radius:20px; background:var(--st-returned); color:#fff; font-size:9px; font-weight:800; display:flex; align-items:center; justify-content:center; padding:0 4px; border:1.5px solid var(--surface); box-sizing:border-box;}
 
-.app-content{flex:1; min-height:0; overflow-y:auto; padding:16px 16px calc(90px + env(safe-area-inset-bottom, 0px)); -webkit-overflow-scrolling:touch;}
+.app-content{flex:1; min-height:0; overflow-y:auto; padding:16px 16px calc(96px + env(safe-area-inset-bottom, 0px)); -webkit-overflow-scrolling:touch;}
 .app-content.without-tabs{padding-bottom:16px;}
 .app-content.chat-thread-content{display:flex;flex-direction:column;padding:0;overflow:hidden;}
 .app-content::-webkit-scrollbar{display:none;}
 
 /* Bottom tabs */
 .bottom-tabs{
-  position:absolute; bottom:0; inset-inline:0; height:calc(70px + env(safe-area-inset-bottom, 0px));
+  position:absolute; bottom:0; inset-inline:0; height:calc(76px + env(safe-area-inset-bottom, 0px));
   background:color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter:blur(10px);
   border-top:1px solid var(--border); display:flex; align-items:center; z-index:40;
   padding-bottom:env(safe-area-inset-bottom, 0px);
 }
-.tab-btn{flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--ink-faint); position:relative; padding:6px 0;}
+.tab-btn{flex:1; display:flex; flex-direction:column; align-items:center; gap:5px; color:var(--ink-faint); position:relative; padding:8px 0 7px;}
 .tab-btn.active{color:var(--primary);}
-.tab-btn .tlabel{font-size:9.5px; font-weight:700;}
+.tab-btn svg{width:22px;height:22px;}.tab-btn .tlabel{font-size:10px; font-weight:800;}
 .tab-btn .tdot{position:absolute; top:-2px; inset-inline-end:20%; min-width:15px; height:15px; border-radius:20px; background:var(--accent); border:1.5px solid var(--surface); color:#fff; font-size:8.5px; font-weight:800; display:flex; align-items:center; justify-content:center; padding:0 3px; box-sizing:border-box;}
 
 .fab{
