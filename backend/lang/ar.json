@@ -918,5 +918,8 @@
     "Budget and Qi requests change no balance until administration approves them.": "طلبات الميزانية وكي لا تغيّر أي رصيد إلا بعد اعتماد الإدارة.",
     "Net Collections": "التحصيلات الصافية",
     "After company fee": "بعد خصم مبلغ الشركة",
-    "Net cash available": "النقد الصافي المتاح"
+    "Net cash available": "النقد الصافي المتاح",
+    "Available Wallet Balance": "الرصيد المتاح في محفظتك",
+    "Times": "مرة",
+    "Order Note": "ملاحظة الطلب"
 }

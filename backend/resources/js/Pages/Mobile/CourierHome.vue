@@ -180,6 +180,9 @@ onUnmounted(() => window.clearInterval(ticker))
                             {{ vehicleLabel(order) }}
                         </span>
                     </div>
+                    <p v-if="order.vehicle_note || order.notes" class="available-order-note">
+                        <b>{{ t('Order Note') }}:</b> {{ order.vehicle_note || order.notes }}
+                    </p>
                 </div>
 
                 <footer class="available-order-footer">
@@ -292,6 +295,8 @@ onUnmounted(() => window.clearInterval(ticker))
 .available-summary > strong { color:var(--primary-strong); font-size:16px; font-weight:900; }
 .available-summary > strong small { font-family:var(--font); color:var(--ink-faint); font-size:10px; }
 .vehicle-badge { display:inline-flex; align-items:center; gap:5px; max-width:126px; padding:5px 8px; border:1px solid color-mix(in srgb, var(--primary) 26%, var(--border)); border-radius:9px; background:color-mix(in srgb, var(--primary-tint) 78%, var(--surface)); color:var(--primary-strong); font-size:9px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.available-order-note { margin:9px 0 0; padding:7px 9px; border-radius:10px; background:color-mix(in srgb, var(--surface-2) 86%, var(--primary-tint)); color:var(--ink-soft); font-size:10px; font-weight:750; line-height:1.55; }
+.available-order-note b { color:var(--primary-strong); }
 .available-order-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 11px; border-top:1px solid var(--border); background:var(--surface-2); }
 .pickup-clock { display:flex; align-items:center; gap:5px; min-width:0; font-size:9.5px; font-weight:900; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .pickup-clock i { width:8px; height:8px; flex:none; border-radius:50%; animation:new-order-pulse 1.35s ease-in-out infinite; }

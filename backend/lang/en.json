@@ -918,5 +918,8 @@
     "Budget and Qi requests change no balance until administration approves them.": "Budget and Qi requests change no balance until administration approves them.",
     "Net Collections": "Net collections",
     "After company fee": "After company fee",
-    "Net cash available": "Net cash available"
+    "Net cash available": "Net cash available",
+    "Available Wallet Balance": "Available wallet balance",
+    "Times": "times",
+    "Order Note": "Order note"
 }

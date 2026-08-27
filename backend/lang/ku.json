@@ -918,5 +918,8 @@
     "Budget and Qi requests change no balance until administration approves them.": "داواکارییەکانی بودجە و Qi هیچ باڵانسێک ناگۆڕن تا بەڕێوەبەرایەتی پەسەندیان بکات.",
     "Net Collections": "کۆکراوە پاکەکان",
     "After company fee": "دوای کەمکردنەوەی کرێی کۆمپانیا",
-    "Net cash available": "نەقدی پاکی بەردەست"
+    "Net cash available": "نەقدی پاکی بەردەست",
+    "Available Wallet Balance": "باڵانسی بەردەست لە جزدانەکەت",
+    "Times": "جار",
+    "Order Note": "تێبینی داواکاری"
 }
