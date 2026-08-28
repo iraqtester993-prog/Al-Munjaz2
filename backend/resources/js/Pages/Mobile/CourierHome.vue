@@ -59,14 +59,11 @@ function vehicleLabel(order) {
     return {
         normal: t('Regular Delivery'),
         bike: t('Motorcycle'),
+        car: t('Sedan'),
         sedan: t('Sedan'),
         suv: t('SUV'),
         truck: t('Van / Truck'),
     }[order.delivery_vehicle] || t('Regular Delivery')
-}
-
-function orderTypeLabel(order) {
-    return order?.order_type || t('Not specified')
 }
 
 const deliverySteps = computed(() => ([
@@ -190,9 +187,8 @@ onUnmounted(() => window.clearInterval(ticker))
                             {{ vehicleLabel(order) }}
                         </span>
                     </div>
-                    <p v-if="order.vehicle_note || order.notes" class="available-order-note">
-                        <b>{{ t('Order Note') }}:</b> {{ order.vehicle_note || order.notes }}
-                    </p>
+                    <p v-if="order.notes" class="available-order-note"><b>{{ t('Order Note') }}:</b> {{ order.notes }}</p>
+                    <p v-if="order.vehicle_note" class="available-order-note available-vehicle-note"><b>{{ t('Vehicle Note') }}:</b> {{ order.vehicle_note }}</p>
                 </div>
 
                 <footer class="available-order-footer">
@@ -233,11 +229,11 @@ onUnmounted(() => window.clearInterval(ticker))
             <template v-if="selected">
                 <section class="order-detail-status">
                     <div class="order-detail-status-head">
-                        <StatusBadge :status="selected.status" />
-                        <span class="order-detail-track mono">{{ selected.track_no }}</span>
                         <span class="order-detail-icon" aria-hidden="true">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8"/></svg>
                         </span>
+                        <span class="order-detail-track mono">{{ selected.track_no }}</span>
+                        <StatusBadge :status="selected.status" />
                     </div>
                     <div class="order-detail-steps" :style="{ '--active-step': deliveryStepIndex(selected) }">
                         <span v-for="(step, index) in deliverySteps" :key="step.status" class="order-detail-step" :class="{ active: index === deliveryStepIndex(selected), done: index < deliveryStepIndex(selected) }">
@@ -251,9 +247,9 @@ onUnmounted(() => window.clearInterval(ticker))
                     <div class="detail-row"><span class="text-muted">{{ t('Customer') }}</span><b>{{ customerName(selected) }}</b></div>
                     <div class="detail-row"><span class="text-muted">{{ t('Phone') }}</span><b v-if="canViewCustomerPhone(selected)" class="mono">{{ selected.phone }}</b><b v-else class="customer-phone-locked" :aria-label="t('Phone')">•••••••••••</b></div>
                     <div class="detail-row"><span class="text-muted">{{ t('Address') }}</span><b>{{ customerAddress(selected) }}</b></div>
-                    <div class="detail-row"><span class="text-muted">{{ t('Order Type') }}</span><b>{{ orderTypeLabel(selected) }}</b></div>
                     <div class="detail-row"><span class="text-muted">{{ t('Delivery Vehicle') }}</span><b class="delivery-vehicle-pill">{{ vehicleLabel(selected) }}</b></div>
-                    <div v-if="selected.vehicle_note || selected.notes" class="detail-note-box"><b>{{ t('Order Note') }}:</b> {{ selected.vehicle_note || selected.notes }}</div>
+                    <div v-if="selected.notes" class="detail-note-box"><b>{{ t('Order Note') }}:</b> {{ selected.notes }}</div>
+                    <div v-if="selected.vehicle_note" class="detail-note-box vehicle-note-box"><b>{{ t('Vehicle Note') }}:</b> {{ selected.vehicle_note }}</div>
                     <div class="detail-row detail-price"><span class="text-muted">{{ t('Order amount') }}</span><b class="mono">{{ fmt(selected.price) }} {{ t('IQD') }}</b></div>
                     <div class="detail-row"><span class="text-muted">{{ t('Available Budget') }}</span><b class="mono">{{ fmt(stats.budget) }} {{ t('IQD') }}</b></div>
                     <div v-if="selected.pickup_deadline_at" class="detail-row"><span class="text-muted">{{ t('Time to reach the merchant') }}</span><b class="mono" :style="{ color: countdownColor(selected) }">{{ remainingText(selected) }}</b></div>
@@ -264,7 +260,7 @@ onUnmounted(() => window.clearInterval(ticker))
                     <div class="merchant-card-profile">
                         <span class="merchant-avatar">{{ selected.merchant.name?.slice(0, 1) }}</span>
                         <span>
-                            <b>{{ selected.merchant.name }}</b>
+                            <b>{{ selected.merchant.shop_name || selected.merchant.name }} <i v-if="selected.merchant.verified" class="merchant-verified" :title="t('Verified')">✓</i></b>
                             <small v-if="selected.merchant.address" class="merchant-info-row"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 10c0 5.2-8 11-8 11S4 15.2 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{{ selected.merchant.address }}</small>
                             <small v-if="selected.merchant.phone" class="merchant-info-row mono"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7A2 2 0 0 1 22 16.9Z"/></svg>{{ selected.merchant.phone }}</small>
                         </span>
@@ -306,23 +302,23 @@ onUnmounted(() => window.clearInterval(ticker))
 .available-heading h3 { margin:0; color:var(--ink); font-size:13px; font-weight:900; }
 .available-heading span { padding:3px 10px; border-radius:20px; background:var(--surface-2); color:var(--ink-faint); font-size:10.5px; font-weight:800; }
 .available-list { display:grid; gap:10px; }
-.available-order-card { overflow:hidden; border:1.5px solid color-mix(in srgb, var(--primary) 42%, var(--border)); border-radius:18px; background:linear-gradient(145deg, color-mix(in srgb, var(--primary-tint) 84%, var(--surface)), color-mix(in srgb, var(--primary-tint) 52%, var(--surface))); box-shadow:0 6px 16px rgba(11,110,104,.12); cursor:pointer; }
-.available-order-main { padding:10px 12px 8px; }
+.available-order-card { overflow:hidden; border:1.5px solid color-mix(in srgb, var(--primary) 42%, var(--border)); border-radius:16px; background:linear-gradient(145deg, color-mix(in srgb, var(--primary-tint) 84%, var(--surface)), color-mix(in srgb, var(--primary-tint) 52%, var(--surface))); box-shadow:0 6px 16px rgba(11,110,104,.12); cursor:pointer; }
+.available-order-main { padding:11px 12px 9px; }
 .available-order-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
-.available-order-head h4 { margin:0 0 2px; color:var(--ink); font-size:13px; font-weight:900; }
-.available-order-head p { display:flex; align-items:center; gap:5px; min-width:0; margin:0; color:var(--ink-faint); font-size:9.5px; font-weight:700; }
+.available-order-head h4 { margin:0 0 2px; color:var(--ink); font-size:13px; font-weight:800; }
+.available-order-head p { display:flex; align-items:center; gap:5px; min-width:0; margin:0; color:var(--ink-faint); font-size:10px; font-weight:700; }
 .available-order-head p b { color:var(--ink-faint); }
-.available-address{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.new-order-chip { flex:none; padding:3px 7px; border-radius:20px; background:var(--primary); color:#fff; box-shadow:0 2px 6px rgba(11,110,104,.2); font-size:8.5px; font-weight:900; }
+.available-address{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.new-order-chip { flex:none; padding:4px 8px; border-radius:20px; background:var(--primary); color:#fff; box-shadow:0 2px 6px rgba(11,110,104,.2); font-size:9.5px; font-weight:800; }
 .available-summary { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:7px; }
 .available-summary > strong { color:var(--primary-strong); font-size:16px; font-weight:900; }
 .available-summary > strong small { font-family:var(--font); color:var(--ink-faint); font-size:10px; }
 .vehicle-badge { display:inline-flex; align-items:center; gap:5px; max-width:126px; padding:5px 8px; border:1px solid color-mix(in srgb, var(--primary) 26%, var(--border)); border-radius:9px; background:color-mix(in srgb, var(--primary-tint) 78%, var(--surface)); color:var(--primary-strong); font-size:9px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .available-order-note { margin:9px 0 0; padding:7px 9px; border:1px solid color-mix(in srgb,var(--danger) 18%,transparent); border-radius:10px; background:color-mix(in srgb,var(--danger-tint) 68%,var(--surface)); color:var(--ink-soft); font-size:10px; font-weight:750; line-height:1.55; }
 .available-order-note b { color:var(--danger); }
-.available-order-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 11px; border-top:1px solid var(--border); background:var(--surface-2); }
-.pickup-clock { display:flex; align-items:center; gap:5px; min-width:0; font-size:9.5px; font-weight:900; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.available-order-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 14px; border-top:1px solid var(--border); background:var(--surface-2); }
+.pickup-clock { display:flex; align-items:center; gap:5px; min-width:0; font-size:11px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .pickup-clock i { width:8px; height:8px; flex:none; border-radius:50%; animation:new-order-pulse 1.35s ease-in-out infinite; }
-.view-order { padding:6px 9px; border-radius:8px; background:var(--primary); color:#fff; box-shadow:0 3px 8px rgba(11,110,104,.2); font:inherit; font-size:9px; font-weight:900; white-space:nowrap; }
+.view-order { padding:7px 12px; border-radius:9px; background:var(--primary); color:#fff; box-shadow:0 3px 8px rgba(11,110,104,.2); font:inherit; font-size:10.5px; font-weight:900; white-space:nowrap; }
 .expiry-track { height:4px; overflow:hidden; background:var(--surface-3); }
 .expiry-track i { display:block; height:100%; border-radius:0 2px 2px 0; transition:width 1s linear, background .4s; }
 .availability-empty { padding:34px 16px; border:1px dashed var(--border); border-radius:17px; text-align:center; color:var(--ink-soft); }
@@ -336,8 +332,9 @@ onUnmounted(() => window.clearInterval(ticker))
 .assigned-icon { width:37px; height:37px; display:grid; place-items:center; flex:none; border-radius:11px; background:var(--st-courier-tint); color:var(--st-courier); }
 .courier-assigned-row small { display:block; margin-top:1px; color:var(--ink-faint); font-size:10px; }
 .order-end :deep(.badge) { margin-top:5px; }
-.order-detail-status{margin:-2px 0 18px;padding-bottom:15px;border-bottom:1px solid var(--border)}.order-detail-status-head{display:flex;align-items:center;gap:8px}.order-detail-status-head :deep(.badge){margin-inline-end:auto}.order-detail-track{color:var(--primary-strong);font-size:16px;font-weight:950}.order-detail-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;color:var(--primary-strong);background:var(--primary-tint)}.order-detail-steps{position:relative;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px;margin-top:19px}.order-detail-steps::before{position:absolute;top:12px;inset-inline:10%;height:2px;background:var(--border);content:''}.order-detail-step{position:relative;z-index:1;display:grid;justify-items:center;gap:5px;min-width:0;color:var(--ink-faint);text-align:center}.order-detail-step i{display:grid;place-items:center;width:25px;height:25px;border:2px solid var(--border);border-radius:50%;background:var(--surface);font-family:var(--font-mono,var(--font));font-size:10px;font-style:normal;font-weight:900}.order-detail-step b{overflow:hidden;max-width:100%;font-size:8.5px;font-weight:850;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}.order-detail-step.done{color:var(--success)}.order-detail-step.done i{border-color:var(--success);background:var(--success-tint)}.order-detail-step.active{color:var(--warning)}.order-detail-step.active i{border-color:var(--warning);box-shadow:0 0 0 4px var(--warning-tint);color:var(--warning)}.order-detail-section{display:grid;gap:0}.order-detail-section h3{margin:0 0 10px;color:var(--ink);font-size:15px;font-weight:950}.detail-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:7px 0}.detail-row>span{flex:none}.detail-row>b{min-width:0;color:var(--ink);font-size:12px;font-weight:850;text-align:left}.delivery-vehicle-pill{padding:5px 10px;border:1px solid color-mix(in srgb,var(--primary) 28%,var(--border));border-radius:10px;color:var(--primary-strong)!important;background:var(--primary-tint);white-space:nowrap}.detail-note-box{margin:8px 0;padding:9px 11px;border-radius:10px;color:var(--ink-soft);background:var(--surface-2);font-size:10.5px;font-weight:750;line-height:1.6}.detail-note-box b{color:var(--danger)}.detail-price{margin-top:1px;border-top:1px solid var(--border)}.detail-price>b{color:var(--primary-strong);font-size:14px}.courier-merchant-card{display:grid;gap:10px;margin-top:16px;padding:13px;border:1.5px solid color-mix(in srgb,var(--primary) 34%,var(--border));border-radius:16px;background:linear-gradient(135deg,color-mix(in srgb,var(--primary-tint) 82%,var(--surface)),var(--surface-2))}.merchant-card-label{display:block;color:var(--primary-strong);font-size:11px;font-weight:900}.merchant-card-profile{display:flex;align-items:center;gap:10px}.merchant-avatar{width:43px;height:43px;display:grid;place-items:center;flex:none;border-radius:50%;background:var(--primary);color:#fff;font-size:17px;font-weight:950}.merchant-card-profile>span:last-child{min-width:0;flex:1}.merchant-card-profile b,.merchant-card-profile small{display:block}.merchant-card-profile b{overflow:hidden;color:var(--ink);font-size:13px;font-weight:950;text-overflow:ellipsis;white-space:nowrap}.merchant-card-profile small{margin-top:3px;color:var(--ink-faint);font-size:10px;font-weight:750}.merchant-info-row{display:flex!important;align-items:center;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.merchant-info-row svg{flex:none}.merchant-location-row{display:grid;gap:5px;padding:9px 10px;border-radius:10px;background:rgba(11,110,104,.07)}.merchant-location-row>span{display:flex;align-items:center;gap:5px;color:var(--primary-strong);font-size:10.5px;font-weight:850}.merchant-location-row>span svg{flex:none}.merchant-location-row a{color:var(--primary-strong);font-size:10px;font-weight:950;text-decoration:underline}.merchant-location-row small{color:var(--ink-faint);font-size:9.5px;font-weight:750}.merchant-card-actions{display:flex;gap:7px}.merchant-card-actions a,.merchant-card-actions button,.customer-whatsapp{flex:1;display:flex;align-items:center;justify-content:center;min-height:38px;border-radius:10px;font:inherit;font-size:11px;font-weight:900;text-decoration:none}.merchant-card-actions a,.customer-whatsapp{background:rgba(25,135,84,.12);color:#198754}.merchant-card-actions button{border:0;background:var(--primary);color:#fff}.order-detail-close{width:100%;margin-top:9px;border:1px solid var(--border);color:var(--ink);background:var(--surface-2)}
+.order-detail-status{margin:-2px 0 18px;padding-bottom:15px;border-bottom:1px solid var(--border)}.order-detail-status-head{display:flex;align-items:center;gap:8px}.order-detail-status-head :deep(.badge){margin-inline-start:auto}.order-detail-track{color:var(--primary-strong);font-size:16px;font-weight:900}.order-detail-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;color:var(--primary-strong);background:var(--primary-tint)}.order-detail-steps{position:relative;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px;margin-top:19px}.order-detail-steps::before{position:absolute;top:12px;inset-inline:10%;height:2px;background:var(--border);content:''}.order-detail-step{position:relative;z-index:1;display:grid;justify-items:center;gap:5px;min-width:0;color:var(--ink-faint);text-align:center}.order-detail-step i{display:grid;place-items:center;width:25px;height:25px;border:2px solid var(--border);border-radius:50%;background:var(--surface);font-family:var(--font-mono,var(--font));font-size:10px;font-style:normal;font-weight:900}.order-detail-step b{overflow:hidden;max-width:100%;font-size:8.5px;font-weight:800;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}.order-detail-step.done{color:var(--success)}.order-detail-step.done i{border-color:var(--success);background:var(--success-tint)}.order-detail-step.active{color:var(--warning)}.order-detail-step.active i{border-color:var(--warning);box-shadow:0 0 0 4px var(--warning-tint);color:var(--warning)}.order-detail-section{display:grid;gap:0}.order-detail-section h3{margin:0 0 10px;color:var(--ink);font-size:15px;font-weight:900}.detail-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:7px 0}.detail-row>span{flex:none}.detail-row>b{min-width:0;color:var(--ink);font-size:12px;font-weight:800;text-align:left}.delivery-vehicle-pill{padding:5px 10px;border:1px solid color-mix(in srgb,var(--primary) 28%,var(--border));border-radius:10px;color:var(--primary-strong)!important;background:var(--primary-tint);white-space:nowrap}.detail-note-box{margin:8px 0;padding:9px 11px;border-radius:10px;color:var(--ink-soft);background:var(--surface-2);font-size:10.5px;font-weight:750;line-height:1.6}.detail-note-box b{color:var(--danger)}.detail-price{margin-top:1px;border-top:1px solid var(--border)}.detail-price>b{color:var(--primary-strong);font-size:14px}.courier-merchant-card{display:grid;gap:10px;margin-top:16px;padding:14px;border:1.5px solid color-mix(in srgb,var(--primary) 34%,var(--border));border-radius:14px;background:var(--primary-tint)}.merchant-card-label{display:block;color:var(--primary-strong);font-size:11px;font-weight:900}.merchant-card-profile{display:flex;align-items:center;gap:10px}.merchant-avatar{width:43px;height:43px;display:grid;place-items:center;flex:none;border-radius:50%;background:var(--primary);color:#fff;font-size:17px;font-weight:900}.merchant-card-profile>span:last-child{min-width:0;flex:1}.merchant-card-profile b,.merchant-card-profile small{display:block}.merchant-card-profile b{overflow:hidden;color:var(--ink);font-size:13px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.merchant-card-profile small{margin-top:3px;color:var(--ink-faint);font-size:10px;font-weight:750}.merchant-verified{display:inline-grid!important;place-items:center;width:15px;height:15px;margin-inline-start:4px;border-radius:50%;background:#1d9bf0;color:#fff;font-size:10px;font-style:normal;line-height:1;vertical-align:1px}.merchant-info-row{display:flex!important;align-items:center;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.merchant-info-row svg{flex:none}.merchant-location-row{display:grid;gap:5px;padding:9px 10px;border-radius:10px;background:rgba(11,110,104,.07)}.merchant-location-row>span{display:flex;align-items:center;gap:5px;color:var(--primary-strong);font-size:10.5px;font-weight:800}.merchant-location-row>span svg{flex:none}.merchant-location-row a{color:var(--primary-strong);font-size:10px;font-weight:900;text-decoration:underline}.merchant-location-row small{color:var(--ink-faint);font-size:9.5px;font-weight:750}.merchant-card-actions{display:flex;gap:7px}.merchant-card-actions a,.merchant-card-actions button,.customer-whatsapp{flex:1;display:flex;align-items:center;justify-content:center;min-height:38px;border-radius:10px;font:inherit;font-size:11px;font-weight:900;text-decoration:none}.merchant-card-actions a,.customer-whatsapp{background:rgba(25,135,84,.12);color:#198754}.merchant-card-actions button{border:0;background:var(--primary);color:#fff}.order-detail-close{width:100%;margin-top:9px;border:1px solid var(--border);color:var(--ink);background:var(--surface-2)}
 .customer-whatsapp { width:100%; margin-top:10px; }
+.available-vehicle-note,.vehicle-note-box{border-color:color-mix(in srgb,var(--primary) 24%,transparent)!important;background:color-mix(in srgb,var(--primary-tint) 68%,var(--surface))!important}.available-vehicle-note b,.vehicle-note-box b{color:var(--primary-strong)!important}
 .claim-explain { margin:13px 0; padding:9px 10px; border-radius:10px; background:var(--danger-tint); color:var(--danger); font-size:11px; font-weight:800; line-height:1.7; }
 .claim-order { width:100%; margin-top:14px; }
 .customer-phone-locked{letter-spacing:1px;color:var(--ink-faint);font-size:12px}

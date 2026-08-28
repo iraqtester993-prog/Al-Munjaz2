@@ -58,7 +58,9 @@ class Order extends Model
 
     public function courier(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'courier_id');
+        // A deleted account is soft-deleted for safety. Historical orders
+        // must still retain the person who was assigned at the time.
+        return $this->belongsTo(User::class, 'courier_id')->withTrashed();
     }
 
     public function tenant(): BelongsTo
@@ -87,17 +89,17 @@ class Order extends Model
 
     public function merchant(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'merchant_id');
+        return $this->belongsTo(User::class, 'merchant_id')->withTrashed();
     }
 
     public function pickupCourier(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'pickup_courier_id');
+        return $this->belongsTo(User::class, 'pickup_courier_id')->withTrashed();
     }
 
     public function deliveryCourier(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'delivery_courier_id');
+        return $this->belongsTo(User::class, 'delivery_courier_id')->withTrashed();
     }
 
     public function province(): BelongsTo

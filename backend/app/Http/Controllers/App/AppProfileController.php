@@ -15,6 +15,10 @@ class AppProfileController extends Controller
         $user = $request->user();
         $wallet = $user->wallet;
         $province = $user->provinces()->orderByDesc('province_user.is_primary')->first();
+        $documents = $user->documents()->orderBy('type')->get(['id', 'type', 'status', 'created_at']);
+        $verificationStatus = $user->isMerchantVerified()
+            ? 'verified'
+            : ($documents->contains('status', 'rejected') ? 'rejected' : ($documents->isNotEmpty() ? 'pending' : 'unsubmitted'));
 
         return Inertia::render('Mobile/Profile', [
             'vehicles' => [
@@ -26,6 +30,10 @@ class AppProfileController extends Controller
             'walletBalance' => $wallet?->balance ?? 0,
             'walletBudget' => $wallet?->budget ?? 0,
             'profile' => [
+                'name' => $user->name,
+                'username' => $user->username,
+                'phone' => $user->phone,
+                'role' => $user->role,
                 'shop_name' => $user->shop_name,
                 'address' => $user->address,
                 'vehicle' => $user->vehicle,
@@ -35,14 +43,22 @@ class AppProfileController extends Controller
                     'name_ku' => $province->name_ku,
                 ] : null,
                 'phone_verified' => $user->phone_verified_at !== null,
-                'documents' => $user->documents()
-                    ->orderBy('type')
-                    ->get(['id', 'type', 'status', 'created_at'])
+                'documents' => $documents
                     ->map(fn ($document) => [
                         'id' => $document->id,
                         'type' => $document->type,
                         'status' => $document->status,
+                        'submitted_at' => $document->created_at?->toIso8601String(),
                     ])->values(),
+                // Only merchants can receive this public-facing mark. A
+                // courier's compliance documents remain visible to them and
+                // to administration, but they never create a public badge.
+                'verification' => [
+                    'eligible' => $user->role === 'merchant',
+                    'status' => $verificationStatus,
+                    'verified' => $user->isMerchantVerified(),
+                    'verified_at' => $user->merchant_verified_at?->toIso8601String(),
+                ],
                 'joined_at' => $user->created_at?->toDateString(),
             ],
         ]);

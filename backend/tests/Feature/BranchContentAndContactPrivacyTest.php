@@ -103,7 +103,7 @@ class BranchContentAndContactPrivacyTest extends TestCase
         $this->assertSame('منشور فرع آخر', $hiddenSlide->fresh()->title_ar);
     }
 
-    public function test_api_and_pwa_payloads_hide_customer_phone_until_the_assigned_courier_picks_up_the_order(): void
+    public function test_api_and_pwa_payloads_show_customer_phone_for_every_visible_order_status(): void
     {
         $merchant = User::where('username', 'تاجر')->firstOrFail();
         $courier = User::where('username', 'مندوب')->firstOrFail();
@@ -131,14 +131,14 @@ class BranchContentAndContactPrivacyTest extends TestCase
         Sanctum::actingAs($courier);
         $this->getJson('/api/v1/orders/'.$order->id)
             ->assertOk()
-            ->assertJsonPath('data.phone', null)
-            ->assertJsonPath('data.phone2', null)
-            ->assertJsonPath('data.phone_revealed', false);
+            ->assertJsonPath('data.phone', '07870009999')
+            ->assertJsonPath('data.phone2', '07870008888')
+            ->assertJsonPath('data.phone_revealed', true);
 
         $pwaBeforePickup = $this->actingAs($courier)->get('/app/orders')->assertOk();
         $pwaOrderBeforePickup = collect($pwaBeforePickup->inertiaProps('orders'))->firstWhere('id', $order->id);
-        $this->assertSame(null, data_get($pwaOrderBeforePickup, 'phone'));
-        $this->assertFalse((bool) data_get($pwaOrderBeforePickup, 'phone_revealed'));
+        $this->assertSame('07870009999', data_get($pwaOrderBeforePickup, 'phone'));
+        $this->assertTrue((bool) data_get($pwaOrderBeforePickup, 'phone_revealed'));
 
         $order->update(['picked_at' => now(), 'status' => 'courier']);
 

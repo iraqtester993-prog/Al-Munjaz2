@@ -21,20 +21,14 @@ class ChatController extends Controller
         $user = $request->user();
 
         $chats = $this->chatsFor($user)
-            ->with('order:id,track_no,courier_id,merchant_id')
+            ->with([
+                'user:id,name,role,shop_name',
+                'counterparty:id,name,role,shop_name',
+                'order:id,track_no,courier_id,merchant_id,pickup_courier_id,delivery_courier_id',
+            ])
             ->orderByDesc('last_at')
             ->get()
-            ->map(fn (Chat $chat) => [
-                'id' => $chat->id,
-                'title_ar' => $chat->title_ar,
-                'title_en' => $chat->title_en,
-                'counterparty_type' => $chat->counterparty_type,
-                'order_id' => $chat->order_id,
-                'track_no' => $chat->order?->track_no,
-                'last_message' => $chat->last_message,
-                'last_at' => $chat->last_at?->diffForHumans(),
-                'unread' => $this->unreadFor($chat, $user),
-            ]);
+            ->map(fn (Chat $chat) => $this->mobileChatPayload($chat, $user, true));
 
         return Inertia::render('Mobile/Chats', ['chats' => $chats]);
     }
@@ -46,15 +40,14 @@ class ChatController extends Controller
 
         $messages = $this->messagesFor($chat, $request->user());
 
+        $chat->loadMissing([
+            'user:id,name,role,shop_name',
+            'counterparty:id,name,role,shop_name',
+            'order:id,track_no,courier_id,merchant_id,pickup_courier_id,delivery_courier_id',
+        ]);
+
         return Inertia::render('Mobile/ChatThread', [
-            'chat' => [
-                'id' => $chat->id,
-                'title_ar' => $chat->title_ar,
-                'title_en' => $chat->title_en,
-                'counterparty_type' => $chat->counterparty_type,
-                'order_id' => $chat->order_id,
-                'track_no' => $chat->order?->track_no,
-            ],
+            'chat' => $this->mobileChatPayload($chat, $request->user()),
             'messages' => $messages,
         ]);
     }
@@ -139,13 +132,16 @@ class ChatController extends Controller
                         'counterparty_type' => 'order_support',
                         'order_id' => $order->id,
                     ],
-                    [
-                        'title_ar' => 'شكوى / تأخر — '.$order->track_no,
-                        'title_en' => 'Order support — '.$order->track_no,
+                    $this->complaintSnapshotAttributes($order) + [
                         'last_message' => '',
                         'last_at' => now(),
                     ]
                 );
+
+                // Legacy complaints did not retain which courier the issue
+                // referred to. Attach a snapshot the first time one is
+                // opened so the dashboard has a stable, auditable label.
+                $this->completeLegacyComplaintSnapshot($chat, $order);
 
                 return redirect()->route('app.chats.show', $chat);
             }
@@ -228,13 +224,13 @@ class ChatController extends Controller
                     'counterparty_type' => 'order_support',
                     'order_id' => $order->id,
                 ],
-                [
-                    'title_ar' => 'شكوى / تأخر — '.$order->track_no,
-                    'title_en' => 'Order support — '.$order->track_no,
+                $this->complaintSnapshotAttributes($order) + [
                     'last_message' => '',
                     'last_at' => now(),
                 ]
             );
+
+            $this->completeLegacyComplaintSnapshot($chat, $order);
 
             return redirect()->route('app.chats.show', $chat);
         }
@@ -255,20 +251,14 @@ class ChatController extends Controller
     public function adminIndex(Request $request)
     {
         $chats = Chat::withoutGlobalScope(TenantScope::class)
-            ->with(['user:id,name,phone', 'order:id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status'])
+            ->with([
+                'user:id,name,phone,role,shop_name',
+                'counterparty:id,name,phone,role,shop_name',
+                'order:id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status',
+            ])
             ->orderByDesc('last_at')
             ->get()
-            ->map(fn (Chat $chat) => [
-                'id' => $chat->id,
-                'title_ar' => $chat->title_ar,
-                'title_en' => $chat->title_en,
-                'last_message' => $chat->last_message,
-                'last_at' => $chat->last_at?->diffForHumans(),
-                'unread' => $this->unreadFor($chat, $request->user()),
-                'user' => $chat->user ? ['name' => $chat->user->name, 'phone' => $chat->user->phone] : null,
-                'counterparty_type' => $chat->counterparty_type,
-                'order' => $this->adminOrderContext($chat->order),
-            ]);
+            ->map(fn (Chat $chat) => $this->adminChatPayload($chat, $request->user()));
 
         return Inertia::render('Admin/Chat', ['chats' => $chats]);
     }
@@ -279,25 +269,19 @@ class ChatController extends Controller
 
         $messages = $this->messagesFor($chat, $request->user());
 
+        $chat->loadMissing([
+            'user:id,name,phone,role,shop_name',
+            'counterparty:id,name,phone,role,shop_name',
+            'order:id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status',
+        ]);
+
         return Inertia::render('Admin/Chat', [
-            'chats' => Chat::withoutGlobalScope(TenantScope::class)->with(['user:id,name,phone', 'order:id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status'])->orderByDesc('last_at')->get()->map(fn (Chat $c) => [
-                'id' => $c->id,
-                'title_ar' => $c->title_ar,
-                'title_en' => $c->title_en,
-                'last_message' => $c->last_message,
-                'last_at' => $c->last_at?->diffForHumans(),
-                'unread' => $this->unreadFor($c, $request->user()),
-                'user' => $c->user ? ['name' => $c->user->name, 'phone' => $c->user->phone] : null,
-                'counterparty_type' => $c->counterparty_type,
-                'order' => $this->adminOrderContext($c->order),
-            ]),
-            'activeChat' => [
-                'id' => $chat->id,
-                'title_ar' => $chat->title_ar,
-                'title_en' => $chat->title_en,
-                'user' => $chat->user ? ['name' => $chat->user->name, 'phone' => $chat->user->phone] : null,
-                'order' => $this->adminOrderContext($chat->loadMissing('order')->order),
-            ],
+            'chats' => Chat::withoutGlobalScope(TenantScope::class)->with([
+                'user:id,name,phone,role,shop_name',
+                'counterparty:id,name,phone,role,shop_name',
+                'order:id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status',
+            ])->orderByDesc('last_at')->get()->map(fn (Chat $c) => $this->adminChatPayload($c, $request->user())),
+            'activeChat' => $this->adminChatPayload($chat, $request->user()),
             'messages' => $messages,
         ]);
     }
@@ -529,7 +513,11 @@ class ChatController extends Controller
             return (int) $actor->id;
         }
 
-        return $courierIds[0] ?? null;
+        // The merchant must be connected to the same operational courier
+        // shown on the order card: pickup courier while waiting at the shop,
+        // then delivery courier once the parcel is with a courier.  This
+        // avoids a card/chat mismatch for specialised assignments.
+        return $this->operationalCourierId($order);
     }
 
     private function merchantIdForOrder(Order $order, User $actor): ?int
@@ -587,5 +575,149 @@ class ChatController extends Controller
             'address' => $order->address_ar ?: $order->address_en,
             'status' => $order->status,
         ] : null;
+    }
+
+    /**
+     * Resolve the courier whose work is currently visible on an order. This
+     * is deliberately stage-aware so a merchant chats with the pickup
+     * courier first and with the delivery courier after handover.
+     */
+    private function operationalCourierId(Order $order): ?int
+    {
+        return match ($order->status) {
+            'approved' => $order->pickup_courier_id ?: $order->courier_id ?: $order->delivery_courier_id,
+            'courier' => $order->delivery_courier_id ?: $order->courier_id ?: $order->pickup_courier_id,
+            default => $order->courier_id ?: $order->pickup_courier_id ?: $order->delivery_courier_id,
+        } ?: null;
+    }
+
+    private function operationalCourierFor(Order $order): ?User
+    {
+        $courierId = $this->operationalCourierId($order);
+
+        return $courierId ? User::withTrashed()->find($courierId) : null;
+    }
+
+    /** @return array<string, int|string|null> */
+    private function complaintSnapshotAttributes(Order $order): array
+    {
+        $courier = $this->operationalCourierFor($order);
+        $courierName = $courier?->name ?: 'مندوب غير مكلّف';
+
+        return [
+            'counterparty_id' => $courier?->id,
+            'title_ar' => 'شكوى / تأخر — '.$courierName.' — '.$order->track_no,
+            'title_en' => 'Complaint / delay — '.$courierName.' — '.$order->track_no,
+        ];
+    }
+
+    private function completeLegacyComplaintSnapshot(Chat $chat, Order $order): void
+    {
+        if ($chat->counterparty_id) {
+            return;
+        }
+
+        $legacyTitle = (string) $chat->title_ar;
+        if ($legacyTitle !== '' && ! str_starts_with($legacyTitle, 'شكوى / تأخر —')) {
+            return;
+        }
+
+        $chat->fill($this->complaintSnapshotAttributes($order));
+        if ($chat->isDirty()) {
+            $chat->save();
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function mobileChatPayload(Chat $chat, User $viewer, bool $withListMeta = false): array
+    {
+        $counterparty = $this->counterpartyForViewer($chat, $viewer);
+        $counterpartyName = $counterparty?->name;
+        $trackNo = $chat->order?->track_no;
+
+        if ($chat->counterparty_type === 'order_chat') {
+            $titleAr = 'محادثة مع '.($counterpartyName ?: 'الطرف الآخر').($trackNo ? ' — '.$trackNo : '');
+            $titleEn = 'Chat with '.($counterpartyName ?: 'Counterparty').($trackNo ? ' — '.$trackNo : '');
+            $titleKu = 'گفتوگۆ لەگەڵ '.($counterpartyName ?: 'بەرامبەر').($trackNo ? ' — '.$trackNo : '');
+        } elseif ($chat->counterparty_type === 'order_support') {
+            $counterpartyName ??= 'مندوب غير مكلّف';
+            $titleAr = 'شكوى / تأخر — '.$counterpartyName.($trackNo ? ' — '.$trackNo : '');
+            $titleEn = 'Complaint / delay — '.$counterpartyName.($trackNo ? ' — '.$trackNo : '');
+            $titleKu = 'سکاڵا / دواکەوتن — '.$counterpartyName.($trackNo ? ' — '.$trackNo : '');
+        } else {
+            $titleAr = $chat->title_ar ?: 'الدعم الفني';
+            $titleEn = $chat->title_en ?: 'Support';
+            $titleKu = $titleAr;
+        }
+
+        $payload = [
+            'id' => $chat->id,
+            'title_ar' => $titleAr,
+            'title_en' => $titleEn,
+            'title_ku' => $titleKu,
+            'counterparty_name' => $counterpartyName,
+            'counterparty_role' => $counterparty?->role,
+            'counterparty_type' => $chat->counterparty_type,
+            'order_id' => $chat->order_id,
+            'track_no' => $trackNo,
+            'last_message' => $chat->last_message,
+        ];
+
+        if ($withListMeta) {
+            $payload['last_at'] = $chat->last_at?->diffForHumans();
+            $payload['unread'] = $this->unreadFor($chat, $viewer);
+        }
+
+        return $payload;
+    }
+
+    private function counterpartyForViewer(Chat $chat, User $viewer): ?User
+    {
+        if ($chat->counterparty_type === 'order_chat') {
+            if ((int) $chat->user_id === (int) $viewer->id) {
+                return $chat->counterparty;
+            }
+
+            if ((int) $chat->counterparty_id === (int) $viewer->id) {
+                return $chat->user;
+            }
+        }
+
+        if ($chat->counterparty_type === 'order_support') {
+            return $chat->counterparty ?: ($chat->order ? $this->operationalCourierFor($chat->order) : null);
+        }
+
+        return null;
+    }
+
+    /** @return array<string, mixed> */
+    private function adminChatPayload(Chat $chat, User $viewer): array
+    {
+        $order = $chat->order;
+        $merchantName = $chat->user?->name;
+        $courierName = $chat->counterparty?->name;
+
+        if ($chat->counterparty_type === 'order_support') {
+            $courierName ??= $order ? $this->operationalCourierFor($order)?->name : null;
+            $displayTitle = 'شكوى / تأخر — '.($courierName ?: 'مندوب غير مكلّف').($order?->track_no ? ' — '.$order->track_no : '');
+        } elseif ($chat->counterparty_type === 'order_chat') {
+            $displayTitle = 'محادثة الطلب — '.($merchantName ?: 'تاجر').' ↔ '.($courierName ?: 'مندوب').($order?->track_no ? ' — '.$order->track_no : '');
+        } else {
+            $displayTitle = $chat->title_ar ?: ($merchantName ?: 'الدعم الفني');
+        }
+
+        return [
+            'id' => $chat->id,
+            'title_ar' => $chat->title_ar,
+            'title_en' => $chat->title_en,
+            'display_title' => $displayTitle,
+            'last_message' => $chat->last_message,
+            'last_at' => $chat->last_at?->diffForHumans(),
+            'unread' => $this->unreadFor($chat, $viewer),
+            'user' => $chat->user ? ['name' => $chat->user->name, 'phone' => $chat->user->phone] : null,
+            'counterparty' => $chat->counterparty ? ['name' => $chat->counterparty->name, 'phone' => $chat->counterparty->phone] : null,
+            'counterparty_type' => $chat->counterparty_type,
+            'order' => $this->adminOrderContext($order),
+        ];
     }
 }

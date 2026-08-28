@@ -834,6 +834,8 @@ class SmokeTest extends TestCase
         $this->getJson("/api/v1/chats/{$chat->id}")
             ->assertOk()
             ->assertJsonPath('data.counterparty_type', 'order_chat')
+            ->assertJsonPath('data.counterparty_name', $merchant->name)
+            ->assertJsonPath('data.title', 'محادثة مع '.$merchant->name.' — '.$order->track_no)
             ->assertJsonPath('data.order_id', $order->id)
             ->assertJsonPath('data.track_no', $order->track_no);
 

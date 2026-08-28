@@ -34,6 +34,17 @@ class Chat extends Model
     }
 
     /**
+     * The other mobile participant in a direct order conversation.  A
+     * courier may belong to a different tenant, so this relation deliberately
+     * does not inherit a tenant condition.  Controllers still enforce the
+     * explicit participant policy before exposing a chat.
+     */
+    public function counterparty(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'counterparty_id')->withTrashed();
+    }
+
+    /**
      * The delivery order attached to an order conversation.
      *
      * Couriers are intentionally isolated into their own tenant, while an

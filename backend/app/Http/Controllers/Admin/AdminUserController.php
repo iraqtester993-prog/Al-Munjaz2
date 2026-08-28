@@ -22,7 +22,7 @@ class AdminUserController extends Controller
         // tenant can legitimately have more than one merchant operator, so
         // the dashboard must list and manage the actual accounts directly.
         $users = User::query()
-            ->with(['tenant.plan', 'wallet', 'provinces'])
+            ->with(['tenant.plan', 'wallet', 'provinces', 'merchantVerifiedBy:id,name'])
             ->where('role', 'merchant')
             ->orderBy('name')
             ->get();
@@ -225,6 +225,103 @@ class AdminUserController extends Controller
         return back()->with('success', __('admin.user_updated'));
     }
 
+    /**
+     * The public verification mark is deliberately separate from a document
+     * review.  It is set only by an administrator after the submitted
+     * merchant documents have been checked, and never applies to couriers.
+     */
+    public function merchantVerification(Request $request, User $user)
+    {
+        abort_unless($user->role === 'merchant', 404);
+
+        $data = $request->validate([
+            'verified' => ['required', 'boolean'],
+        ]);
+
+        if ($data['verified']) {
+            $documents = $user->documents()->get(['id', 'type', 'status']);
+            $requiredDocumentTypes = ['id_front', 'id_back', 'residence', 'residence_back'];
+            if ($documents->isEmpty()) {
+                return back()->withErrors(['verification' => 'ارفع وثائق التاجر قبل منح علامة التوثيق.']);
+            }
+
+            if (collect($requiredDocumentTypes)->diff($documents->pluck('type'))->isNotEmpty()) {
+                return back()->withErrors(['verification' => 'يجب أن يرفع التاجر صور الهوية والسكن المطلوبة كاملة قبل منح علامة التوثيق.']);
+            }
+
+            if ($documents->contains(fn (Document $document) => $document->status !== 'approved')) {
+                return back()->withErrors(['verification' => 'اعتمد جميع وثائق التاجر أو ارفضها قبل منح علامة التوثيق.']);
+            }
+        }
+
+        $user->update([
+            'merchant_verified_at' => $data['verified'] ? now() : null,
+            'merchant_verified_by' => $data['verified'] ? $request->user()->id : null,
+        ]);
+
+        ActivityLog::create([
+            'tenant_id' => $user->tenant_id,
+            'user_id' => $request->user()->id,
+            'action' => $data['verified'] ? 'merchant.verification_granted' : 'merchant.verification_removed',
+            'subject_type' => User::class,
+            'subject_id' => $user->id,
+            'data' => ['verified' => (bool) $data['verified']],
+            'ip' => $request->ip(),
+        ]);
+
+        return back()->with('success', $data['verified'] ? 'تم منح علامة توثيق التاجر.' : 'تمت إزالة علامة توثيق التاجر.');
+    }
+
+    /**
+     * Keep "delete" recoverable and auditable.  Active delivery work cannot
+     * lose its assigned identity, so an operator must first settle or
+     * reassign open orders; completed history remains linked through the
+     * model's soft-delete relations.
+     */
+    public function destroy(Request $request, User $user)
+    {
+        abort_unless($user->role === 'merchant' || $user->isCourierRole(), 404);
+        abort_if($user->is($request->user()), 422, 'لا يمكن حذف الحساب الذي تستخدمه حالياً.');
+
+        $activeOrders = Order::withoutGlobalScope(TenantScope::class)
+            ->whereNotIn('status', Order::TERMINAL_STATUSES)
+            ->where(function ($orders) use ($user): void {
+                if ($user->role === 'merchant') {
+                    $orders->where('merchant_id', $user->id)->orWhere('created_by', $user->id);
+                    return;
+                }
+
+                $orders->where('courier_id', $user->id)
+                    ->orWhere('pickup_courier_id', $user->id)
+                    ->orWhere('delivery_courier_id', $user->id);
+            })
+            ->exists();
+
+        if ($activeOrders) {
+            return back()->withErrors(['delete' => 'لا يمكن حذف حساب مرتبط بطلبات مفتوحة. عطّل الحساب وأعد تعيين الطلبات أولاً.']);
+        }
+
+        $subjectId = $user->id;
+        $subjectRole = $user->role;
+        $subjectName = $user->name;
+        $subjectTenantId = $user->tenant_id;
+        $user->forceFill(['status' => 'suspended', 'is_online' => false])->save();
+        $user->tokens()->delete();
+        $user->delete();
+
+        ActivityLog::create([
+            'tenant_id' => $subjectTenantId,
+            'user_id' => $request->user()->id,
+            'action' => 'user.soft_deleted',
+            'subject_type' => User::class,
+            'subject_id' => $subjectId,
+            'data' => ['role' => $subjectRole, 'name' => $subjectName],
+            'ip' => $request->ip(),
+        ]);
+
+        return back()->with('success', 'تم حذف الحساب بأمان. يمكن استعادته من النسخة الاحتياطية عند الحاجة.');
+    }
+
     private function courierRow(User $user): array
     {
         $documents = Document::query()
@@ -261,6 +358,12 @@ class AdminUserController extends Controller
                     'id' => $province->id,
                     'name_ar' => $province->name_ar,
                 ])->values(),
+            ],
+            'verification' => [
+                'status' => 'internal_documents',
+                'verified' => false,
+                'verified_at' => null,
+                'verified_by' => null,
             ],
             'docs' => $documents->where('status', 'pending')->count(),
             'pendingDocs' => $documents->where('status', 'pending')->pluck('id')->values(),
@@ -310,6 +413,14 @@ class AdminUserController extends Controller
                     'name_ar' => $province->name_ar,
                 ])->values(),
             ],
+            'verification' => [
+                'status' => $user->isMerchantVerified()
+                    ? 'verified'
+                    : ($documents->contains('status', 'rejected') ? 'rejected' : ($documents->isNotEmpty() ? 'pending' : 'unsubmitted')),
+                'verified' => $user->isMerchantVerified(),
+                'verified_at' => $user->merchant_verified_at?->toIso8601String(),
+                'verified_by' => $user->merchantVerifiedBy?->name,
+            ],
             'docs' => $documents->where('status', 'pending')->count(),
             'pendingDocs' => $documents->where('status', 'pending')->pluck('id')->values(),
             'documents' => $documents->map(fn (Document $document) => [
@@ -331,6 +442,13 @@ class AdminUserController extends Controller
         ]);
 
         $document->update(['status' => $request->input('status')]);
+
+        if ($user->role === 'merchant' && $request->input('status') === 'rejected' && $user->merchant_verified_at) {
+            $user->update([
+                'merchant_verified_at' => null,
+                'merchant_verified_by' => null,
+            ]);
+        }
 
         return back()->with('success', __('admin.document_reviewed'));
     }

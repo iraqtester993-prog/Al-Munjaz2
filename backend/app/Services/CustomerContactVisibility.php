@@ -6,22 +6,17 @@ use App\Models\Order;
 use App\Models\User;
 
 /**
- * Centralises the customer-contact privacy boundary.
+ * Keeps the API response aligned with the application order cards.
  *
- * Customer numbers must not be treated as presentation-only data: a courier
- * receives them from the server only after the parcel has been recorded as
- * physically collected.  Merchants and dashboard users already own or
- * administer the order, so this restriction applies solely to courier roles.
+ * The platform policy is to show the customer phone for every order status to
+ * every participant who has already passed the order access check.  Access
+ * itself remains enforced by the order controllers; this service deliberately
+ * does not add a second, contradictory presentation-only restriction.
  */
 class CustomerContactVisibility
 {
     public function canReveal(Order $order, User $viewer): bool
     {
-        if (! $viewer->isCourierRole()) {
-            return true;
-        }
-
-        return (int) $order->courier_id === (int) $viewer->id
-            && $order->picked_at !== null;
+        return true;
     }
 }

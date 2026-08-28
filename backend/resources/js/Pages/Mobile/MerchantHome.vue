@@ -46,8 +46,22 @@ function customerName(order) {
     return localizedOrderValue(order, 'customer_name')
 }
 
-function openComplaint(order) {
+function vehicleLabel(vehicle) {
+    return {
+        bike: t('Motorcycle'),
+        sedan: t('Car'),
+        suv: t('SUV'),
+        truck: t('Truck'),
+        normal: t('Regular Delivery'),
+    }[vehicle] || vehicle || ''
+}
+
+function openOrderChat(order) {
     router.post(route('app.chats.open'), { order_id: order.id }, { preserveScroll: true })
+}
+
+function openComplaint(order) {
+    router.post(route('app.chats.open'), { order_id: order.id, complaint: true }, { preserveScroll: true })
 }
 
 function pickupRemaining(order) {
@@ -127,6 +141,16 @@ onUnmounted(() => window.clearInterval(ticker))
                     </div>
                 </div>
                 <p v-if="o.notes" class="merchant-order-note"><b>{{ t('Notes') }}:</b> {{ o.notes }}</p>
+                <p v-if="o.vehicle_note" class="merchant-order-note merchant-order-vehicle-note"><b>{{ t('Vehicle Note') }}:</b> {{ o.vehicle_note }}</p>
+                <div v-if="(o.status === 'approved' || o.status === 'courier') && o.assigned_courier" class="merchant-courier-card">
+                    <span class="merchant-courier-avatar">{{ o.assigned_courier.name?.slice(0, 1) || 'م' }}</span>
+                    <span class="merchant-courier-copy">
+                        <small>{{ t('Courier') }}</small>
+                        <b>{{ o.assigned_courier.name }}</b>
+                        <em v-if="vehicleLabel(o.assigned_courier.vehicle)">{{ vehicleLabel(o.assigned_courier.vehicle) }}</em>
+                    </span>
+                    <button type="button" @click.stop="openOrderChat(o)">{{ t('Chat') }}</button>
+                </div>
                 <div v-if="o.status === 'approved' || o.status === 'courier'" class="merchant-order-tools">
                     <span v-if="o.status === 'approved' && pickupRemainingText(o)" class="merchant-pickup-timer">
                         <i></i> {{ t('Time to reach the merchant') }}: <b class="mono">{{ pickupRemainingText(o) }}</b>
@@ -156,6 +180,10 @@ onUnmounted(() => window.clearInterval(ticker))
 .order-date { display:block; color:var(--ink-faint); font-size:9px; font-weight:700; }
 .merchant-order-note { margin:8px 0 0; padding:6px 8px; border-radius:8px; background:var(--surface-2); color:var(--ink-soft); font-size:10px; font-weight:700; }
 .merchant-order-note b { color:var(--primary-strong); }
+.merchant-order-vehicle-note { background:var(--primary-tint); }
+.merchant-courier-card { display:flex; align-items:center; gap:9px; margin-top:8px; padding:8px; border:1px solid color-mix(in srgb, var(--primary) 20%, var(--border)); border-radius:10px; background:var(--primary-tint); }
+.merchant-courier-avatar { width:30px; height:30px; display:grid; place-items:center; flex:none; border-radius:10px; color:#fff; background:var(--primary); font-size:11px; font-weight:900; }
+.merchant-courier-copy { display:grid; flex:1; min-width:0; gap:1px; }.merchant-courier-copy small,.merchant-courier-copy em { color:var(--ink-faint); font-size:9px; font-style:normal; font-weight:700; }.merchant-courier-copy b { overflow:hidden; color:var(--ink); font-size:10.5px; text-overflow:ellipsis; white-space:nowrap; }.merchant-courier-card button { padding:5px 8px; border:0; border-radius:8px; color:#fff; background:var(--primary); font:inherit; font-size:9px; font-weight:900; }
 .merchant-order-tools { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:8px; color:var(--ink-faint); font-size:9.5px; font-weight:700; }
 .merchant-pickup-timer { display:inline-flex; align-items:center; gap:4px; color:var(--success); }
 .merchant-pickup-timer i { width:7px; height:7px; border-radius:50%; background:var(--success); box-shadow:0 0 7px color-mix(in srgb, var(--success) 75%, transparent); }

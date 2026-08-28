@@ -20,6 +20,7 @@ const chatSubtitle = computed(() => isOrderConversation.value ? t('Order convers
 const sending = ref(false)
 const msgs = ref([...props.messages])
 const threadEl = ref(null)
+const composerEl = ref(null)
 const lastMessageId = ref(Math.max(0, ...msgs.value.map((message) => Number(message?.id) || 0)))
 let pollTimer = null
 let refreshing = false
@@ -37,6 +38,11 @@ async function send() {
     } finally {
         sending.value = false
         scrollDown()
+        // On phones a button tap normally steals focus from the input and
+        // dismisses the software keyboard. Restore the composer after the
+        // DOM settles so a courier or merchant can send consecutive messages.
+        await nextTick()
+        composerEl.value?.focus({ preventScroll: true })
     }
 }
 
@@ -135,8 +141,8 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="chat-input-bar">
-            <input v-model="text" :placeholder="t('Type a message')" @keydown="onEnter" />
-            <button class="send-btn" :disabled="sending || !text.trim()" @click="send">
+            <input ref="composerEl" v-model="text" :placeholder="t('Type a message')" @keydown="onEnter" />
+            <button type="button" class="send-btn" :disabled="sending || !text.trim()" @pointerdown.prevent @click="send">
                 <span v-if="sending" class="loader"></span>
                 <svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: locale() === 'ar' ? 'scaleX(-1)' : '' }">
                     <path d="m22 2-7 20-4-9-9-4Z M22 2 11 13" />

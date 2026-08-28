@@ -106,17 +106,18 @@ svg{display:block; flex-shrink:0;}
    MOBILE APP (Merchant / Courier)
    ============================================================ */
 .app-stage{
-  width:100%; height:100dvh; min-height:100svh; display:flex; align-items:stretch; justify-content:center;
+  width:100%; height:100dvh; min-height:100svh; display:flex; align-items:center; justify-content:center;
   overflow:hidden; background:var(--bg);
 }
 .app-shell{
-  width:100%; max-width:none; height:100%; min-height:0; position:relative;
-  background:var(--bg); display:flex; flex-direction:column; overflow:hidden;
+  width:min(100%,412px); height:874px; max-height:92dvh; min-height:0; position:relative;
+  background:var(--bg); display:flex; flex-direction:column; overflow:hidden; border:9px solid var(--ink);
+  border-radius:38px; box-shadow:0 22px 48px rgba(15,27,26,.22);
 }
 
 /* Top bar */
 .app-topbar{
-  display:flex; align-items:center; gap:10px; padding:calc(14px + env(safe-area-inset-top, 0px)) 16px 12px;
+  display:flex; align-items:center; gap:10px; padding:calc(16px + env(safe-area-inset-top, 0px)) 16px 12px;
   border-bottom:1px solid var(--border); background:var(--surface); flex:none;
   position:relative; z-index:30;
 }
@@ -127,21 +128,21 @@ svg{display:block; flex-shrink:0;}
 .tb-actions{display:flex; align-items:center; gap:6px; margin-inline-start:auto; flex:none;}
 .notif-badge{position:absolute; top:-4px; inset-inline-end:-4px; min-width:16px; height:16px; border-radius:20px; background:var(--st-returned); color:#fff; font-size:9px; font-weight:800; display:flex; align-items:center; justify-content:center; padding:0 4px; border:1.5px solid var(--surface); box-sizing:border-box;}
 
-.app-content{flex:1; min-height:0; overflow-y:auto; padding:16px 16px calc(96px + env(safe-area-inset-bottom, 0px)); -webkit-overflow-scrolling:touch;}
+.app-content{flex:1; min-height:0; overflow-y:auto; padding:16px 16px calc(90px + env(safe-area-inset-bottom, 0px)); -webkit-overflow-scrolling:touch;}
 .app-content.without-tabs{padding-bottom:16px;}
 .app-content.chat-thread-content{display:flex;flex-direction:column;padding:0;overflow:hidden;}
 .app-content::-webkit-scrollbar{display:none;}
 
 /* Bottom tabs */
 .bottom-tabs{
-  position:absolute; bottom:0; inset-inline:0; height:calc(76px + env(safe-area-inset-bottom, 0px));
+  position:absolute; bottom:0; inset-inline:0; height:calc(70px + env(safe-area-inset-bottom, 0px));
   background:color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter:blur(10px);
   border-top:1px solid var(--border); display:flex; align-items:center; z-index:40;
   padding-bottom:env(safe-area-inset-bottom, 0px);
 }
-.tab-btn{flex:1; display:flex; flex-direction:column; align-items:center; gap:5px; color:var(--ink-faint); position:relative; padding:8px 0 7px;}
+.tab-btn{flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--ink-faint); position:relative; padding:6px 0;}
 .tab-btn.active{color:var(--primary);}
-.tab-btn svg{width:22px;height:22px;}.tab-btn .tlabel{font-size:10px; font-weight:800;}
+.tab-btn svg{width:19px;height:19px;}.tab-btn .tlabel{font-size:9.5px; font-weight:700;}
 .tab-btn .tdot{position:absolute; top:-2px; inset-inline-end:20%; min-width:15px; height:15px; border-radius:20px; background:var(--accent); border:1.5px solid var(--surface); color:#fff; font-size:8.5px; font-weight:800; display:flex; align-items:center; justify-content:center; padding:0 3px; box-sizing:border-box;}
 
 .fab{
@@ -318,8 +319,14 @@ svg{display:block; flex-shrink:0;}
 /* Sheet modal */
 .overlay{position:fixed; inset:0; background:rgba(10,18,17,.5); z-index:120; display:none; align-items:flex-end; justify-content:center;}
 .overlay.open{display:flex;}
-.sheet-modal{box-sizing:border-box;display:flex;flex-direction:column;background:var(--surface);width:100%;max-width:460px;border-radius:22px 22px 0 0;padding:16px 20px 20px;max-height:min(86dvh,calc(100dvh - env(safe-area-inset-top, 0px)));overflow:hidden;animation:sheetup .2s ease;}
+.sheet-modal{box-sizing:border-box;display:flex;flex-direction:column;background:var(--surface);width:100%;max-width:412px;border-radius:22px 22px 0 0;padding:20px;max-height:min(82dvh,calc(100dvh - env(safe-area-inset-top, 0px)));overflow:hidden;animation:sheetup .2s ease;}
 .sheet-handle{width:38px; height:4px; border-radius:20px; background:var(--border); margin:0 auto 16px;}
+
+@media (max-width:460px){
+  .app-stage{align-items:stretch;}
+  .app-shell{width:100%;height:100%;max-height:none;border:0;border-radius:0;box-shadow:none;}
+  .sheet-modal{max-width:460px;max-height:min(86dvh,calc(100dvh - env(safe-area-inset-top, 0px)));padding:16px 20px 20px;}
+}
 
 /* Forms */
 .field{margin-bottom:14px;}

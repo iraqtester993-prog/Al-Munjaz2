@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="{{ app()->getLocale() }}" dir="{{ app()->getLocale() === 'ar' || app()->getLocale() === 'ku' ? 'rtl' : 'ltr' }}">
-@php($isDashboard = preg_match('/^(?:dashboard|admin)\./', request()->getHost()))
+@php($isDashboard = strtolower(request()->getHost()) === strtolower((string) config('app.product_admin_host')))
 @php($pwaVersion = config('app.pwa_version'))
 <head>
     <meta charset="utf-8">
@@ -26,10 +26,6 @@
 </head>
 <body data-theme="{{ auth()->user()?->theme ?? 'light' }}">
     @inertia
-    <script>
-        window.__translations = @json($translations);
-        window.__locale = @json(app()->getLocale());
-    </script>
     @if (! $isDashboard)
         <script>
             if ('serviceWorker' in navigator) {

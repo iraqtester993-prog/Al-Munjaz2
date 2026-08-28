@@ -63,6 +63,7 @@ class User extends Authenticatable
     protected $fillable = [
         'tenant_id', 'branch_id', 'name', 'username', 'email', 'phone', 'password',
         'role', 'status', 'vehicle', 'shop_name', 'address', 'identity_number', 'theme', 'locale',
+        'merchant_verified_at', 'merchant_verified_by',
         'is_online', 'last_active_at',
         'current_latitude', 'current_longitude', 'location_accuracy_meters', 'location_updated_at',
         'dashboard_permissions',
@@ -78,6 +79,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'phone_verified_at' => 'datetime',
+            'merchant_verified_at' => 'datetime',
             'last_active_at' => 'datetime',
             'location_updated_at' => 'datetime',
             'current_latitude' => 'decimal:7',
@@ -98,6 +100,16 @@ class User extends Authenticatable
     public function branch(): BelongsTo
     {
         return $this->belongsTo(Branch::class);
+    }
+
+    /**
+     * The administrator who explicitly approved the public merchant badge.
+     * Documents and activation are intentionally separate concerns, so a
+     * merchant never receives a public verification mark by accident.
+     */
+    public function merchantVerifiedBy(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'merchant_verified_by')->withTrashed();
     }
 
     /**
@@ -165,6 +177,11 @@ class User extends Authenticatable
     public function isActiveUser(): bool
     {
         return $this->status === 'active';
+    }
+
+    public function isMerchantVerified(): bool
+    {
+        return $this->role === 'merchant' && $this->merchant_verified_at !== null;
     }
 
     /**

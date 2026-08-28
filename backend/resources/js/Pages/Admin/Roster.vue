@@ -62,12 +62,26 @@ function changeStatus(row, status) {
     router.post(route('admin.users.status', row.user.id), { status }, { preserveScroll: true })
 }
 
-function reviewDoc(row, verdict) {
+function reviewDoc(row, verdict, requestedDocumentId = null) {
     if (!row.docs || row.docs === 0) return
-    const docId = row.pendingDocs?.[0]
+    const docId = requestedDocumentId || row.pendingDocs?.[0]
     if (!docId) return
     if (!confirm(t('Review this document?') + ' (' + (verdict === 'approved' ? t('Approve') : t('Reject')) + ')')) return
     router.post(route('admin.users.documents.review', [row.user.id, docId]), { status: verdict }, { preserveScroll: true })
+}
+
+function setMerchantVerification(row, verified) {
+    if (!row.user || isCourier.value) return
+    const action = verified ? t('Grant verification') : t('Remove verification')
+    if (!confirm(`${action}: ${row.user.name}?`)) return
+    router.post(route('admin.users.merchant-verification', row.user.id), { verified }, { preserveScroll: true })
+}
+
+function deleteAccount(row) {
+    if (!row.user) return
+    const message = `${t('Delete')} ${row.user.name}? ${t('This action is recoverable but is blocked while the account has open orders.')}`
+    if (!confirm(message)) return
+    router.delete(route('admin.users.destroy', row.user.id), { preserveScroll: true })
 }
 
 function openDocument(doc) {
@@ -85,6 +99,14 @@ function documentLabel(type) {
     }
 
     return labels[type] || type
+}
+
+function documentStatus(status) {
+    return status === 'approved'
+        ? t('Approved')
+        : status === 'rejected'
+            ? t('Rejected')
+            : t('Pending')
 }
 
 const isCourier = computed(() => props.role === 'courier')
@@ -166,6 +188,7 @@ function saveAccount() {
 function vehicleLabel(value) {
     return {
         bike: t('Motorcycle'),
+        car: t('Car'),
         sedan: t('Car'),
         suv: t('SUV'),
         truck: t('Truck'),
@@ -205,6 +228,7 @@ function vehicleLabel(value) {
                         <i :style="{ width: '7px', height: '7px', borderRadius: '50%', background: 'currentColor', display: 'inline-block' }"></i>
                         {{ statusLabel(row.status) }}
                     </span>
+                    <span v-if="!isCourier && row.verification?.verified" class="merchant-verified-badge" :title="t('Verified')">✓</span>
                 </div>
 
                 <div class="uc-meta">
@@ -254,9 +278,12 @@ function vehicleLabel(value) {
                 <div style="display: flex; gap: 8px; flex-wrap: wrap">
                     <button class="fbtn mini account-action" type="button" @click="openDetails(row)">{{ t('View Details') }}</button>
                     <button class="fbtn mini account-action" type="button" @click="openEdit(row)">{{ t('Edit') }}</button>
+                    <button v-if="!isCourier && !row.verification?.verified" class="fbtn mini verification-action" type="button" @click="setMerchantVerification(row, true)">{{ t('Grant verification') }}</button>
+                    <button v-if="!isCourier && row.verification?.verified" class="fbtn mini verification-remove" type="button" @click="setMerchantVerification(row, false)">{{ t('Remove verification') }}</button>
                     <button v-if="row.status !== 'active'" class="fbtn mini" style="background: var(--success-tint); color: var(--success); border: none" @click="changeStatus(row, 'active')">{{ t('Activate') }}</button>
                     <button v-if="row.status === 'active'" class="fbtn mini" style="background: var(--warning-tint); color: var(--warning); border: none" @click="changeStatus(row, 'suspended')">{{ t('Suspend') }}</button>
                     <button v-if="row.status === 'pending'" class="fbtn mini" @click="changeStatus(row, 'rejected')">{{ t('Reject') }}</button>
+                    <button class="fbtn mini delete-account" type="button" @click="deleteAccount(row)">{{ t('Delete') }}</button>
                 </div>
             </div>
         </div>
@@ -290,9 +317,22 @@ function vehicleLabel(value) {
                     <div v-if="isCourier"><dt>{{ t('Vehicle') }}</dt><dd>{{ vehicleLabel(detailsRow.user?.vehicle) }}</dd></div>
                     <div class="wide"><dt>{{ t('Address') }}</dt><dd>{{ detailsRow.user?.address || '—' }}</dd></div>
                     <div v-if="detailsRow.user?.identity_number" class="wide"><dt>{{ t('Identity Number') }}</dt><dd dir="ltr">{{ detailsRow.user.identity_number }}</dd></div>
+                    <div v-if="!isCourier" class="wide"><dt>{{ t('Account Verification') }}</dt><dd><b class="detail-verification" :class="detailsRow.verification?.status">{{ detailsRow.verification?.verified ? t('Verified') : detailsRow.verification?.status === 'rejected' ? t('Rejected') : detailsRow.verification?.status === 'pending' ? t('Verification pending') : t('Not submitted') }}</b><small v-if="detailsRow.verification?.verified_by">{{ t('Verified by') }} · {{ detailsRow.verification.verified_by }}</small></dd></div>
                 </dl>
 
+                <section v-if="detailsRow.documents?.length" class="account-documents">
+                    <h4>{{ t('Documents') }}</h4>
+                    <div v-for="document in detailsRow.documents" :key="document.id" class="account-document-row">
+                        <button type="button" @click="openDocument(document)">{{ documentLabel(document.type) }}</button>
+                        <span :class="document.status">{{ documentStatus(document.status) }}</span>
+                        <div v-if="document.status === 'pending'" class="account-document-actions"><button type="button" @click="reviewDoc(detailsRow, 'approved', document.id)">{{ t('Approve') }}</button><button type="button" @click="reviewDoc(detailsRow, 'rejected', document.id)">{{ t('Reject') }}</button></div>
+                    </div>
+                </section>
+
                 <footer class="dialog-footer">
+                    <button v-if="!isCourier && !detailsRow.verification?.verified" class="fbtn mini verification-action" type="button" @click="setMerchantVerification(detailsRow, true)">{{ t('Grant verification') }}</button>
+                    <button v-if="!isCourier && detailsRow.verification?.verified" class="fbtn mini verification-remove" type="button" @click="setMerchantVerification(detailsRow, false)">{{ t('Remove verification') }}</button>
+                    <button class="fbtn mini delete-account" type="button" @click="deleteAccount(detailsRow)">{{ t('Delete') }}</button>
                     <button class="fbtn mini" type="button" @click="closeDetails">{{ t('Close') }}</button>
                 </footer>
             </section>
@@ -339,6 +379,8 @@ function vehicleLabel(value) {
 .roster-role-filter { margin-bottom: 10px; }
 .courier-role-label { display: block; margin-top: 4px; color: var(--primary-strong); font-size: 9px; font-weight: 900; }
 .account-action { color: var(--primary-strong); background: var(--primary-tint); border: 0; }
+.merchant-verified-badge { display: grid; width: 21px; height: 21px; place-items: center; flex: none; border-radius: 50%; color: #fff; background: #1d9bf0; font-size: 12px; font-weight: 900; }
+.verification-action { border: 0; color: #075450; background: #d8f5e9; }.verification-remove { border: 0; color: var(--warning); background: var(--warning-tint); }.delete-account { border: 0; color: var(--danger); background: var(--danger-tint); }
 .dialog-backdrop { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(4, 12, 26, .62); backdrop-filter: blur(4px); }
 .account-dialog { width: min(100%, 600px); overflow: hidden; border: 1px solid var(--border); border-radius: 18px; color: var(--ink); background: var(--surface); box-shadow: 0 28px 76px rgba(0,0,0,.34); }
 .dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 17px 18px; border-bottom: 1px solid var(--border); }
@@ -359,6 +401,8 @@ function vehicleLabel(value) {
 .account-data dt { color: var(--ink-faint); font-size: 9px; font-weight: 850; }
 .account-data dd { overflow: hidden; margin: 4px 0 0; color: var(--ink); font-size: 11px; font-weight: 750; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
 .account-data .wide dd { white-space: normal; }
+.account-data dd small { display: block; margin-top: 3px; color: var(--ink-faint); font-size: 9px; font-weight: 700; }.detail-verification { display: inline-flex; padding: 3px 7px; border-radius: 999px; background: var(--surface-2); font-size: 9.5px; }.detail-verification.verified { color: var(--success); }.detail-verification.pending { color: var(--warning); }.detail-verification.rejected { color: var(--danger); }
+.account-documents { margin: 0 18px 2px; padding: 14px 0; border-top: 1px solid var(--border); }.account-documents h4 { margin: 0 0 9px; font-size: 11px; }.account-document-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--border); }.account-document-row > button { min-width: 0; overflow: hidden; padding: 0; border: 0; color: var(--primary-strong); background: transparent; font: 800 10px var(--font); text-align: start; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }.account-document-row > span { font-size: 9px; font-weight: 850; }.account-document-row > span.approved { color: var(--success); }.account-document-row > span.rejected { color: var(--danger); }.account-document-row > span.pending { color: var(--warning); }.account-document-actions { grid-column: 1 / -1; display: flex; gap: 7px; }.account-document-actions button { padding: 5px 8px; border: 0; border-radius: 7px; background: var(--surface-2); color: var(--primary-strong); font: 800 9px var(--font); cursor: pointer; }.account-document-actions button:last-child { color: var(--danger); }
 .edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; padding: 18px; }
 .edit-grid label { display: grid; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 850; }
 .edit-grid .wide { grid-column: 1 / -1; }

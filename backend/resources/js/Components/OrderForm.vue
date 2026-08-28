@@ -22,7 +22,10 @@ const locale = computed(() => page.props.locale || 'ar')
 
 const vehicleOptions = computed(() => [
     { value: 'normal', label: t('Regular Delivery'), helper: t('Normal order by default'), icon: 'box' },
+    { value: 'bike', label: t('Motorcycle'), helper: t('Suitable for light parcels'), icon: 'bike' },
+    { value: 'sedan', label: t('Car'), helper: t('Suitable for standard parcels'), icon: 'car' },
     { value: 'suv', label: t('SUV'), helper: t('Suitable for large parcels'), icon: 'suv' },
+    { value: 'truck', label: t('Truck'), helper: t('Suitable for heavy parcels'), icon: 'truck' },
 ])
 
 const selectedVehicle = computed(() => vehicleOptions.value.find((vehicle) => vehicle.value === form.delivery_vehicle) || vehicleOptions.value[0])
@@ -49,6 +52,7 @@ const form = useForm({
     pickup_location_label: '',
     order_type: '',
     delivery_vehicle: 'normal',
+    weight_grams: '',
     vehicle_note: '',
     price: '',
     notes: '',
@@ -108,36 +112,50 @@ const priceInput = computed({
     set: (value) => { form.price = moneyDigits(value) },
 })
 
-watch(
-    () => props.open,
-    (open) => {
-        if (!open) return
-        form.clearErrors()
-        if (props.order) {
-            form.set({
-                customer_name_ar: props.order.customer_name_ar || '',
-                customer_name_en: props.order.customer_name_en || '',
-                phone: props.order.phone || '',
-                phone2: props.order.phone2 || '',
-                address_ar: props.order.address_ar || '',
-                address_en: props.order.address_en || '',
-                pickup_latitude: props.order.pickup_latitude ?? '',
-                pickup_longitude: props.order.pickup_longitude ?? '',
-                pickup_location_label: props.order.pickup_location_label || '',
-                order_type: props.order.order_type || '',
-                delivery_vehicle: props.order.delivery_vehicle || 'normal',
-                vehicle_note: props.order.vehicle_note || '',
-                price: props.order.price || '',
-                notes: props.order.notes || '',
-                date: props.order.date || '',
-            })
-        } else {
-            form.reset()
-        }
-        vehiclePickerOpen.value = false
-        pickupLocationMessage.value = ''
-        pickupLocationError.value = ''
+function editableOrderPayload(order = null) {
+    return {
+        customer_name_ar: order?.customer_name_ar || '',
+        customer_name_en: order?.customer_name_en || '',
+        phone: order?.phone || '',
+        phone2: order?.phone2 || '',
+        address_ar: order?.address_ar || '',
+        address_en: order?.address_en || '',
+        pickup_latitude: order?.pickup_latitude ?? '',
+        pickup_longitude: order?.pickup_longitude ?? '',
+        pickup_location_label: order?.pickup_location_label || '',
+        order_type: order?.order_type || '',
+        delivery_vehicle: order?.delivery_vehicle || 'normal',
+        weight_grams: order?.weight_grams ?? '',
+        vehicle_note: order?.vehicle_note || '',
+        price: order?.price ?? '',
+        notes: order?.notes || '',
+        date: order?.date || '',
     }
+}
+
+function hydrateForm(order = null) {
+    // Set defaults before resetting. `useForm.reset()` otherwise restores
+    // the blank create-order values after a detail sheet has changed the
+    // selected order, which is the source of the empty edit form report.
+    const payload = editableOrderPayload(order)
+    form.defaults(payload)
+    // Assign directly as well as resetting the defaults.  This covers the
+    // case where the detail sheet passes a newly selected order while this
+    // modal component remains mounted; relying only on reset() can restore
+    // the first (blank create-order) baseline in some Inertia form versions.
+    Object.assign(form, payload)
+    form.clearErrors()
+    vehiclePickerOpen.value = false
+    pickupLocationMessage.value = ''
+    pickupLocationError.value = ''
+}
+
+watch(
+    () => [props.open, props.order?.id, props.order?.updated_at],
+    ([open]) => {
+        if (open) hydrateForm(props.order)
+    },
+    { immediate: true },
 )
 
 function chooseVehicle(value) {
@@ -242,6 +260,7 @@ function submit() {
         pickup_location_label: String(form.pickup_location_label).trim(),
         order_type: form.order_type,
         delivery_vehicle: form.delivery_vehicle,
+        weight_grams: form.weight_grams === '' ? null : Number(form.weight_grams),
         vehicle_note: form.vehicle_note,
         price: form.price,
         notes: form.notes,

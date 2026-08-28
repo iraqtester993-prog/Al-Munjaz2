@@ -16,6 +16,7 @@ const sending = ref(false)
 const sendError = ref('')
 const msgs = ref([...(props.messages || [])])
 const threadEl = ref(null)
+const composerEl = ref(null)
 const lastMessageId = ref(Math.max(0, ...msgs.value.map((message) => Number(message?.id) || 0)))
 let pollTimer = null
 let refreshing = false
@@ -59,6 +60,8 @@ async function send() {
     } finally {
         sending.value = false
         scrollDown()
+        await nextTick()
+        composerEl.value?.focus({ preventScroll: true })
     }
 }
 
@@ -113,9 +116,9 @@ onBeforeUnmount(() => {
         <div class="chat-layout">
             <div class="chat-list">
                 <div v-for="c in chats" :key="c.id" class="chat-item" :class="{ active: activeChat?.id === c.id }" @click="openChat(c)">
-                    <div class="avatar">{{ initials(c.user?.name || c.title_ar) }}</div>
+                    <div class="avatar">{{ initials(c.display_title || c.title_ar) }}</div>
                     <div style="flex: 1; min-width: 0">
-                        <b style="display: block; font-size: 13px">{{ c.user?.name || c.title_ar }}</b>
+                        <b style="display: block; font-size: 13px">{{ c.display_title || c.title_ar }}</b>
                         <span class="text-muted" style="font-size: 10.5px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ c.last_message }}</span>
                     </div>
                     <div style="text-align: end">
@@ -128,9 +131,9 @@ onBeforeUnmount(() => {
 
             <div v-if="activeChat" class="chat-thread">
                 <div class="thread-head">
-                    <div class="avatar">{{ initials(activeChat.user?.name || activeChat.title_ar) }}</div>
+                    <div class="avatar">{{ initials(activeChat.display_title || activeChat.title_ar) }}</div>
                     <div>
-                        <b>{{ activeChat.user?.name || activeChat.title_ar }}</b>
+                        <b>{{ activeChat.display_title || activeChat.title_ar }}</b>
                         <div class="text-muted" style="font-size: 10.5px">{{ activeChat.user?.phone }}</div>
                         <div v-if="activeChat.order" class="text-muted" style="font-size: 9.5px">
                             {{ activeChat.order.track_no }} · {{ activeChat.order.customer_name }} · {{ activeChat.order.phone }}
@@ -145,8 +148,8 @@ onBeforeUnmount(() => {
                     <div v-if="!msgs.length" class="empty-hint">{{ t('No messages yet') }}</div>
                 </div>
                 <div class="chat-input-bar">
-                    <input v-model="text" :placeholder="t('Type a message')" @keydown="onEnter" />
-                    <button class="send-btn" :disabled="sending || !text.trim()" @click="send">
+                    <input ref="composerEl" v-model="text" :placeholder="t('Type a message')" @keydown="onEnter" />
+                    <button type="button" class="send-btn" :disabled="sending || !text.trim()" @pointerdown.prevent @click="send">
                         <span v-if="sending" class="loader"></span>
                         <svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="m22 2-7 20-4-9-9-4Z M22 2 11 13" />

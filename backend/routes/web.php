@@ -82,7 +82,7 @@ Route::get('/sw.js', $pwaWorker); // Compatibility alias for the old installed P
 |--------------------------------------------------------------------------
 */
 Route::get('/', function (Request $request) {
-    return preg_match('/^(?:dashboard|admin)\./', $request->getHost())
+    return strtolower($request->getHost()) === strtolower((string) config('app.product_admin_host'))
         ? redirect('/dashboard/login')
         : redirect('/login');
 });
@@ -191,12 +191,15 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     Route::post('branches/{branch}/access', [BranchController::class, 'storeAccess'])->name('admin.branches.access.store');
     Route::post('orders/{order}/status', [AdminOrderController::class, 'status'])->name('admin.orders.status');
     Route::post('orders/{order}/courier', [AdminOrderController::class, 'assignCourier'])->name('admin.orders.courier');
+    Route::post('orders/{order}/reoffer-overdue-pickup', [AdminOrderController::class, 'reofferOverduePickup'])->name('admin.orders.reoffer-overdue-pickup');
     Route::post('orders/{order}/branches', [AdminOrderController::class, 'assignBranches'])->name('admin.orders.branches');
     Route::get('merchants', [AdminUserController::class, 'merchants'])->name('admin.merchants');
     Route::get('couriers', [AdminUserController::class, 'couriers'])->name('admin.couriers');
     Route::get('couriers/locations', [AdminCourierLocationController::class, 'index'])->name('admin.couriers.locations');
     Route::put('users/{user}', [AdminUserController::class, 'update'])->name('admin.users.update');
     Route::post('users/{user}/status', [AdminUserController::class, 'status'])->name('admin.users.status');
+    Route::post('users/{user}/merchant-verification', [AdminUserController::class, 'merchantVerification'])->name('admin.users.merchant-verification');
+    Route::delete('users/{user}', [AdminUserController::class, 'destroy'])->name('admin.users.destroy');
     Route::get('users/{user}/documents/{document}', [AdminUserController::class, 'showDocument'])->name('admin.users.documents.show');
     Route::post('users/{user}/documents/{document}/review', [AdminUserController::class, 'reviewDocument'])->name('admin.users.documents.review');
     Route::get('finance', [AdminFinanceController::class, 'index'])->name('admin.finance');
@@ -255,6 +258,33 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
 Route::get('/dashboard/branch', [BranchPortalController::class, 'index'])
     ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
     ->name('admin.branch.portal');
+Route::post('/dashboard/branch/orders/{order}/status', [BranchPortalController::class, 'statusOrder'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.orders.status');
+Route::post('/dashboard/branch/orders/{order}/courier', [BranchPortalController::class, 'assignCourier'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.orders.courier');
+Route::post('/dashboard/branch/orders/{order}/reoffer-overdue-pickup', [BranchPortalController::class, 'reofferOverduePickup'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.orders.reoffer-overdue-pickup');
+Route::put('/dashboard/branch/users/{user}', [BranchPortalController::class, 'updateUser'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.users.update');
+Route::post('/dashboard/branch/users/{user}/status', [BranchPortalController::class, 'statusUser'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.users.status');
+Route::post('/dashboard/branch/users/{user}/merchant-verification', [BranchPortalController::class, 'merchantVerification'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.users.merchant-verification');
+Route::get('/dashboard/branch/users/{user}/documents/{document}', [BranchPortalController::class, 'showDocument'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.users.documents.show');
+Route::post('/dashboard/branch/users/{user}/documents/{document}/review', [BranchPortalController::class, 'reviewDocument'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.users.documents.review');
+Route::delete('/dashboard/branch/users/{user}', [BranchPortalController::class, 'destroyUser'])
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
+    ->name('admin.branch.users.destroy');
 Route::post('/dashboard/branch/preferences/theme', [AdminPreferencesController::class, 'theme'])
     ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
     ->name('admin.branch.preferences.theme');

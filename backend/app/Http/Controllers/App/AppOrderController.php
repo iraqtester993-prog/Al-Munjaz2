@@ -61,8 +61,10 @@ class AppOrderController extends Controller
         }
 
         $orderRecords = $query->with([
-            'courier:id,name,phone',
-            'merchant:id,name,phone,address',
+            'courier:id,name,phone,vehicle,role',
+            'pickupCourier:id,name,phone,vehicle,role',
+            'deliveryCourier:id,name,phone,vehicle,role',
+            'merchant:id,name,phone,address,shop_name,merchant_verified_at,role',
             'tenant:id,name',
             // Route branches can belong to the platform operations tenant,
             // so the relations intentionally resolve outside the viewer's
@@ -142,9 +144,19 @@ class AppOrderController extends Controller
             'return_fee_charged_at' => $this->timestamp($o->return_fee_charged_at),
             'notes' => $o->notes,
             'pickup_deadline_at' => $o->pickup_deadline_at?->toIso8601String(),
-            'courier' => $o->courier ? ['name' => $o->courier->name, 'phone' => $o->courier->phone] : null,
+            // `courier` remains the primary assignment for compatibility.
+            // Merchant-facing UI consumes `assigned_courier`, which resolves
+            // the proper pickup/delivery assignee for specialist workflows.
+            'courier' => $o->courier ? ['name' => $o->courier->name, 'phone' => $o->courier->phone, 'vehicle' => $o->courier->vehicle] : null,
+            'assigned_courier' => $this->assignedCourierPayload($o),
             'merchant' => $o->merchant
-                ? ['name' => $o->merchant->name, 'phone' => $o->merchant->phone, 'address' => $o->merchant->address]
+                ? [
+                    'name' => $o->merchant->name,
+                    'shop_name' => $o->merchant->shop_name,
+                    'phone' => $o->merchant->phone,
+                    'address' => $o->merchant->address,
+                    'verified' => $o->merchant->isMerchantVerified(),
+                ]
                 : ($o->tenant ? ['name' => $o->tenant->name, 'phone' => null, 'address' => null] : null),
             'courier_id' => $o->courier_id,
             'origin_branch' => $o->originBranch
@@ -224,12 +236,20 @@ class AppOrderController extends Controller
         // These operational defaults are controlled from the dashboard.  A
         // merchant can never override them in a browser request.
         $availabilityMinutes = max(1, min((int) Setting::get('order_expiry_minutes', 30), 1440));
+        // Cached clients created before the weight field existed do not send
+        // it on edit. Calculate the new quote using the exact same effective
+        // value that will be persisted below; otherwise a no-op edit could
+        // incorrectly quote the job as 0 g.
+        $effectiveWeightGrams = array_key_exists('weight_grams', $data)
+            ? (int) ($data['weight_grams'] ?? 0)
+            : (int) ($order->weight_grams ?? 0);
+
         $quote = app(PricingService::class)->quote(
             $user,
             $provinceId,
             $data['order_type'] ?? null,
             $data['delivery_vehicle'],
-            (int) ($data['weight_grams'] ?? 0),
+            $effectiveWeightGrams,
             max(0, min((int) Setting::get('delivery_fee', 0), 1_000_000)),
         );
         $order->weight_grams = (int) ($data['weight_grams'] ?? 0);
@@ -303,7 +323,9 @@ class AppOrderController extends Controller
             ...$data,
             'customer_name_en' => $request->input('customer_name_en') ?: $data['customer_name_ar'],
             'address_en' => $request->input('address_en') ?: $data['address_ar'],
-            'weight_grams' => (int) ($data['weight_grams'] ?? 0),
+            // Older app clients did not submit a weight input on edit. Keep
+            // their existing value rather than silently changing it to zero.
+            'weight_grams' => $effectiveWeightGrams,
             'fee' => $quote['fee'],
             'return_fee' => $quote['return_fee'],
             'pricing_rule_id' => $quote['rule']?->id,
@@ -628,6 +650,29 @@ class AppOrderController extends Controller
             'name' => $user->name,
             'phone' => $user->phone,
             'role' => $user->role,
+        ] : null;
+    }
+
+    /**
+     * The application has one counterparty card per order.  A direct
+     * courier assignment, a pickup assignment, and a delivery assignment
+     * are all valid operational models; resolving that choice server-side
+     * keeps a merchant from seeing their own profile as the courier.
+     */
+    private function assignedCourierPayload(Order $order): ?array
+    {
+        $courier = match ($order->status) {
+            'approved' => $order->pickupCourier ?: $order->courier ?: $order->deliveryCourier,
+            'courier' => $order->deliveryCourier ?: $order->courier ?: $order->pickupCourier,
+            default => $order->courier ?: $order->pickupCourier ?: $order->deliveryCourier,
+        };
+
+        return $courier ? [
+            'id' => $courier->id,
+            'name' => $courier->name,
+            'phone' => $courier->phone,
+            'vehicle' => $courier->vehicle,
+            'role' => $courier->role,
         ] : null;
     }
 

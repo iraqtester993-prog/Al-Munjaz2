@@ -9,6 +9,7 @@ use App\Models\OrderMovement;
 use App\Models\Scopes\TenantScope;
 use App\Models\User;
 use App\Services\OrderOperationalAssignmentService;
+use App\Services\OrderPickupRecoveryService;
 use App\Services\OrderWorkflowService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -181,6 +182,26 @@ class AdminOrderController extends Controller
         );
 
         return back()->with('success', __('orders.courier_assigned'));
+    }
+
+    /**
+     * An overdue pickup is recoverable without inventing a sixth delivery
+     * status. The service returns the reserved courier budget and offers the
+     * same order again, leaving the operation in the normal audit trail.
+     */
+    public function reofferOverduePickup(Request $request, Order $order)
+    {
+        $data = $request->validate([
+            'note' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        app(OrderPickupRecoveryService::class)->reoffer(
+            $order,
+            $request->user(),
+            $data['note'] ?? null,
+        );
+
+        return back()->with('success', 'تمت إعادة طرح الطلب، وأُعيدت الميزانية المحجوزة للمندوب السابق.');
     }
 
     public function assignBranches(Request $request, Order $order)

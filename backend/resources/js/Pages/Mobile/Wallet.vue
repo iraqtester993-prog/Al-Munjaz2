@@ -90,6 +90,7 @@ const transactionGroups = computed(() => {
 const lastSettlement = computed(() => props.summary.last_settlement || null)
 const pendingRequests = computed(() => props.requests.filter((request) => request.status === 'pending'))
 const cashOnHand = computed(() => Number(props.summary.cash_on_hand || 0))
+const remainingBudget = computed(() => Math.max(0, Number(props.budget || 0) - cashOnHand.value))
 const loyaltyEntries = computed(() => Array.isArray(props.loyalty?.entries) ? props.loyalty.entries : [])
 
 function loyaltyLabel(entry) {
@@ -239,7 +240,7 @@ function submitQiTopup() {
                     <svg viewBox="0 0 24 24"><path d="M20 7H6a2 2 0 0 1-2-2 2 2 0 0 1 2-2h13v3M20 7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6M16 14h.01" /></svg>
                 </span>
                 <div>
-                    <span>{{ t('Available Wallet Balance') }}</span>
+                    <span>{{ t('My Available Wallet Balance') }}</span>
                     <strong class="mono">{{ fmt(balance) }} <small>{{ t('IQD') }}</small></strong>
                 </div>
             </section>
@@ -251,7 +252,7 @@ function submitQiTopup() {
                     <strong class="mono">{{ fmt(loyalty.balance || 0) }} <small>{{ t('Point') }}</small></strong>
                 </article>
                 <article class="courier-overview-card courier-deliveries-card">
-                    <span>{{ t('Completed Deliveries') }}</span>
+                    <span>{{ t('Number of Deliveries') }}</span>
                     <strong class="mono">{{ fmt(summary.completed_deliveries || 0) }} <small>{{ t('Times') }}</small></strong>
                 </article>
             </section>
@@ -262,45 +263,22 @@ function submitQiTopup() {
                 <div class="wallet-content">
                     <div class="budget-title">
                         <span class="wallet-icon" aria-hidden="true">
-                            <svg viewBox="0 0 24 24"><path d="M12 22a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-12v4l2.7 1.6" /></svg>
+                            <svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.7 3 8.8 7 10 4-1.2 7-5.3 7-10V6l-7-3Zm0 5v7m0 0 3-3m-3 3-3-3" /></svg>
                         </span>
-                        <b>{{ t('Cash Budget') }}</b>
+                        <b>{{ t('Budget') }}</b>
                     </div>
-                    <span class="budget-label">{{ t('Cash held for accepting merchant orders') }}</span>
+                    <span class="budget-label">{{ t('Budget Amount') }}</span>
                     <strong class="budget-value mono">{{ fmt(budget) }} <small>{{ t('IQD') }}</small></strong>
                     <div class="wallet-divider"></div>
                     <div class="budget-bottom-row">
-                        <span>{{ t('Cash available to hand over') }}</span>
-                        <b class="mono">{{ fmt(cashOnHand) }} {{ t('IQD') }}</b>
-                    </div>
-                    <div class="courier-finance-actions">
-                        <button type="button" class="courier-recharge" @click="showBudget = true">
-                            <svg viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14" /></svg>
-                            {{ t('Add Cash Budget') }}
-                        </button>
-                        <button type="button" class="courier-secondary" @click="showQiTopup = true">
-                            {{ t('Recharge Qi Balance') }}
-                        </button>
-                    </div>
-                    <button type="button" class="courier-handover-link" @click="showHandover = true">{{ t('Hand Over Net Collections to Branch') }}</button>
-                    <p class="finance-note">{{ t('Budget and Qi requests change no balance until administration approves them.') }}</p>
-                </div>
-            </section>
-
-            <section v-if="loyaltyEntries.length" class="loyalty-card list-card">
-                <div class="loyalty-history">
-                    <div v-for="entry in loyaltyEntries.slice(0, 3)" :key="entry.id" class="loyalty-row">
-                        <div>
-                            <b>{{ loyaltyLabel(entry) }}</b>
-                            <small>{{ entry.note || loyaltyDate(entry) }}</small>
-                        </div>
-                        <strong :class="Number(entry.points) >= 0 ? 'up' : 'dn'">{{ Number(entry.points) >= 0 ? '+' : '' }}{{ fmt(entry.points) }}</strong>
+                        <span>{{ t('Remaining budget') }}</span>
+                        <b class="mono">{{ fmt(remainingBudget) }} {{ t('IQD') }}</b>
                     </div>
                 </div>
             </section>
         </template>
 
-        <section v-if="requests.length" class="finance-requests list-card">
+        <section v-if="!isCourier && requests.length" class="finance-requests list-card">
             <header class="finance-requests-head">
                 <div>
                     <h3>{{ t('Finance Requests') }}</h3>
@@ -343,8 +321,7 @@ function submitQiTopup() {
                     </span>
                     <span class="tx-mid">
                         <b>{{ txMeta(tx).label }}</b>
-                        <small>{{ tx.note || tx.ref || t('Not specified') }}</small>
-                        <span class="mono">{{ tx.ref || '—' }}</span>
+                        <small :title="tx.note || ''">{{ formatDate(tx.date) }} · {{ tx.ref || t('Not specified') }}</small>
                     </span>
                     <b class="tx-amt" :class="Number(tx.direction) >= 0 ? 'up' : 'dn'">{{ Number(tx.direction) >= 0 ? '+' : '-' }}{{ fmt(tx.amount) }}</b>
                 </article>
@@ -429,25 +406,41 @@ function submitQiTopup() {
 .wallet-card{position:relative;overflow:hidden;padding:22px 20px;border-radius:22px}.wallet-content{position:relative;z-index:1}.wallet-orbit{position:absolute;border-radius:50%;background:rgba(255,255,255,.07);pointer-events:none}.wallet-orbit-one{top:-30px;inset-inline-start:-30px;width:120px;height:120px}.wallet-orbit-two{right:-20px;bottom:-40px;width:140px;height:140px}.wc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.wc-badge{font-size:10px;font-weight:800;opacity:.78}.wallet-icon,.courier-wallet-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:rgba(255,255,255,.14);color:#fff}.wallet-icon svg,.courier-wallet-icon svg,.wallet-actions svg,.courier-recharge svg,.tx-ic svg,.request-icon svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.85;stroke-linecap:round;stroke-linejoin:round}.wc-value{font-size:30px;font-weight:900}.wc-value span{font-family:var(--font);font-size:13px;opacity:.72}.wc-label{margin-top:3px;font-size:10.5px;font-weight:700;opacity:.72}.wallet-divider{height:1px;margin:18px 0 14px;background:rgba(255,255,255,.14)}.merchant-finance-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.merchant-finance-grid>div{min-width:0;padding:12px 13px;border:1px solid rgba(255,255,255,.1);border-radius:14px;background:rgba(255,255,255,.08)}.merchant-finance-grid span,.merchant-finance-grid small{display:block;font-size:9.5px;font-weight:700;opacity:.74}.merchant-finance-grid strong{display:block;overflow:hidden;margin-top:5px;font-size:15.5px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.merchant-finance-grid small{overflow:hidden;margin-top:4px;text-overflow:ellipsis;white-space:nowrap}.wallet-actions{display:flex;gap:9px}.wallet-actions-inline{margin-top:16px}.wallet-actions-inline button{display:flex;flex:1;align-items:center;flex-direction:row;justify-content:center;padding:12px;gap:7px;border:1px solid rgba(255,255,255,.22);border-radius:12px;background:rgba(255,255,255,.1);color:#fff;font:800 11px var(--font)}.wallet-actions-inline button.solid{border-color:#fff;background:#fff;color:var(--primary-strong)}.wallet-actions-inline button svg{width:15px;height:15px}.courier-wallet-balance{display:flex;align-items:flex-start;gap:13px;margin-bottom:14px;padding:18px 20px}.courier-wallet-icon{flex:none;background:var(--primary-tint);color:var(--primary-strong)}.courier-wallet-balance>div{min-width:0}.courier-wallet-balance span,.courier-wallet-balance strong,.courier-wallet-balance small{display:block}.courier-wallet-balance span{margin-bottom:3px;color:var(--ink-soft);font-size:11px;font-weight:750}.courier-wallet-balance strong{font-size:21px;font-weight:900}.courier-wallet-balance small{margin-top:3px;color:var(--ink-faint);font-size:9.5px;font-weight:700}.courier-wallet-balance strong small{display:inline;margin:0;font-family:var(--font);font-size:11px}.loyalty-card{overflow:hidden;margin-bottom:14px}.loyalty-head{display:flex;align-items:center;gap:10px;padding:15px}.loyalty-icon{display:grid;flex:none;width:35px;height:35px;place-items:center;border-radius:11px;background:linear-gradient(135deg,#fbbf24,#f97316);color:#fff;font-size:17px}.loyalty-head>div:nth-child(2){min-width:0;flex:1}.loyalty-head span,.loyalty-head strong{display:block}.loyalty-head span{color:var(--ink-soft);font-size:10px;font-weight:800}.loyalty-head strong{margin-top:3px;color:var(--ink);font-size:20px;font-weight:900}.loyalty-head strong small{font-size:10px;color:var(--ink-faint)}.loyalty-completed{padding-inline-start:10px;border-inline-start:1px solid var(--border);text-align:end}.loyalty-completed b,.loyalty-completed small{display:block}.loyalty-completed b{font-size:15px}.loyalty-completed small{font-size:8.5px!important}.loyalty-history{border-top:1px solid var(--border)}.loyalty-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 15px;border-bottom:1px solid var(--border)}.loyalty-row:last-child{border-bottom:0}.loyalty-row div{min-width:0}.loyalty-row b,.loyalty-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.loyalty-row b{font-size:10.5px}.loyalty-row small{margin-top:2px;color:var(--ink-faint);font-size:8.5px}.loyalty-row>strong{font-size:12px}.loyalty-empty{margin:0;padding:0 15px 14px;color:var(--ink-faint);font-size:9.5px;line-height:1.6}.courier-summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}.courier-metric{position:relative;overflow:hidden;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--surface)}.collection-metric{border:0;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff}.courier-metric span,.courier-metric small{display:block;font-size:10px;font-weight:750}.courier-metric span{color:var(--ink-soft)}.collection-metric span{color:rgba(255,255,255,.85)}.courier-metric strong{display:inline-block;margin-top:7px;font-size:23px;font-weight:900}.courier-metric small{display:inline-block;margin-inline-start:4px;color:var(--ink-faint)}.collection-metric small{color:rgba(255,255,255,.75)}.courier-budget-card{background:linear-gradient(135deg,var(--primary-strong),var(--primary));color:#fff}.budget-title{display:flex;align-items:center;gap:8px;margin-bottom:19px}.budget-title .wallet-icon{width:34px;height:34px;border-radius:11px}.budget-title b{font-size:13px;font-weight:900}.budget-label{display:block;font-size:10.5px;font-weight:700;opacity:.75}.budget-value{display:block;margin-top:5px;font-size:28px;font-weight:900}.budget-value small{font-family:var(--font);font-size:13px;opacity:.7}.budget-bottom-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10.5px;font-weight:750}.budget-bottom-row b{font-size:12px}.courier-finance-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}.courier-recharge,.courier-secondary{display:flex;align-items:center;justify-content:center;gap:6px;min-height:43px;padding:10px;border-radius:12px;font:800 10.5px var(--font)}.courier-recharge{background:#fff;color:var(--primary-strong)}.courier-secondary{border:1px solid rgba(255,255,255,.32);background:rgba(255,255,255,.1);color:#fff}.courier-secondary:disabled{opacity:.5}.courier-recharge svg{width:15px;height:15px}.finance-note{margin:9px 0 0;color:rgba(255,255,255,.75);font-size:9.5px;font-weight:650;line-height:1.65;text-align:center}.finance-requests{overflow:hidden;margin-top:17px}.finance-requests-head{display:flex;align-items:center;justify-content:space-between;padding:13px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)}.finance-requests-head h3{margin:0;font-size:12px;font-weight:900}.finance-requests-head span{display:block;margin-top:2px;color:var(--ink-faint);font-size:9.5px;font-weight:700}.pending-count{display:grid;min-width:22px;height:22px;place-items:center;border-radius:999px;background:var(--warning-tint);color:var(--warning);font-size:10px}.finance-request-row{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border)}.finance-request-row:last-child{border-bottom:0}.request-icon{display:grid;flex:none;width:32px;height:32px;place-items:center;border-radius:10px;background:var(--warning-tint);color:var(--warning)}.request-icon.approved{background:var(--success-tint);color:var(--success)}.request-icon.rejected{background:var(--danger-tint);color:var(--danger)}.request-main{flex:1;min-width:0}.request-main b,.request-main small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.request-main b{font-size:11px;font-weight:850}.request-main small{margin-top:2px;color:var(--ink-faint);font-size:9px;font-weight:700}.request-end{text-align:end}.request-end b,.request-end small{display:block}.request-end b{font-size:11px}.request-end small{margin-top:3px;font-size:9px;font-weight:850}.state-pending{color:var(--warning)}.state-approved{color:var(--success)}.state-rejected{color:var(--danger)}.wallet-section-title{margin-top:18px}.wallet-section-title>span{color:var(--ink-faint);font-size:10px;font-weight:700}.wallet-history{overflow:hidden}.transaction-day-header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)}.transaction-day-header span{color:var(--ink-soft);font-size:10.5px;font-weight:800}.transaction-day-header b{font-size:10.5px;font-weight:850}.tx-row{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border)}.tx-row:last-child{border-bottom:0}.tx-ic{display:grid;flex:none;width:32px;height:32px;place-items:center;border-radius:10px}.tx-mid{flex:1;min-width:0}.tx-mid b,.tx-mid small,.tx-mid span{display:block}.tx-mid b{font-size:11px;font-weight:850}.tx-mid small{overflow:hidden;margin-top:2px;color:var(--ink-soft);font-size:9.5px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.tx-mid span{margin-top:2px;color:var(--ink-faint);font-size:8.5px}.tx-amt{font-size:12.5px;font-weight:900;direction:ltr}.up{color:var(--success)}.dn{color:var(--danger)}.empty-hint{padding:27px 10px;color:var(--ink-faint);font-size:11px;font-weight:750;text-align:center}.withdraw-available{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:10px;background:var(--surface-2);color:var(--ink-soft);font-size:11px;font-weight:750}.withdraw-available b{color:var(--ink);font-size:12px}.recharge-capacity{margin-bottom:14px}.withdraw-submit{display:flex;width:100%;align-items:center;justify-content:center;gap:8px;margin-top:14px}.field{margin-bottom:13px}.field label{display:block;margin-bottom:6px;color:var(--ink-soft);font-size:10.5px;font-weight:800}.field input,.field select,.field textarea{box-sizing:border-box;width:100%;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--ink);font:inherit;font-size:13px;outline:none;padding:10px 11px}.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-tint)}.field textarea{resize:vertical}.field input[type=number]{font-size:16px;font-weight:800;text-align:center}@media(max-width:350px){.courier-finance-actions{grid-template-columns:1fr}.merchant-finance-grid{grid-template-columns:1fr}.wallet-actions{flex-direction:column}}
 .courier-handover-link{display:block;width:100%;margin-top:9px;padding:0;border:0;background:transparent;color:rgba(255,255,255,.88);font:800 10px var(--font);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
 
-/* Courier wallet follows the reference hierarchy: Qi balance, points and
-   delivery count, then the operational cash budget. The underlying values
-   and finance actions remain unchanged. */
-.courier-wallet-balance{align-items:center;padding:22px 20px;border-radius:23px}
-.courier-wallet-icon{width:56px;height:56px;border-radius:18px}
-.courier-wallet-balance>div{flex:1;text-align:center}
-.courier-wallet-balance span{margin-bottom:6px;font-size:12px;font-weight:850}
-.courier-wallet-balance strong{font-size:29px;font-weight:950}
-.courier-wallet-balance strong small{font-size:13px}
-.courier-overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
-.courier-overview-card{position:relative;overflow:hidden;min-height:128px;padding:16px;border:1px solid var(--border);border-radius:21px;background:var(--surface);text-align:center}
-.courier-overview-card>span:not(.courier-overview-orb),.courier-overview-card strong{position:relative;z-index:1;display:block}
-.courier-overview-card>span:not(.courier-overview-orb){color:var(--ink-soft);font-size:11px;font-weight:850}
-.courier-overview-card strong{margin-top:16px;color:var(--ink);font-size:25px;font-weight:950}
-.courier-overview-card strong small{font-family:var(--font);font-size:11px;color:var(--ink-faint)}
-.courier-points-card{border:0;background:linear-gradient(135deg,#F6A51B,#E68200);color:#fff}
-.courier-points-card>span:not(.courier-overview-orb){color:rgba(255,255,255,.88)}
+/* Courier wallet: exact hierarchy, spacing and numeric rhythm from the
+   approved Al-Munjaz reference. Ledger data remains real and user-scoped. */
+.courier-wallet-balance{align-items:center;gap:13px;margin-bottom:14px;padding:18px 20px;border-radius:18px;background:var(--surface);box-shadow:none}
+.courier-wallet-icon{width:44px;height:44px;border-radius:13px;background:var(--primary-tint);color:var(--primary-strong)}
+.courier-wallet-balance>div{flex:1;min-width:0;text-align:start}
+.courier-wallet-balance>div>span{display:block;margin-bottom:3px;color:var(--ink-soft);font-size:11px;font-weight:700}
+.courier-wallet-balance strong{color:var(--ink);font-size:21px;font-weight:900;letter-spacing:normal}
+.courier-wallet-balance strong small{margin:0;color:var(--ink-faint);font-size:11px;font-weight:700}
+.courier-overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.courier-overview-card{position:relative;overflow:hidden;min-height:0;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--surface);text-align:start}
+.courier-overview-card>span:not(.courier-overview-orb),.courier-overview-card strong{position:relative;z-index:1}
+.courier-overview-card>span:not(.courier-overview-orb){display:block;margin-bottom:6px;color:var(--ink-soft);font-size:10px;font-weight:700}
+.courier-overview-card strong{display:flex;align-items:baseline;gap:4px;margin-top:0;color:var(--ink);font-size:24px;font-weight:900;letter-spacing:normal}
+.courier-overview-card strong small{margin:0;font-family:var(--font);font-size:10px;font-weight:700;color:var(--ink-faint)}
+.courier-points-card{border:0;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff}
+.courier-points-card>span:not(.courier-overview-orb){color:rgba(255,255,255,.85)}
 .courier-points-card strong{color:#fff}
-.courier-points-card strong small{color:rgba(255,255,255,.78)}
-.courier-overview-orb{position:absolute;top:-36px;inset-inline-start:-24px;width:104px;height:104px;border-radius:50%;background:rgba(255,255,255,.16)}
-.loyalty-card{margin:14px 0}.loyalty-card .loyalty-history{border-top:0}
+.courier-points-card strong small{color:rgba(255,255,255,.75)}
+.courier-overview-orb{position:absolute;top:-15px;inset-inline-end:-15px;width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,.15)}
+.courier-budget-card{min-height:0;padding:22px 20px;border-radius:22px;background:linear-gradient(135deg,var(--primary-strong),var(--primary))}
+.courier-budget-card .wallet-orbit-one{top:-30px;inset-inline-start:-30px;width:120px;height:120px;background:rgba(255,255,255,.07)}
+.courier-budget-card .wallet-orbit-two{right:-20px;bottom:-40px;width:140px;height:140px;background:rgba(255,255,255,.07)}
+.budget-title{gap:8px;margin-bottom:18px}
+.budget-title .wallet-icon{width:34px;height:34px;border-radius:11px;background:rgba(255,255,255,.16)}
+.budget-title .wallet-icon svg{width:16px;height:16px}
+.budget-title b{font-size:13px;font-weight:800}
+.budget-label{font-size:10.5px;font-weight:700;opacity:.75}
+.budget-value{margin-top:5px;font-size:28px;font-weight:900;letter-spacing:.3px}
+.budget-value small{margin:0;font-size:13px;font-weight:inherit}
+.courier-budget-card .wallet-divider{margin:16px 0 14px;background:rgba(255,255,255,.14)}
+.budget-bottom-row{align-items:center;font-size:10.5px;font-weight:700}
+.budget-bottom-row b{font-size:24px;font-weight:900;letter-spacing:.3px}.budget-bottom-row b::first-letter{font-size:inherit}
+.tx-row{gap:11px;padding:12px 14px}
+.tx-ic{width:34px;height:34px;border-radius:10px}
+.tx-mid b{font-size:12px;font-weight:700}
+.tx-mid small{margin-top:2px;color:var(--ink-faint);font-size:10px;font-weight:600}
+.tx-amt{font-size:12.5px;font-weight:800;direction:inherit}
 </style>

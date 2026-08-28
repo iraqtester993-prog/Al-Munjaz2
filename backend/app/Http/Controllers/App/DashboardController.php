@@ -91,8 +91,10 @@ class DashboardController extends Controller
             : Order::query();
 
         return $query->with([
-            'courier:id,name,phone',
-            'merchant:id,name,phone,address',
+            'courier:id,name,phone,vehicle,role',
+            'pickupCourier:id,name,phone,vehicle,role',
+            'deliveryCourier:id,name,phone,vehicle,role',
+            'merchant:id,name,phone,address,shop_name,merchant_verified_at,role',
             'tenant:id,name',
         ])->latest('id')->limit(5)->get()->map(function (Order $o) use ($isCourier, $user): array {
             return [
@@ -106,13 +108,21 @@ class DashboardController extends Controller
             'status' => $o->status,
             'date' => $o->date->toDateString(),
             'notes' => $o->notes,
+            'vehicle_note' => $o->vehicle_note,
             'pickup_latitude' => $o->pickup_latitude === null ? null : (float) $o->pickup_latitude,
             'pickup_longitude' => $o->pickup_longitude === null ? null : (float) $o->pickup_longitude,
             'pickup_location_label' => $o->pickup_location_label,
             'pickup_deadline_at' => $o->pickup_deadline_at?->toIso8601String(),
-            'courier' => $o->courier ? ['name' => $o->courier->name, 'phone' => $o->courier->phone] : null,
+            'courier' => $o->courier ? $this->courierPayload($o->courier) : null,
+            'assigned_courier' => $this->assignedCourierPayload($o),
             'merchant' => $o->merchant
-                ? ['name' => $o->merchant->name, 'phone' => $o->merchant->phone, 'address' => $o->merchant->address]
+                ? [
+                    'name' => $o->merchant->name,
+                    'shop_name' => $o->merchant->shop_name,
+                    'phone' => $o->merchant->phone,
+                    'address' => $o->merchant->address,
+                    'verified' => $o->merchant->isMerchantVerified(),
+                ]
                 : ($o->tenant ? ['name' => $o->tenant->name, 'phone' => null, 'address' => null] : null),
             ];
         })->all();
@@ -122,7 +132,7 @@ class DashboardController extends Controller
     {
         return app(CourierOrderAccess::class)
             ->available($user)
-            ->with(['tenant:id,name', 'merchant:id,name,phone,address'])
+            ->with(['tenant:id,name', 'merchant:id,name,phone,address,shop_name,merchant_verified_at,role'])
             ->latest('id')
             ->limit(12)
             ->get()
@@ -142,7 +152,13 @@ class DashboardController extends Controller
                 'pickup_longitude' => $order->pickup_longitude === null ? null : (float) $order->pickup_longitude,
                 'pickup_location_label' => $order->pickup_location_label,
                 'merchant' => $order->merchant
-                    ? ['name' => $order->merchant->name, 'phone' => $order->merchant->phone, 'address' => $order->merchant->address]
+                    ? [
+                        'name' => $order->merchant->name,
+                        'shop_name' => $order->merchant->shop_name,
+                        'phone' => $order->merchant->phone,
+                        'address' => $order->merchant->address,
+                        'verified' => $order->merchant->isMerchantVerified(),
+                    ]
                     : ($order->tenant ? ['name' => $order->tenant->name, 'phone' => null, 'address' => null] : null),
                 'pickup_deadline_at' => $order->pickup_deadline_at?->toIso8601String(),
                 'created_at' => $order->created_at?->toIso8601String(),
@@ -176,6 +192,39 @@ class DashboardController extends Controller
             'address_en' => $addressEn,
             'address_ku' => $addressEn,
         ];
+    }
+
+    /** @return array{name:string,phone:?string,vehicle:?string,role:?string}|null */
+    protected function courierPayload(?User $courier): ?array
+    {
+        if (! $courier) {
+            return null;
+        }
+
+        return [
+            'name' => $courier->name,
+            'phone' => $courier->phone,
+            'vehicle' => $courier->vehicle,
+            'role' => $courier->role,
+        ];
+    }
+
+    /**
+     * Merchant-facing cards must identify the courier who is operationally
+     * responsible at the current stage, not merely the legacy primary
+     * courier column. This mirrors the full Orders screen and chat target.
+     *
+     * @return array{name:string,phone:?string,vehicle:?string,role:?string}|null
+     */
+    protected function assignedCourierPayload(Order $order): ?array
+    {
+        $courier = match ($order->status) {
+            'approved' => $order->pickupCourier ?: $order->courier ?: $order->deliveryCourier,
+            'courier' => $order->deliveryCourier ?: $order->courier ?: $order->pickupCourier,
+            default => $order->courier ?: $order->pickupCourier ?: $order->deliveryCourier,
+        };
+
+        return $this->courierPayload($courier);
     }
 
     protected function heroSlides(bool $isCourier, int $branchId = 0): array

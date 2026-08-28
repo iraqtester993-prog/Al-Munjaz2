@@ -134,10 +134,25 @@ function apply() {
 function setStatus(order, status) {
     if (busyId.value) return
 
+    // Normal lifecycle moves do not need an explanation.  A correction (for
+    // example, changing a delivered order back to pending) is deliberately
+    // auditable on the server, so ask the operator for the required note.
+    const normalMoves = {
+        pending: ['approved', 'cancelled', 'rejected'],
+        approved: ['courier', 'cancelled', 'rejected'],
+        courier: ['delivered', 'cancelled', 'damaged', 'rejected'],
+    }
+    const isCorrection = !normalMoves[order.status]?.includes(status)
+    const note = isCorrection
+        ? window.prompt(t('Enter an administrative reason for this status correction.'))
+        : null
+
+    if (isCorrection && !String(note || '').trim()) return
+
     busyId.value = order.id
     router.post(
         route('admin.orders.status', order.id),
-        { status },
+        { status, note: isCorrection ? String(note).trim() : null },
         {
             preserveScroll: true,
             onSuccess: () => {
@@ -146,6 +161,34 @@ function setStatus(order, status) {
             onFinish: () => (busyId.value = null),
         }
     )
+}
+
+function isPickupOverdue(order) {
+    if (order?.status !== 'approved' || !order?.courier_id || !order?.pickup_deadline_at) return false
+
+    const deadline = new Date(order.pickup_deadline_at).getTime()
+    return Number.isFinite(deadline) && deadline <= Date.now()
+}
+
+function reofferOverduePickup(order) {
+    if (busyId.value || !isPickupOverdue(order)) return
+
+    const message = `${t('The courier has not reached the merchant by the agreed deadline. Re-offering returns the reserved budget and opens the order to eligible couriers.')}\n\n${t('Continue?')}`
+    if (!window.confirm(message)) return
+
+    const note = window.prompt(t('Optional note for the re-offer record.'))
+    if (note === null) return
+
+    busyId.value = order.id
+    router.post(route('admin.orders.reoffer-overdue-pickup', order.id), {
+        note: String(note).trim() || null,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            if (detailsFor.value?.id === order.id) detailsFor.value = null
+        },
+        onFinish: () => (busyId.value = null),
+    })
 }
 
 function openAssign(order) {
@@ -372,6 +415,7 @@ function provinceName(province) {
                                             <option v-for="status in statusOptions" :key="status" :value="status">{{ tStatus(status) }}</option>
                                         </select>
                                         <button v-if="!isTerminalStatus(order.status)" class="fbtn mini" type="button" @click="openAssign(order)">{{ t('Assign') }}</button>
+                                        <button v-if="isPickupOverdue(order)" class="fbtn mini pickup-overdue-action" type="button" :disabled="busyId === order.id" @click="reofferOverduePickup(order)">{{ t('Re-offer overdue order') }}</button>
                                         <button class="fbtn mini" type="button" @click="openBranches(order)">{{ t('Branches') }}</button>
                                     </div>
                                 </td>
@@ -451,6 +495,13 @@ function provinceName(province) {
                         <div><span>{{ t('Created at') }}</span><b>{{ formatDateTime(detailsFor.created_at) }}</b></div>
                         <div><span>{{ t('Last updated') }}</span><b>{{ formatDateTime(detailsFor.updated_at) }}</b></div>
                         <div v-if="detailsFor.pickup_deadline_at" class="order-detail-grid-wide"><span>{{ t('Pickup deadline') }}</span><b>{{ formatDateTime(detailsFor.pickup_deadline_at) }}</b></div>
+                    </div>
+                    <div v-if="isPickupOverdue(detailsFor)" class="pickup-overdue-notice">
+                        <div>
+                            <b>{{ t('Pickup deadline has passed') }}</b>
+                            <span>{{ t('The courier has not reached the merchant by the agreed deadline. Re-offering returns the reserved budget and opens the order to eligible couriers.') }}</span>
+                        </div>
+                        <button class="fbtn mini pickup-overdue-action" type="button" :disabled="busyId === detailsFor.id" @click="reofferOverduePickup(detailsFor)">{{ t('Re-offer overdue order') }}</button>
                     </div>
                 </section>
 
@@ -536,6 +587,7 @@ function provinceName(province) {
 .admin-route-cell b { display: block; font-size: 11.5px; }
 .admin-order-actions-cell { min-width: 230px; }
 .admin-order-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pickup-overdue-action { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); color: #9a5a00; background: var(--warning-tint); }
 
 .order-detail-sheet { display: grid; gap: 16px; padding-bottom: 4px; }
 .order-detail-hero { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 15px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); }
@@ -553,6 +605,10 @@ function provinceName(province) {
 .order-detail-grid > div { min-width: 0; }
 .order-detail-grid b { display: block; margin-top: 4px; color: var(--ink); font-size: 11.5px; font-weight: 800; line-height: 1.55; overflow-wrap: anywhere; }
 .order-detail-grid-wide { grid-column: 1 / -1; }
+.pickup-overdue-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding: 11px; border: 1px solid color-mix(in srgb, var(--warning) 50%, var(--border)); border-radius: 11px; background: var(--warning-tint); }
+.pickup-overdue-notice > div { display: grid; gap: 3px; }
+.pickup-overdue-notice b { color: #8a5100; font-size: 11px; font-weight: 900; }
+.pickup-overdue-notice span { color: var(--ink-soft); font-size: 10px; font-weight: 700; line-height: 1.55; }
 
 .order-timeline { display: grid; gap: 0; }
 .order-timeline-item { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px; min-height: 58px; }
@@ -574,5 +630,6 @@ function provinceName(province) {
     .order-detail-summary, .order-detail-grid { grid-template-columns: 1fr; }
     .order-detail-grid-wide { grid-column: auto; }
     .order-detail-hero { align-items: flex-start; flex-direction: column; }
+    .pickup-overdue-notice { align-items: stretch; flex-direction: column; }
 }
 </style>

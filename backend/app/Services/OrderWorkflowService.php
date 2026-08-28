@@ -440,8 +440,19 @@ class OrderWorkflowService
             return;
         }
 
+        // Branch operators can correct a record only from their scoped
+        // portal endpoint and only when their explicit orders capability is
+        // present. The controller performs the branch boundary; the note is
+        // still mandatory so an exceptional status cannot be an accidental
+        // click by any dashboard user.
+        $canCorrect = $actor->isAdmin()
+            || (
+                in_array($actor->role, ['owner', 'branch_manager'], true)
+                && $actor->canUseDashboardPermission('orders')
+            );
+
         $this->ensure(
-            $actor->isAdmin() && filled($note),
+            $canCorrect && filled($note),
             'الانتقال التشغيلي غير مسموح. التصحيح الإداري يتطلب ملاحظة توثيقية.'
         );
     }

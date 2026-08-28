@@ -20,10 +20,14 @@ class ChatController extends Controller
     {
         $user = $request->user();
         $chats = $this->visibleChats($user)
-            ->with(['user:id,name', 'order:id,track_no,courier_id,merchant_id'])
+            ->with([
+                'user:id,name,role,shop_name',
+                'counterparty:id,name,role,shop_name',
+                'order:id,track_no,courier_id,merchant_id,pickup_courier_id,delivery_courier_id',
+            ])
             ->latest('last_at');
 
-        return response()->json(['data' => $chats->paginate(min($request->integer('per_page', 30), 100))->through(fn (Chat $chat) => $this->data($chat))]);
+        return response()->json(['data' => $chats->paginate(min($request->integer('per_page', 30), 100))->through(fn (Chat $chat) => $this->data($chat, $user))]);
     }
 
     public function show(Request $request, Chat $chat): JsonResponse
@@ -31,7 +35,12 @@ class ChatController extends Controller
         $this->authorizeChat($request, $chat);
         $this->markRead($chat, $request->user());
 
-        return response()->json(['data' => $this->data($chat->load(['messages.sender:id,name'])) + ['messages' => $chat->messages->map(fn (ChatMessage $message) => ['id' => $message->id, 'text' => $message->text, 'sender' => $message->sender?->name, 'sender_id' => $message->sender_id, 'created_at' => $message->created_at?->toISOString()])]]);
+        return response()->json(['data' => $this->data($chat->load([
+            'messages.sender:id,name',
+            'user:id,name,role,shop_name',
+            'counterparty:id,name,role,shop_name',
+            'order:id,track_no,courier_id,merchant_id,pickup_courier_id,delivery_courier_id',
+        ]), $request->user()) + ['messages' => $chat->messages->map(fn (ChatMessage $message) => ['id' => $message->id, 'text' => $message->text, 'sender' => $message->sender?->name, 'sender_id' => $message->sender_id, 'created_at' => $message->created_at?->toISOString()])]]);
     }
 
     /** A lightweight incremental alternative to reloading the whole thread. */
@@ -77,7 +86,11 @@ class ChatController extends Controller
             $this->notifyMessageRecipients($chat, $user);
         });
 
-        return response()->json(['data' => $this->data($chat->fresh())], 201);
+        return response()->json(['data' => $this->data($chat->fresh()->load([
+            'user:id,name,role,shop_name',
+            'counterparty:id,name,role,shop_name',
+            'order:id,track_no,courier_id,merchant_id,pickup_courier_id,delivery_courier_id',
+        ]), $user)], 201);
     }
 
     private function authorizeChat(Request $request, Chat $chat): void
@@ -96,19 +109,52 @@ class ChatController extends Controller
         abort_unless($isAssignedCourier, 403);
     }
 
-    private function data(Chat $chat): array
+    private function data(Chat $chat, User $viewer): array
     {
+        $counterparty = $this->counterpartyForViewer($chat, $viewer);
+        $counterpartyName = $counterparty?->name;
+        $trackNo = $chat->order?->track_no;
+
+        if ($chat->counterparty_type === 'order_chat') {
+            $title = 'محادثة مع '.($counterpartyName ?: 'الطرف الآخر').($trackNo ? ' — '.$trackNo : '');
+        } elseif ($chat->counterparty_type === 'order_support') {
+            $title = 'شكوى / تأخر — '.($counterpartyName ?: 'مندوب غير مكلّف').($trackNo ? ' — '.$trackNo : '');
+        } else {
+            $title = $chat->title_ar ?: $chat->user?->name ?: 'محادثة';
+        }
+
         return [
             'id' => $chat->id,
-            'title' => $chat->title_ar ?: $chat->user?->name ?: 'محادثة',
+            'title' => $title,
             'counterparty_type' => $chat->counterparty_type,
+            'counterparty_name' => $counterpartyName,
+            'counterparty_role' => $counterparty?->role,
             'order_id' => $chat->order_id,
-            'track_no' => $chat->order?->track_no,
+            'track_no' => $trackNo,
             'last_message' => $chat->last_message,
             'last_at' => $chat->last_at?->toISOString(),
             'unread' => $chat->unread,
             'user' => $chat->user ? ['id' => $chat->user->id, 'name' => $chat->user->name] : null,
         ];
+    }
+
+    private function counterpartyForViewer(Chat $chat, User $viewer): ?User
+    {
+        if ($chat->counterparty_type === 'order_chat') {
+            if ((int) $chat->user_id === (int) $viewer->id) {
+                return $chat->counterparty;
+            }
+
+            if ((int) $chat->counterparty_id === (int) $viewer->id) {
+                return $chat->user;
+            }
+        }
+
+        if ($chat->counterparty_type === 'order_support') {
+            return $chat->counterparty;
+        }
+
+        return null;
     }
 
     /**

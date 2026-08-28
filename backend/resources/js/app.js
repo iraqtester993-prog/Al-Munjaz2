@@ -127,7 +127,10 @@ window.Ziggy = {
     routes: ziggyRoutes,
 };
 
-let translations = window.__translations || {};
+// The initial Inertia page already contains the active-language dictionary.
+// Keeping another copy in the Blade HTML made every first page unnecessarily
+// large, especially on a mobile connection.
+let translations = {};
 
 window.t = (key, params = {}) => {
     let str = translations[key] ?? key;
@@ -168,6 +171,12 @@ createInertiaApp({
     resolve: (name) => resolvePageComponent(`./Pages/${name}.vue`, import.meta.glob('./Pages/**/*.vue')),
     setup({ el, App, props, plugin }) {
         translations = props.initialPage.props.translations || translations;
+
+        const initialLocale = props.initialPage.props.locale;
+        if (initialLocale) {
+            document.documentElement.lang = initialLocale;
+            document.documentElement.dir = initialLocale === 'en' ? 'ltr' : 'rtl';
+        }
 
         const app = createApp({ render: () => h(App, props) })
             .use(plugin)

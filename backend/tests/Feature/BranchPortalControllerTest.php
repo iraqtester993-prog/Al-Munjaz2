@@ -11,6 +11,7 @@ use App\Models\Tenant;
 use App\Models\User;
 use App\Tenancy\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\Route;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -28,6 +29,9 @@ class BranchPortalControllerTest extends TestCase
         // A test-only route lets this isolated domain test cover controller
         // authorisation without changing the application's route contract.
         Route::get('/__tests/branch-portal', [BranchPortalController::class, 'index']);
+        Route::post('/__tests/branch-portal/orders/{order}/status', [BranchPortalController::class, 'statusOrder'])->middleware(SubstituteBindings::class);
+        Route::put('/__tests/branch-portal/users/{user}', [BranchPortalController::class, 'updateUser'])->middleware(SubstituteBindings::class);
+        Route::post('/__tests/branch-portal/users/{user}/status', [BranchPortalController::class, 'statusUser'])->middleware(SubstituteBindings::class);
     }
 
     protected function tearDown(): void
@@ -94,6 +98,57 @@ class BranchPortalControllerTest extends TestCase
             ->assertJsonPath('props.summary.branches', 1);
     }
 
+    public function test_operational_lists_and_related_profiles_are_limited_to_authorised_branches(): void
+    {
+        [$platform, $otherTenant] = $this->tenants();
+        $visible = $this->branch($platform, 'BGD-SECURE', 'فرع بغداد الآمن');
+        $hidden = $this->branch($platform, 'BSR-HIDDEN', 'فرع البصرة المخفي');
+        $owner = $this->user($platform, 'owner', 'secure-portal-owner');
+        $owner->managedBranches()->attach($visible->id, ['access_role' => BranchMembership::OWNER]);
+
+        $visibleMerchant = $this->user($otherTenant, 'merchant', 'visible-merchant', $visible->id);
+        $hiddenMerchant = $this->user($otherTenant, 'merchant', 'hidden-merchant', $hidden->id);
+        $visibleCourier = $this->user($otherTenant, 'courier', 'visible-courier', $visible->id);
+        $hiddenCourier = $this->user($otherTenant, 'courier', 'hidden-courier', $hidden->id);
+        $visibleCourier->update(['is_online' => true]);
+
+        // This cross-branch order is valid for the visible branch, but the
+        // portal must not serialise the hidden branch or its courier profile.
+        $crossBranchOrder = $this->order($otherTenant, 'ORD-CROSS-SCOPED', $visible);
+        $crossBranchOrder->update([
+            'destination_branch_id' => $hidden->id,
+            'merchant_id' => $visibleMerchant->id,
+            'courier_id' => $hiddenCourier->id,
+        ]);
+
+        $hiddenOrder = $this->order($otherTenant, 'ORD-HIDDEN-SCOPED', $hidden);
+        $hiddenOrder->update([
+            'merchant_id' => $hiddenMerchant->id,
+            'courier_id' => $hiddenCourier->id,
+        ]);
+
+        TenantContext::set($otherTenant);
+
+        $this->actingAs($owner)
+            ->withHeader('X-Inertia', 'true')
+            ->get('/__tests/branch-portal')
+            ->assertOk()
+            ->assertJsonCount(1, 'props.orders')
+            ->assertJsonPath('props.orders.0.track_no', 'ORD-CROSS-SCOPED')
+            ->assertJsonCount(1, 'props.orders.0.branches')
+            ->assertJsonPath('props.orders.0.branches.0.id', $visible->id)
+            ->assertJsonPath('props.orders.0.merchant.id', $visibleMerchant->id)
+            ->assertJsonPath('props.orders.0.courier', null)
+            ->assertJsonCount(1, 'props.merchants')
+            ->assertJsonPath('props.merchants.0.id', $visibleMerchant->id)
+            ->assertJsonPath('props.merchants.0.branch.id', $visible->id)
+            ->assertJsonCount(1, 'props.couriers')
+            ->assertJsonPath('props.couriers.0.id', $visibleCourier->id)
+            ->assertJsonPath('props.summary.merchants', 1)
+            ->assertJsonPath('props.summary.couriers', 1)
+            ->assertJsonPath('props.summary.onlineCouriers', 1);
+    }
+
     public function test_production_portal_route_keeps_owner_isolated_from_admin_and_mobile_api(): void
     {
         [$platform, $otherTenant] = $this->tenants();
@@ -140,6 +195,48 @@ class BranchPortalControllerTest extends TestCase
             'user_id' => $owner->id,
             'access_role' => BranchMembership::OWNER,
         ]);
+    }
+
+    public function test_branch_owner_can_operate_only_orders_and_people_in_an_explicit_member_branch(): void
+    {
+        [$platform, $merchantTenant] = $this->tenants();
+        $visible = $this->branch($platform, 'BGD-WRITE', 'فرع بغداد التشغيلي');
+        $hidden = $this->branch($platform, 'BSR-WRITE', 'فرع البصرة التشغيلي');
+        $owner = $this->user($platform, 'owner', 'write-portal-owner');
+        $owner->managedBranches()->attach($visible->id, ['access_role' => BranchMembership::OWNER]);
+        $visibleOrder = $this->order($merchantTenant, 'ORD-WRITE-VISIBLE', $visible);
+        $hiddenOrder = $this->order($merchantTenant, 'ORD-WRITE-HIDDEN', $hidden);
+        $visibleMerchant = $this->user($merchantTenant, 'merchant', 'write-visible-merchant', $visible->id);
+        $hiddenMerchant = $this->user($merchantTenant, 'merchant', 'write-hidden-merchant', $hidden->id);
+
+        TenantContext::set($merchantTenant);
+
+        $this->actingAs($owner)
+            ->post('/__tests/branch-portal/orders/'.$visibleOrder->id.'/status', ['status' => 'cancelled'])
+            ->assertRedirect();
+        $this->assertDatabaseHas('orders', ['id' => $visibleOrder->id, 'status' => 'cancelled']);
+
+        $this->actingAs($owner)
+            ->post('/__tests/branch-portal/orders/'.$hiddenOrder->id.'/status', ['status' => 'cancelled'])
+            ->assertNotFound();
+        $this->assertDatabaseHas('orders', ['id' => $hiddenOrder->id, 'status' => 'pending']);
+
+        $this->actingAs($owner)
+            ->put('/__tests/branch-portal/users/'.$visibleMerchant->id, [
+                'name' => 'تاجر بغداد المحدّث',
+                'username' => $visibleMerchant->username,
+                'email' => $visibleMerchant->email,
+                'phone' => $visibleMerchant->phone,
+                'shop_name' => 'متجر بغداد',
+                'address' => 'عنوان بغداد',
+            ])
+            ->assertRedirect();
+        $this->assertDatabaseHas('users', ['id' => $visibleMerchant->id, 'name' => 'تاجر بغداد المحدّث']);
+
+        $this->actingAs($owner)
+            ->post('/__tests/branch-portal/users/'.$hiddenMerchant->id.'/status', ['status' => 'suspended'])
+            ->assertNotFound();
+        $this->assertDatabaseHas('users', ['id' => $hiddenMerchant->id, 'status' => 'active']);
     }
 
     /** @return array{Tenant, Tenant} */
