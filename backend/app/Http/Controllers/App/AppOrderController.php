@@ -10,9 +10,11 @@ use App\Models\OrderMovement;
 use App\Models\OrderStatusLog;
 use App\Models\Scopes\TenantScope;
 use App\Models\Setting;
+use App\Models\Transaction;
 use App\Models\User;
 use App\Services\CourierOrderAccess;
 use App\Services\CourierOrderAssignmentService;
+use App\Services\CourierLocationService;
 use App\Services\OrderWorkflowService;
 use App\Services\PricingService;
 use App\Tenancy\TenantContext;
@@ -105,7 +107,19 @@ class AppOrderController extends Controller
                 ->get(['id', 'name_ar', 'name_en', 'name_ku', 'city'])
                 ->keyBy('id');
 
-        $orders = $orderRecords->map(function (Order $o) use ($isCourier, $movementBranches): array {
+        // Expose one server-authoritative deletion capability rather than
+        // asking the mobile client to infer ledger state. This stays one
+        // batched lookup regardless of how many orders are rendered.
+        $financialOrderIds = $orderRecords->isEmpty()
+            ? collect()
+            : Transaction::withoutGlobalScopes()
+                ->whereIn('order_id', $orderRecords->pluck('id'))
+                ->whereNull('deleted_at')
+                ->pluck('order_id')
+                ->flip();
+
+        $viewer = $request->user();
+        $orders = $orderRecords->map(function (Order $o) use ($isCourier, $movementBranches, $financialOrderIds, $viewer): array {
             return [
             'id' => $o->id,
             'track_no' => $o->track_no,
@@ -159,6 +173,17 @@ class AppOrderController extends Controller
                 ]
                 : ($o->tenant ? ['name' => $o->tenant->name, 'phone' => null, 'address' => null] : null),
             'courier_id' => $o->courier_id,
+            'pickup_courier_id' => $o->pickup_courier_id,
+            'delivery_courier_id' => $o->delivery_courier_id,
+            'merchant_id' => $o->merchant_id,
+            'can_delete_by_merchant' => ! $isCourier
+                && $viewer->role === 'merchant'
+                && (int) $o->merchant_id === (int) $viewer->id
+                && $o->status === 'pending'
+                && ! $o->courier_id
+                && ! $o->pickup_courier_id
+                && ! $o->delivery_courier_id
+                && ! $financialOrderIds->has($o->id),
             'origin_branch' => $o->originBranch
                 ? $this->branchPayload($o->originBranch)
                 : null,
@@ -310,12 +335,20 @@ class AppOrderController extends Controller
         $operatingBranch = $this->operatingBranchForUser($request->user(), $provinceId);
         abort_unless($operatingBranch, 422, 'هذا الحساب غير مرتبط بفرع نشط.');
 
+        // Older installed clients did not submit this field when editing an
+        // order. Keep its persisted value instead of silently repricing the
+        // order as a 0 g shipment (and make the value used for the quote
+        // exactly match the value that will be stored below).
+        $effectiveWeightGrams = array_key_exists('weight_grams', $data)
+            ? (int) ($data['weight_grams'] ?? 0)
+            : (int) ($order->weight_grams ?? 0);
+
         $quote = app(PricingService::class)->quote(
             $request->user(),
             $provinceId,
             $data['order_type'] ?? null,
             $data['delivery_vehicle'],
-            (int) ($data['weight_grams'] ?? 0),
+            $effectiveWeightGrams,
             max(0, min((int) Setting::get('delivery_fee', 0), 1_000_000)),
         );
 
@@ -337,6 +370,69 @@ class AppOrderController extends Controller
         return back()->with('success', __('orders.updated', ['track' => $order->track_no]));
     }
 
+    /**
+     * A merchant may withdraw only an untouched pending order.  The record is
+     * soft-deleted so administration retains the complete operational audit
+     * and can restore it if the merchant acted by mistake.
+     */
+    public function destroy(Request $request, Order $order)
+    {
+        $user = $request->user();
+
+        abort_unless($user?->role === 'merchant', 403, 'حذف الطلب متاح للتاجر فقط.');
+
+        $trackNo = DB::transaction(function () use ($order, $user, $request): string {
+            // Route binding is deliberately tenant-neutral for couriers. Lock
+            // the source row again inside this transaction before validating
+            // its status so a simultaneous courier acceptance cannot race a
+            // merchant deletion.
+            $locked = Order::withoutGlobalScope(TenantScope::class)
+                ->lockForUpdate()
+                ->findOrFail($order->id);
+
+            abort_unless(
+                (int) $locked->tenant_id === (int) $user->tenant_id
+                    && (int) $locked->merchant_id === (int) $user->id,
+                403,
+                'لا يمكنك حذف طلب لا يخص حسابك.'
+            );
+
+            abort_unless(
+                $locked->status === 'pending'
+                    && ! $locked->courier_id
+                    && ! $locked->pickup_courier_id
+                    && ! $locked->delivery_courier_id,
+                422,
+                'يمكن حذف الطلبات قيد الانتظار وغير المعيّنة فقط.'
+            );
+
+            // A financial posting means the request is part of the
+            // ledger—even if an old record still appears pending—so it must
+            // be handled by administration rather than removed by a merchant.
+            abort_if(
+                Transaction::withoutGlobalScopes()->where('order_id', $locked->id)->exists(),
+                422,
+                'لا يمكن حذف طلب مرتبط بحركة مالية. تواصل مع الدعم.'
+            );
+
+            $locked->delete();
+
+            ActivityLog::create([
+                'tenant_id' => $locked->tenant_id,
+                'user_id' => $user->id,
+                'action' => 'order.soft_deleted_by_merchant',
+                'subject_type' => 'order',
+                'subject_id' => $locked->id,
+                'data' => ['track_no' => $locked->track_no, 'status' => $locked->status],
+                'ip' => $request->ip(),
+            ]);
+
+            return $locked->track_no;
+        });
+
+        return back()->with('success', 'تم حذف الطلب '.$trackNo.'. يمكن للإدارة استعادته عند الحاجة.');
+    }
+
     public function status(Request $request, Order $order)
     {
         $this->authorizeOrder($order, $request);
@@ -352,6 +448,8 @@ class AppOrderController extends Controller
         abort_if($user->role === 'merchant', 403, 'لا يمكن للتاجر تغيير مرحلة التوصيل.');
 
         if ($user->isCourierRole()) {
+            app(CourierLocationService::class)->requireFreshOperationalLocation($user);
+
             $allowed = match ($user->role) {
                 'courier' => match ($order->status) {
                     'approved' => ['courier'],
@@ -377,7 +475,9 @@ class AppOrderController extends Controller
     public function startReturn(Request $request, Order $order)
     {
         $this->authorizeOrder($order, $request);
-        abort_unless($request->user()->role === 'courier', 403, 'إرجاع الطلب متاح للمندوب المعيّن فقط.');
+        $courier = $request->user();
+        abort_unless($courier->role === 'courier', 403, 'إرجاع الطلب متاح للمندوب المعيّن فقط.');
+        app(CourierLocationService::class)->requireFreshOperationalLocation($courier);
 
         $data = $request->validate([
             'fee_mode' => ['required', Rule::in(['none', 'fee'])],
@@ -387,7 +487,7 @@ class AppOrderController extends Controller
 
         app(OrderWorkflowService::class)->startCourierReturn(
             $order,
-            $request->user(),
+            $courier,
             $data['fee_mode'] === 'fee' ? (int) $data['return_fee_applied'] : 0,
             $data['note'] ?? null,
         );
@@ -398,7 +498,9 @@ class AppOrderController extends Controller
     public function confirmReturnToMerchant(Request $request, Order $order)
     {
         $this->authorizeOrder($order, $request);
-        abort_unless($request->user()->role === 'courier', 403, 'تأكيد الإرجاع متاح للمندوب المعيّن فقط.');
+        $courier = $request->user();
+        abort_unless($courier->role === 'courier', 403, 'تأكيد الإرجاع متاح للمندوب المعيّن فقط.');
+        app(CourierLocationService::class)->requireFreshOperationalLocation($courier);
 
         $data = $request->validate([
             'note' => ['nullable', 'string', 'max:255'],
@@ -406,7 +508,7 @@ class AppOrderController extends Controller
 
         app(OrderWorkflowService::class)->confirmCourierReturnToMerchant(
             $order,
-            $request->user(),
+            $courier,
             $data['note'] ?? null,
         );
 
@@ -553,7 +655,8 @@ class AppOrderController extends Controller
             ->where('tenant_id', \App\Models\Tenant::platform()->id)
             ->where('is_platform_managed', true)
             ->where('is_active', true)
-            ->where('province_id', $provinceId);
+            ->where('province_id', $provinceId)
+            ->whereHas('province', fn ($province) => $province->platform()->active());
 
         if ($branchId > 0) {
             return $branches->whereKey($branchId)->first();
@@ -567,7 +670,7 @@ class AppOrderController extends Controller
 
     private function operatingProvinceForUser(User $user): ?int
     {
-        $provinceId = $user->provinces()->value('provinces.id');
+        $provinceId = $user->provinces()->active()->value('provinces.id');
 
         if ($provinceId) {
             return (int) $provinceId;

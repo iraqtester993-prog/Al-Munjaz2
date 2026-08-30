@@ -18,10 +18,10 @@ use Illuminate\Validation\ValidationException;
 /**
  * Owns every balance-changing finance operation.
  *
- * The public app only creates a pending request.  The dashboard applies it in
- * one database transaction after an administrator has confirmed the physical
- * settlement.  This keeps wallet and branch cashbox values reproducible from
- * the ledger and prevents a courier from crediting themselves.
+ * Finance requests remain pending until an administrator confirms the
+ * settlement. A courier's declared cash budget is the single exception: it
+ * is immediately usable for taking merchant orders, while still being posted
+ * to the immutable ledger and activity log for administrative review.
  */
 class FinanceRequestService
 {
@@ -98,6 +98,64 @@ class FinanceRequestService
     }
 
     /**
+     * A courier declares cash physically available to collect a merchant
+     * order. This must be available immediately, but is never an invisible
+     * browser-only value: the wallet update, ledger entry, and activity audit
+     * are created atomically.
+     */
+    public function declareCourierBudget(User $user, int $amount, ?string $note = null): Transaction
+    {
+        $this->ensure($user->isCourierRole(), 'إضافة الميزانية متاحة للمندوب فقط.');
+        $this->ensure($amount >= 1000, 'الحد الأدنى للعملية هو 1,000 د.ع.');
+
+        return DB::transaction(function () use ($user, $amount, $note): Transaction {
+            $courier = User::withoutGlobalScopes()
+                ->lockForUpdate()
+                ->findOrFail($user->id);
+            $wallet = $this->walletFor($courier->id, true);
+            $budgetBefore = (int) $wallet->budget;
+            $reference = $this->reference('BUD');
+            $ledgerNote = trim((string) $note);
+
+            $wallet->increment('budget', $amount);
+
+            $transaction = Transaction::create([
+                'tenant_id' => $courier->tenant_id,
+                'user_id' => $courier->id,
+                'type' => FinanceRequest::BUDGET_RECHARGE,
+                'amount' => $amount,
+                'direction' => 1,
+                'ref' => $reference,
+                'date' => today(),
+                'note' => mb_substr(
+                    $ledgerNote !== '' ? $ledgerNote : 'إضافة ميزانية نقدية من المندوب',
+                    0,
+                    255,
+                ),
+            ]);
+
+            ActivityLog::create([
+                'tenant_id' => $courier->tenant_id,
+                'user_id' => $courier->id,
+                'action' => 'wallet.courier_budget_added',
+                'subject_type' => 'wallet',
+                'subject_id' => $wallet->id,
+                'data' => [
+                    'amount' => $amount,
+                    'budget_before' => $budgetBefore,
+                    'budget_after' => $budgetBefore + $amount,
+                    'transaction_id' => $transaction->id,
+                    'reference' => $reference,
+                    'source' => 'courier_declaration',
+                ],
+                'ip' => request()->ip(),
+            ]);
+
+            return $transaction;
+        });
+    }
+
+    /**
      * Physical cash still held by a courier is based on net collections
      * (delivery value less the company fee) minus approved branch handovers.
      * It is never a browser-supplied number and is separate from the Qi
@@ -167,14 +225,10 @@ class FinanceRequestService
             $wallet = $this->walletFor($user->id, true);
             $effectiveBranchId = $branchId ?: $request->branch_id;
 
-            $transaction = match ($request->type) {
-                FinanceRequest::CASH_HANDOVER => $this->approveCashHandover($request, $user, $wallet, $approvedAmount, $effectiveBranchId),
-                FinanceRequest::BUDGET_RECHARGE => $this->approveBudgetRecharge($request, $user, $wallet, $approvedAmount),
-                FinanceRequest::QI_TOPUP => $this->approveQiTopUp($request, $user, $wallet, $approvedAmount),
-                FinanceRequest::MERCHANT_PAYOUT => $this->approveMerchantPayout($request, $user, $wallet, $approvedAmount),
-                default => throw ValidationException::withMessages(['request' => ['نوع العملية المالية غير صالح.']]),
-            };
-
+            // Mark the request approved before it can enter the restricted
+            // cashbox path.  This all runs inside the same transaction, so a
+            // later failure rolls the state back; however CashboxService can
+            // now reject any call that is not tied to an approved handover.
             $request->forceFill([
                 'approved_amount' => $approvedAmount,
                 'branch_id' => $effectiveBranchId,
@@ -183,6 +237,14 @@ class FinanceRequestService
                 'processed_by' => $admin->id,
                 'processed_at' => now(),
             ])->save();
+
+            $transaction = match ($request->type) {
+                FinanceRequest::CASH_HANDOVER => $this->approveCashHandover($request, $user, $wallet, $approvedAmount, $effectiveBranchId),
+                FinanceRequest::BUDGET_RECHARGE => $this->approveBudgetRecharge($request, $user, $wallet, $approvedAmount),
+                FinanceRequest::QI_TOPUP => $this->approveQiTopUp($request, $user, $wallet, $approvedAmount),
+                FinanceRequest::MERCHANT_PAYOUT => $this->approveMerchantPayout($request, $user, $wallet, $approvedAmount),
+                default => throw ValidationException::withMessages(['request' => ['نوع العملية المالية غير صالح.']]),
+            };
 
             ActivityLog::create([
                 'tenant_id' => $request->tenant_id,
@@ -244,7 +306,8 @@ class FinanceRequestService
         $this->ensure($user->isCourierRole(), 'تسليم النقدية متاح للمندوب فقط.');
         $this->ensure($branchId !== null, 'اختر الفرع الذي استلم النقدية.');
         $branch = $this->activeBranch($branchId, true);
-        $this->ensure($amount <= $this->cashOnHand($user->id), 'مبلغ التسليم أكبر من النقدية التي يحملها المندوب.');
+        $availableCollections = $this->cashOnHand($user->id);
+        $this->ensure($amount <= $availableCollections, 'مبلغ التسليم أكبر من النقدية التي يحملها المندوب.');
 
         // Do not mutate the branch balance directly: a physical handover
         // must create its cashbox voucher in the same transaction as the
@@ -253,8 +316,9 @@ class FinanceRequestService
         app(CashboxService::class)->receiveCourierHandover(
             $branch,
             $user,
+            $request,
             $amount,
-            $request->reference,
+            $availableCollections,
             $request->note,
         );
 
@@ -354,6 +418,8 @@ class FinanceRequestService
     {
         $query = Branch::withoutGlobalScope(TenantScope::class)
             ->where('is_active', true)
+            ->where('is_platform_managed', true)
+            ->where('tenant_id', Tenant::platform()->id)
             ->whereKey($branchId);
 
         if ($lock) {
@@ -395,9 +461,9 @@ class FinanceRequestService
         ]);
     }
 
-    private function reference(): string
+    private function reference(string $prefix = 'FIN'): string
     {
-        return 'FIN-'.now()->format('ymdHis').'-'.str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT);
+        return $prefix.'-'.now()->format('ymdHis').'-'.str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT);
     }
 
     private function ensure(bool $condition, string $message): void

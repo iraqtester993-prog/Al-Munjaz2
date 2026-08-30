@@ -16,4 +16,7 @@ return [
     'courier_document_too_large' => 'حجم :document لا يجب أن يتجاوز :max ميغابايت.',
     'courier_documents_total_too_large' => 'الحجم الكلي لوثائق المندوب لا يجب أن يتجاوز :max ميغابايت. اختر صوراً أصغر ثم أعد المحاولة.',
     'courier_upload_request_too_large' => 'الصور المختارة أكبر من الحد الذي تسمح به الاستضافة. اختر صوراً أصغر أو أعد اختيارها ليتم تصغيرها تلقائياً.',
+    'merchant_verification_document_too_large' => 'حجم المستمسك لا يجب أن يتجاوز :max ميغابايت.',
+    'merchant_verification_documents_total_too_large' => 'الحجم الكلي لمستمسكات التوثيق لا يجب أن يتجاوز :max ميغابايت. اختر صوراً أصغر ثم أعد المحاولة.',
+    'merchant_verification_upload_request_too_large' => 'الصور المختارة أكبر من الحد الذي تسمح به الاستضافة. اختر صوراً أصغر أو أعد اختيارها ليتم تصغيرها تلقائياً.',
 ];

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AppShell from '../../Components/AppShell.vue'
@@ -14,6 +14,7 @@ const props = defineProps({
     requests: { type: Array, default: () => [] },
     branches: { type: Array, default: () => [] },
     loyalty: { type: Object, default: () => ({ balance: 0, entries: [] }) },
+    intent: { type: String, default: null },
 })
 
 const page = usePage()
@@ -22,11 +23,10 @@ const busy = ref(false)
 const showWithdraw = ref(false)
 const showHandover = ref(false)
 const showBudget = ref(false)
-const showQiTopup = ref(false)
+const showQiComingSoon = ref(false)
 const withdraw = ref({ amount: '', gateway: '' })
 const handover = ref({ amount: '', branch_id: '', note: '' })
 const budgetCash = ref({ amount: '', note: '' })
-const qiTopup = ref({ amount: '', qi_reference: '', note: '' })
 
 function moneyDigits(value) {
     return String(value ?? '').replace(/[^0-9]/g, '')
@@ -42,7 +42,6 @@ function formattedAmount(model) {
 const withdrawAmountInput = formattedAmount(withdraw)
 const handoverAmountInput = formattedAmount(handover)
 const budgetCashAmountInput = formattedAmount(budgetCash)
-const qiTopupAmountInput = formattedAmount(qiTopup)
 
 const typeMap = {
     withdrawal: { key: 'Withdrawal', tint: 'var(--danger-tint)', color: 'var(--danger)', icon: 'out' },
@@ -180,14 +179,24 @@ function submitBudget() {
     })
 }
 
-function submitQiTopup() {
-    if (!qiTopup.value.qi_reference.trim()) return
-
-    submit('app.wallet.recharge', qiTopup.value, () => {
-        showQiTopup.value = false
-        qiTopup.value = { amount: '', qi_reference: '', note: '' }
-    })
+function openBudget() {
+    showBudget.value = true
 }
+
+function openQiComingSoon() {
+    showQiComingSoon.value = true
+}
+
+onMounted(() => {
+    if (props.intent === 'budget') openBudget()
+    if (props.intent === 'qi') openQiComingSoon()
+
+    if (props.intent && typeof window !== 'undefined') {
+        const url = new URL(window.location.href)
+        url.searchParams.delete('intent')
+        window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+    }
+})
 </script>
 
 <template>
@@ -274,6 +283,7 @@ function submitQiTopup() {
                         <span>{{ t('Remaining budget') }}</span>
                         <b class="mono">{{ fmt(remainingBudget) }} {{ t('IQD') }}</b>
                     </div>
+                    <button class="courier-budget-add" type="button" @click="openBudget">{{ t('Add Cash Budget') }}</button>
                 </div>
             </section>
         </template>
@@ -368,7 +378,7 @@ function submitQiTopup() {
             </button>
         </SheetModal>
 
-        <SheetModal :open="showBudget" :title="t('Add Cash Budget')" :subtitle="t('Declare cash available to receive merchant orders. Administration verifies it before it becomes usable.')" @close="showBudget = false">
+        <SheetModal :open="showBudget" :title="t('Add Cash Budget')" :subtitle="t('Add the cash you currently hold. It will be available immediately for receiving merchant orders.')" @close="showBudget = false">
             <div class="field">
                 <label>{{ t('Amount') }}</label>
                 <input v-model="budgetCashAmountInput" type="text" inputmode="numeric" :placeholder="t('Amount')" dir="ltr" />
@@ -378,26 +388,16 @@ function submitQiTopup() {
                 <textarea v-model="budgetCash.note" rows="3" :placeholder="t('Cash budget note')"></textarea>
             </div>
             <button class="btn btn-primary withdraw-submit" :disabled="busy || !budgetCash.amount" @click="submitBudget">
-                <span v-if="busy" class="loader"></span>{{ t('Submit Request') }}
+                <span v-if="busy" class="loader"></span>{{ t('Add Cash Budget') }}
             </button>
         </SheetModal>
 
-        <SheetModal :open="showQiTopup" :title="t('Recharge Qi Balance')" :subtitle="t('Send the Qi transaction reference for administrative verification before the balance is credited.')" @close="showQiTopup = false">
-            <div class="field">
-                <label>{{ t('Amount') }}</label>
-                <input v-model="qiTopupAmountInput" type="text" inputmode="numeric" :placeholder="t('Amount')" dir="ltr" />
+        <SheetModal :open="showQiComingSoon" :title="t('Recharge Balance')" @close="showQiComingSoon = false">
+            <div class="qi-coming-soon">
+                <span class="qi-coming-soon-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 7H6a2 2 0 0 1-2-2 2 2 0 0 1 2-2h13v3M20 7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6M16 14h.01" /></svg></span>
+                <b>{{ t('Qi balance top-up will be connected soon.') }}</b>
+                <button class="btn btn-primary withdraw-submit" type="button" @click="showQiComingSoon = false">{{ t('Understood') }}</button>
             </div>
-            <div class="field">
-                <label>{{ t('Qi Transaction Reference') }}</label>
-                <input v-model.trim="qiTopup.qi_reference" type="text" inputmode="text" autocomplete="off" :placeholder="t('Qi Transaction Reference')" dir="ltr" />
-            </div>
-            <div class="field">
-                <label>{{ t('Note (optional)') }}</label>
-                <textarea v-model="qiTopup.note" rows="3" :placeholder="t('Qi top-up note')"></textarea>
-            </div>
-            <button class="btn btn-primary withdraw-submit" :disabled="busy || !qiTopup.amount || !qiTopup.qi_reference" @click="submitQiTopup">
-                <span v-if="busy" class="loader"></span>{{ t('Submit Qi Top-up Request') }}
-            </button>
         </SheetModal>
     </AppShell>
 </template>
@@ -438,6 +438,8 @@ function submitQiTopup() {
 .courier-budget-card .wallet-divider{margin:16px 0 14px;background:rgba(255,255,255,.14)}
 .budget-bottom-row{align-items:center;font-size:10.5px;font-weight:700}
 .budget-bottom-row b{font-size:24px;font-weight:900;letter-spacing:.3px}.budget-bottom-row b::first-letter{font-size:inherit}
+.courier-budget-add{display:flex;width:100%;align-items:center;justify-content:center;min-height:40px;margin-top:16px;border:1px solid rgba(255,255,255,.34);border-radius:11px;background:#fff;color:var(--primary-strong);font:850 11px var(--font);cursor:pointer}.courier-budget-add:active{transform:translateY(1px)}
+.qi-coming-soon{display:grid;justify-items:center;gap:15px;padding:10px 1px 3px;text-align:center}.qi-coming-soon-icon{display:grid;width:54px;height:54px;place-items:center;border-radius:16px;background:var(--primary-tint);color:var(--primary-strong)}.qi-coming-soon-icon svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.85;stroke-linecap:round;stroke-linejoin:round}.qi-coming-soon>b{font-size:13px;font-weight:900;line-height:1.7}
 .tx-row{gap:11px;padding:12px 14px}
 .tx-ic{width:34px;height:34px;border-radius:10px}
 .tx-mid b{font-size:12px;font-weight:700}

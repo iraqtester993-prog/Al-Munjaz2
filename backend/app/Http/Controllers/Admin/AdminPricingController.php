@@ -15,8 +15,12 @@ use Inertia\Inertia;
 
 class AdminPricingController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
+        $canCreatePricing = $request->user()->canUseAdminPermission('pricing', 'create');
+        $canUpdatePricing = $request->user()->canUseAdminPermission('pricing', 'update');
+        $canManagePricing = $canCreatePricing || $canUpdatePricing;
+
         $rules = PricingRule::withoutGlobalScope(TenantScope::class)
             ->with([
                 'merchant:id,name,shop_name',
@@ -28,17 +32,28 @@ class AdminPricingController extends Controller
             ->get()
             ->map(fn (PricingRule $rule) => $this->payload($rule));
 
-        return Inertia::render('Admin/Pricing', [
+        $props = [
             'rules' => $rules,
-            'merchants' => User::withoutGlobalScopes()
+            'provinces' => Province::query()->orderBy('name_ar')->get(['id', 'name_ar', 'name_en', 'name_ku']),
+            'vehicles' => ['normal', 'bike', 'sedan', 'suv', 'truck'],
+            'canManagePricing' => $canManagePricing,
+            'canCreatePricing' => $canCreatePricing,
+            'canUpdatePricing' => $canUpdatePricing,
+        ];
+
+        // Pricing viewers can audit the rules, but the full merchant
+        // directory (including phone numbers) is only needed to create or
+        // modify a rule.
+        if ($canManagePricing) {
+            $props['merchants'] = User::withoutGlobalScopes()
                 ->where('role', 'merchant')
                 ->where('status', 'active')
                 ->orderBy('name')
                 ->get(['id', 'name', 'shop_name', 'phone'])
-                ->map(fn (User $user) => ['id' => $user->id, 'name' => $user->name, 'shop_name' => $user->shop_name, 'phone' => $user->phone]),
-            'provinces' => Province::query()->orderBy('name_ar')->get(['id', 'name_ar', 'name_en', 'name_ku']),
-            'vehicles' => ['normal', 'bike', 'sedan', 'suv', 'truck'],
-        ]);
+                ->map(fn (User $user) => ['id' => $user->id, 'name' => $user->name, 'shop_name' => $user->shop_name, 'phone' => $user->phone]);
+        }
+
+        return Inertia::render('Admin/Pricing', $props);
     }
 
     public function store(Request $request)

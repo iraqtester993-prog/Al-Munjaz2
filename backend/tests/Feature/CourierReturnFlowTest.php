@@ -71,6 +71,12 @@ class CourierReturnFlowTest extends TestCase
             'note' => 'حجز اختبار للإرجاع',
         ]);
 
+        $courier->update([
+            'current_latitude' => 33.3152412,
+            'current_longitude' => 44.3660731,
+            'location_updated_at' => now(),
+        ]);
+
         $this->actingAs($courier)
             ->post("/app/orders/{$order->id}/return", [
                 'fee_mode' => 'fee',

@@ -28,6 +28,8 @@ class ChatMessage extends Model
 
     public function sender(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'sender_id');
+        // A message remains part of the operational audit trail even if the
+        // courier, merchant, or staff account was later soft-deleted.
+        return $this->belongsTo(User::class, 'sender_id')->withTrashed();
     }
 }

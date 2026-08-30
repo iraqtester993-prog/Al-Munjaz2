@@ -15,8 +15,10 @@ use Inertia\Inertia;
 
 class AdminFinanceController extends Controller
 {
-    public function index(FinanceRequestService $finance)
+    public function index(Request $request, FinanceRequestService $finance)
     {
+        $canUpdateFinance = $request->user()->canUseAdminPermission('finance', 'update');
+
         $requests = FinanceRequest::withoutGlobalScope(TenantScope::class)
             ->with(['user:id,name,phone,role', 'branch:id,name_ar,city', 'processor:id,name'])
             ->latest('id')
@@ -43,41 +45,10 @@ class AdminFinanceController extends Controller
                 'request_ref' => $tx->financeRequest?->reference,
             ]);
 
-        $branches = Branch::withoutGlobalScope(TenantScope::class)
-            ->where('is_active', true)
-            ->orderBy('city')
-            ->orderBy('name_ar')
-            ->get(['id', 'name_ar', 'city', 'cash_balance'])
-            ->map(fn (Branch $branch) => [
-                'id' => $branch->id,
-                'name' => $branch->name_ar,
-                'city' => $branch->city,
-                'cash_balance' => (int) $branch->cash_balance,
-            ]);
-
-        $accounts = User::withoutGlobalScopes()
-            ->whereIn('role', ['merchant', 'courier'])
-            ->where('status', 'active')
-            ->with('wallet:user_id,balance,budget')
-            ->orderBy('role')
-            ->orderBy('name')
-            ->get(['id', 'tenant_id', 'name', 'phone', 'role'])
-            ->map(fn (User $user) => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'phone' => $user->phone,
-                'role' => $user->role,
-                'wallet_balance' => (int) ($user->wallet?->balance ?? 0),
-                'budget' => (int) ($user->wallet?->budget ?? 0),
-                'cash_on_hand' => $user->isCourierRole() ? $finance->cashOnHand($user->id) : null,
-                'collections_total' => $user->isCourierRole() ? $finance->collectionsTotal($user) : null,
-            ]);
-
-        return Inertia::render('Admin/Finance', [
+        $props = [
             'requests' => $requests,
             'transactions' => $transactions,
-            'branches' => $branches,
-            'accounts' => $accounts,
+            'canUpdateFinance' => $canUpdateFinance,
             'summary' => [
                 'pending_count' => FinanceRequest::withoutGlobalScope(TenantScope::class)->where('status', FinanceRequest::PENDING)->count(),
                 'pending_amount' => (int) FinanceRequest::withoutGlobalScope(TenantScope::class)->where('status', FinanceRequest::PENDING)->sum('amount'),
@@ -87,7 +58,44 @@ class AdminFinanceController extends Controller
                 'merchant_payouts' => (int) Transaction::withoutGlobalScope(TenantScope::class)->where('type', FinanceRequest::MERCHANT_PAYOUT)->where('direction', -1)->sum('amount'),
                 'branch_cash' => (int) Branch::withoutGlobalScope(TenantScope::class)->sum('cash_balance'),
             ],
-        ]);
+        ];
+
+        // A finance-view profile can audit requests and ledger rows, but it
+        // must not receive the platform-wide settlement directory or each
+        // account's wallet, budget, and cash-on-hand amounts.
+        if ($canUpdateFinance) {
+            $props['branches'] = Branch::withoutGlobalScope(TenantScope::class)
+                ->where('is_active', true)
+                ->orderBy('city')
+                ->orderBy('name_ar')
+                ->get(['id', 'name_ar', 'city', 'cash_balance'])
+                ->map(fn (Branch $branch) => [
+                    'id' => $branch->id,
+                    'name' => $branch->name_ar,
+                    'city' => $branch->city,
+                    'cash_balance' => (int) $branch->cash_balance,
+                ]);
+
+            $props['accounts'] = User::withoutGlobalScopes()
+                ->whereIn('role', ['merchant', 'courier'])
+                ->where('status', 'active')
+                ->with('wallet:user_id,balance,budget')
+                ->orderBy('role')
+                ->orderBy('name')
+                ->get(['id', 'tenant_id', 'name', 'phone', 'role'])
+                ->map(fn (User $user) => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'phone' => $user->phone,
+                    'role' => $user->role,
+                    'wallet_balance' => (int) ($user->wallet?->balance ?? 0),
+                    'budget' => (int) ($user->wallet?->budget ?? 0),
+                    'cash_on_hand' => $user->isCourierRole() ? $finance->cashOnHand($user->id) : null,
+                    'collections_total' => $user->isCourierRole() ? $finance->collectionsTotal($user) : null,
+                ]);
+        }
+
+        return Inertia::render('Admin/Finance', $props);
     }
 
     public function approve(Request $request, FinanceRequest $financeRequest, FinanceRequestService $finance)

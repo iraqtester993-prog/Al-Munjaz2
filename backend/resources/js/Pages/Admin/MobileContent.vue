@@ -33,10 +33,7 @@ const l = (key) => text[locale.value]?.[key] || text.ar[key] || key
 
 const blank = () => ({
     audience: 'all', branch_id: props.branchMode ? (props.branches[0]?.id || '') : '', title_ar: '', title_en: '', title_ku: '',
-    body_ar: '', body_en: '', body_ku: '',
-    tag_ar: '', tag_en: '', tag_ku: '',
-    cta_ar: '', cta_en: '', cta_ku: '',
-    action_url: '', image: null, is_active: true, sort_order: props.slides.length + 1,
+    body_ar: '', body_en: '', body_ku: '', image: null, is_active: true, sort_order: props.slides.length + 1,
     starts_at: '', ends_at: '',
 })
 
@@ -57,10 +54,7 @@ function openEdit(slide) {
     Object.assign(form, {
         audience: slide.audience || 'all', branch_id: slide.branch_id || '',
         title_ar: slide.title_ar || '', title_en: slide.title_en || '', title_ku: slide.title_ku || '',
-        body_ar: slide.body_ar || '', body_en: slide.body_en || '', body_ku: slide.body_ku || '',
-        tag_ar: slide.tag_ar || '', tag_en: slide.tag_en || '', tag_ku: slide.tag_ku || '',
-        cta_ar: slide.cta_ar || '', cta_en: slide.cta_en || '', cta_ku: slide.cta_ku || '',
-        action_url: slide.action_url || '', image: null, is_active: Boolean(slide.is_active),
+        body_ar: slide.body_ar || '', body_en: slide.body_en || '', body_ku: slide.body_ku || '', image: null, is_active: Boolean(slide.is_active),
         sort_order: Number(slide.sort_order || 0), starts_at: slide.starts_at || '', ends_at: slide.ends_at || '',
     })
     imagePreview.value = slide.image_url || ''
@@ -182,22 +176,18 @@ watch(() => props.slides.length, (length) => {
                         <legend>{{ l('Arabic') }}</legend>
                         <label><span>{{ l('heading') }}</span><input v-model.trim="form.title_ar" maxlength="160" required /><small v-if="form.errors.title_ar" class="error">{{ form.errors.title_ar }}</small></label>
                         <label><span>{{ l('body') }}</span><textarea v-model.trim="form.body_ar" rows="3" maxlength="1200" /></label>
-                        <div class="two"><label><span>{{ l('tag') }}</span><input v-model.trim="form.tag_ar" maxlength="80" /></label><label><span>{{ l('button') }}</span><input v-model.trim="form.cta_ar" maxlength="80" /></label></div>
                     </fieldset>
                     <fieldset>
                         <legend>{{ l('English') }}</legend>
                         <label><span>{{ l('heading') }}</span><input v-model.trim="form.title_en" maxlength="160" dir="ltr" /></label>
                         <label><span>{{ l('body') }}</span><textarea v-model.trim="form.body_en" rows="3" maxlength="1200" dir="ltr" /></label>
-                        <div class="two"><label><span>{{ l('tag') }}</span><input v-model.trim="form.tag_en" maxlength="80" dir="ltr" /></label><label><span>{{ l('button') }}</span><input v-model.trim="form.cta_en" maxlength="80" dir="ltr" /></label></div>
                     </fieldset>
                     <fieldset>
                         <legend>{{ l('Kurdish') }}</legend>
                         <label><span>{{ l('heading') }}</span><input v-model.trim="form.title_ku" maxlength="160" /></label>
                         <label><span>{{ l('body') }}</span><textarea v-model.trim="form.body_ku" rows="3" maxlength="1200" /></label>
-                        <div class="two"><label><span>{{ l('tag') }}</span><input v-model.trim="form.tag_ku" maxlength="80" /></label><label><span>{{ l('button') }}</span><input v-model.trim="form.cta_ku" maxlength="80" /></label></div>
                     </fieldset>
 
-                    <section class="action-section"><label><span>{{ l('link') }}</span><input v-model.trim="form.action_url" dir="ltr" maxlength="500" :placeholder="l('safeLink')" /><small>{{ l('actionHint') }}</small><small v-if="form.errors.action_url" class="error">{{ form.errors.action_url }}</small></label></section>
                     <section class="schedule"><div><b>{{ l('schedule') }}</b><small>{{ l('calendarHint') }}</small></div><div class="two"><label><span>{{ l('starts') }}</span><input v-model="form.starts_at" type="datetime-local" /></label><label><span>{{ l('ends') }}</span><input v-model="form.ends_at" type="datetime-local" /></label></div><small v-if="form.errors.ends_at" class="error">{{ form.errors.ends_at }}</small></section>
                 </div>
                 <p v-if="formError" class="form-error">{{ formError }}</p>

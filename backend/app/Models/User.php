@@ -67,6 +67,7 @@ class User extends Authenticatable
         'is_online', 'last_active_at',
         'current_latitude', 'current_longitude', 'location_accuracy_meters', 'location_updated_at',
         'dashboard_permissions',
+        'permission_profile_id',
     ];
 
     protected $hidden = [
@@ -89,6 +90,7 @@ class User extends Authenticatable
             'is_online' => 'boolean',
             'password' => 'hashed',
             'dashboard_permissions' => 'array',
+            'is_super_admin' => 'boolean',
         ];
     }
 
@@ -100,6 +102,16 @@ class User extends Authenticatable
     public function branch(): BelongsTo
     {
         return $this->belongsTo(Branch::class);
+    }
+
+    /**
+     * Named platform-dashboard permissions are deliberately separate from
+     * branch dashboard permissions. The latter remain attached to branch
+     * memberships and never inherit a platform profile.
+     */
+    public function permissionProfile(): BelongsTo
+    {
+        return $this->belongsTo(DashboardPermissionProfile::class, 'permission_profile_id');
     }
 
     /**
@@ -169,6 +181,16 @@ class User extends Authenticatable
         return $this->role === 'admin';
     }
 
+    /**
+     * The explicit super-admin flag is the only unrestricted platform
+     * dashboard bypass. A role=admin account without a profile is denied;
+     * this keeps newly invited staff from receiving inherited full access.
+     */
+    public function isSuperAdmin(): bool
+    {
+        return $this->isAdmin() && (bool) $this->is_super_admin;
+    }
+
     public function isCourierRole(): bool
     {
         return in_array($this->role, self::COURIER_ROLES, true);
@@ -197,5 +219,64 @@ class User extends Authenticatable
         }
 
         return in_array($permission, $this->dashboard_permissions ?? [], true);
+    }
+
+    /**
+     * Checks a platform dashboard profile. This intentionally does not
+     * inspect the legacy branch `dashboard_permissions` column: a branch
+     * manager must never turn a branch grant into a platform-wide grant.
+     */
+    public function canUseAdminPermission(string $module, string $action): bool
+    {
+        if (! $this->isAdmin()) {
+            return false;
+        }
+
+        if ($this->isSuperAdmin()) {
+            return true;
+        }
+
+        return $this->permissionProfile?->allows($module, $action) ?? false;
+    }
+
+    /**
+     * The dashboard home is deliberately a route with a `view` capability.
+     * Sending a limited operator to the aggregate root would immediately
+     * yield a 403 (and, more importantly, would risk a broad data response).
+     */
+    public function firstAdminDashboardPath(): ?string
+    {
+        if (! $this->isAdmin()) {
+            return null;
+        }
+
+        if ($this->isSuperAdmin()) {
+            return '/dashboard';
+        }
+
+        foreach ([
+            ['orders', '/dashboard/orders'],
+            ['merchants', '/dashboard/merchants'],
+            ['couriers', '/dashboard/couriers'],
+            ['courier_locations', '/dashboard/couriers/locations'],
+            ['branches', '/dashboard/branches'],
+            ['finance', '/dashboard/finance'],
+            ['cashboxes', '/dashboard/cashboxes'],
+            ['pricing', '/dashboard/pricing'],
+            ['reports', '/dashboard/reports'],
+            ['notifications', '/dashboard/notifications'],
+            ['content', '/dashboard/content'],
+            ['loyalty', '/dashboard/loyalty'],
+            ['chat', '/dashboard/chat'],
+            ['transfers', '/dashboard/transfers'],
+            ['settings', '/dashboard/settings'],
+            ['platform', '/dashboard/platform'],
+        ] as [$module, $path]) {
+            if ($this->canUseAdminPermission($module, 'view')) {
+                return $path;
+            }
+        }
+
+        return null;
     }
 }

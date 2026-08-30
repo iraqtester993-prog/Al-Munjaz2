@@ -53,6 +53,13 @@ class HandleInertiaRequests extends Middleware
                     'phone' => $request->user()->phone,
                     'role' => $request->user()->role,
                     'status' => $request->user()->status,
+                    'is_super_admin' => $request->user()->isSuperAdmin(),
+                    // UI visibility is only a convenience. Route middleware
+                    // independently enforces these same capabilities.
+                    'admin_permissions' => $request->user()->isAdmin() && ! $request->user()->isSuperAdmin()
+                        ? ($request->user()->permissionProfile?->permissions ?? [])
+                        : null,
+                    'permission_profile_id' => $request->user()->permission_profile_id,
                     'theme' => $request->user()->theme,
                     'locale' => $request->user()->locale,
                     'shop_name' => $request->user()->shop_name,
@@ -101,14 +108,20 @@ class HandleInertiaRequests extends Middleware
             'adminBadges' => function () use ($request): array {
                 $user = $request->user();
 
-                if (! $user || ! $user->isAdmin()) {
+                // Counts across all tenants are an aggregate dashboard data
+                // surface, so do not expose them to a limited profile.
+                if (! $user || ! $user->isSuperAdmin()) {
                     return [];
                 }
 
                 return [
                     'finance' => FinanceRequest::withoutGlobalScopes()->where('status', FinanceRequest::PENDING)->count(),
                     'notifications' => Notification::withoutGlobalScopes()->whereNull('read_at')->count(),
-                    'chat' => Chat::withoutGlobalScopes()->whereNotNull('last_at')->whereNull('admin_read_at')->count(),
+                    'chat' => Chat::withoutGlobalScopes()
+                        ->adminSupportInbox()
+                        ->whereNotNull('last_at')
+                        ->whereNull('admin_read_at')
+                        ->count(),
                 ];
             },
             'translations' => app()->bound('translations') ? app('translations') : [],
@@ -120,6 +133,10 @@ class HandleInertiaRequests extends Middleware
                     : asset('logo.png'),
                 'has_custom_logo' => is_string($logoPath) && $logoPath !== '',
             ],
+            // Only the short About content is shared with all pages. Privacy
+            // and terms bodies are loaded by their own public pages so long
+            // legal copy does not slow the installed application.
+            'developer' => Setting::developerContent(),
         ];
     }
 }

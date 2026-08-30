@@ -120,6 +120,12 @@ class ApiOrderSecurityTest extends TestCase
         $otherCourier->provinces()->syncWithoutDetaching([$province->id => ['is_primary' => true]]);
         $notAssigned = $this->makeOrder($merchant, $province, $otherCourier, 'ALM-API-OTHER', 'approved');
 
+        $courier->update([
+            'current_latitude' => 33.3152412,
+            'current_longitude' => 44.3660731,
+            'location_updated_at' => now(),
+        ]);
+
         Sanctum::actingAs($courier);
 
         $this->getJson("/api/v1/orders/{$notAssigned->id}")->assertForbidden();
@@ -153,6 +159,11 @@ class ApiOrderSecurityTest extends TestCase
         $province = $merchant->provinces()->firstOrFail();
         $order = $this->makeOrder($merchant, $province, $courier, 'ALM-API-RETURN', 'courier');
         $order->update(['workflow_stage' => 'out_for_delivery', 'return_fee' => 3500]);
+        $courier->update([
+            'current_latitude' => 33.3152412,
+            'current_longitude' => 44.3660731,
+            'location_updated_at' => now(),
+        ]);
 
         Sanctum::actingAs($courier);
 

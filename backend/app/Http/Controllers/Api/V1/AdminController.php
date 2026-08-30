@@ -118,7 +118,7 @@ class AdminController extends Controller
         // may be granted read-only dashboard access later through an explicit
         // policy, but they must never inherit an administrator API surface.
         abort_unless(
-            $request->user()?->role === 'admin' && $request->user()->isActiveUser(),
+            $request->user()?->isSuperAdmin() && $request->user()->isActiveUser(),
             403,
         );
     }

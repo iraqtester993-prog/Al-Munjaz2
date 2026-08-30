@@ -44,10 +44,10 @@ function submit() {
 
             <form class="dash-login-form" @submit.prevent="submit">
                 <label class="dash-field">
-                    <span>{{ t('Username') }}</span>
+                    <span>{{ t('Email or username') }}</span>
                     <input
                         v-model="form.username"
-                        :placeholder="t('Username')"
+                        :placeholder="t('Email or username')"
                         autocomplete="username"
                         autofocus
                         required

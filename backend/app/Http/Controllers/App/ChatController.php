@@ -72,12 +72,10 @@ class ChatController extends Controller
         $this->markRead($chat, $request->user());
         $this->notifyMessageRecipients($chat, $request->user());
 
-        return response()->json([
-            'id' => $message->id,
-            'text' => $message->text,
-            'from_me' => true,
-            'time' => $message->created_at->format('H:i'),
-        ]);
+        return response()->json($this->messagePayload(
+            $message->load('sender:id,name,role'),
+            $request->user(),
+        ));
     }
 
     /**
@@ -250,21 +248,12 @@ class ChatController extends Controller
 
     public function adminIndex(Request $request)
     {
-        $chats = Chat::withoutGlobalScope(TenantScope::class)
-            ->with([
-                'user:id,name,phone,role,shop_name',
-                'counterparty:id,name,phone,role,shop_name',
-                'order:id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status',
-            ])
-            ->orderByDesc('last_at')
-            ->get()
-            ->map(fn (Chat $chat) => $this->adminChatPayload($chat, $request->user()));
-
-        return Inertia::render('Admin/Chat', ['chats' => $chats]);
+        return Inertia::render('Admin/Chat', $this->adminInboxProps($request->user()));
     }
 
     public function adminShow(Request $request, Chat $chat)
     {
+        $this->ensureAdminChat($chat);
         $this->markRead($chat, $request->user());
 
         $messages = $this->messagesFor($chat, $request->user());
@@ -275,12 +264,7 @@ class ChatController extends Controller
             'order:id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status',
         ]);
 
-        return Inertia::render('Admin/Chat', [
-            'chats' => Chat::withoutGlobalScope(TenantScope::class)->with([
-                'user:id,name,phone,role,shop_name',
-                'counterparty:id,name,phone,role,shop_name',
-                'order:id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status',
-            ])->orderByDesc('last_at')->get()->map(fn (Chat $c) => $this->adminChatPayload($c, $request->user())),
+        return Inertia::render('Admin/Chat', $this->adminInboxProps($request->user()) + [
             'activeChat' => $this->adminChatPayload($chat, $request->user()),
             'messages' => $messages,
         ]);
@@ -288,6 +272,10 @@ class ChatController extends Controller
 
     public function adminSend(Request $request, Chat $chat)
     {
+        // The merchant/courier tab is a transparent audit view. The
+        // dashboard must never become an unnoticed third participant in a
+        // private order conversation.
+        $this->ensureAdminSupportChat($chat);
         $request->validate(['text' => ['required', 'string', 'max:1000']]);
 
         $message = ChatMessage::create([
@@ -304,16 +292,15 @@ class ChatController extends Controller
         $this->markRead($chat, $request->user());
         $this->notifyMessageRecipients($chat, $request->user());
 
-        return response()->json([
-            'id' => $message->id,
-            'text' => $message->text,
-            'from_me' => true,
-            'time' => $message->created_at->format('H:i'),
-        ]);
+        return response()->json($this->messagePayload(
+            $message->load('sender:id,name,role'),
+            $request->user(),
+        ));
     }
 
     public function adminMessages(Request $request, Chat $chat)
     {
+        $this->ensureAdminChat($chat);
         $this->markRead($chat, $request->user());
 
         $data = $request->validate([
@@ -326,6 +313,71 @@ class ChatController extends Controller
             'last_id' => (int) (data_get($messages->last(), 'id') ?? ($data['after_id'] ?? 0)),
             'unread' => $this->unreadFor($chat, $request->user()),
         ], 200, ['Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0']);
+    }
+
+    /**
+     * The dashboard has two deliberately separated inboxes: technical
+     * support (reply allowed) and merchant/courier order chats (review only).
+     * Unknown historical chat markers remain excluded by the model scope.
+     */
+    private function adminChats(): Builder
+    {
+        return Chat::withoutGlobalScope(TenantScope::class)->adminDashboardInbox();
+    }
+
+    private function adminSupportChats(): Builder
+    {
+        return Chat::withoutGlobalScope(TenantScope::class)->adminSupportInbox();
+    }
+
+    private function ensureAdminChat(Chat $chat): void
+    {
+        abort_unless($this->adminChats()->whereKey($chat->id)->exists(), 404);
+    }
+
+    private function ensureAdminSupportChat(Chat $chat): void
+    {
+        abort_unless($this->adminSupportChats()->whereKey($chat->id)->exists(), 404);
+    }
+
+    /**
+     * Keep the legacy `chats` prop limited to support so the current Vue
+     * screen stays backward compatible while the dashboard receives the two
+     * explicit data sets it needs for tabs.
+     *
+     * @return array<string, mixed>
+     */
+    private function adminInboxProps(User $viewer): array
+    {
+        $allChats = $this->adminChats()
+            ->with($this->adminChatRelations())
+            ->orderByDesc('last_at')
+            ->get()
+            ->map(fn (Chat $chat) => $this->adminChatPayload($chat, $viewer));
+
+        $supportChats = $allChats->where('channel', 'support')->values();
+        $merchantCourierChats = $allChats->where('channel', 'merchant_courier')->values();
+
+        return [
+            // Kept for the pre-tab dashboard client.
+            'chats' => $supportChats,
+            'supportChats' => $supportChats,
+            'merchantCourierChats' => $merchantCourierChats,
+            'chatTabs' => [
+                ['key' => 'support', 'label' => 'الدعم الفني', 'count' => $supportChats->count(), 'read_only' => false],
+                ['key' => 'merchant_courier', 'label' => 'دردشات التجار والمندوبين', 'count' => $merchantCourierChats->count(), 'read_only' => true],
+            ],
+        ];
+    }
+
+    /** @return array<int, string> */
+    private function adminChatRelations(): array
+    {
+        return [
+            'user:id,name,phone,role,shop_name',
+            'counterparty:id,name,phone,role,shop_name',
+            'order:id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status',
+        ];
     }
 
     private function ensureParticipant(Request $request, Chat $chat): void
@@ -363,19 +415,29 @@ class ChatController extends Controller
             ->count();
     }
 
-    private function messagesFor(Chat $chat, $user, ?int $afterId = null)
+    private function messagesFor(Chat $chat, User $user, ?int $afterId = null)
     {
         return $chat->messages()
+            ->with('sender:id,name,role')
             ->when($afterId !== null && $afterId > 0, fn (Builder $messages) => $messages->where('id', '>', $afterId))
             ->orderBy('id')
             ->get()
-            ->map(fn (ChatMessage $message) => [
+            ->map(fn (ChatMessage $message) => $this->messagePayload($message, $user))
+            ->values();
+    }
+
+    /** @return array<string, mixed> */
+    private function messagePayload(ChatMessage $message, User $viewer): array
+    {
+        return [
             'id' => $message->id,
             'sender_id' => $message->sender_id,
-            'from_me' => $message->sender_id === $user->id,
+            'sender_name' => $message->sender?->name ?: 'مستخدم محذوف',
+            'sender_role' => $message->sender?->role ?: 'unknown',
+            'from_me' => $message->sender_id === $viewer->id,
             'text' => $message->text,
             'time' => $message->created_at->format('H:i'),
-        ])->values();
+        ];
     }
 
     /**
@@ -694,13 +756,27 @@ class ChatController extends Controller
     private function adminChatPayload(Chat $chat, User $viewer): array
     {
         $order = $chat->order;
-        $merchantName = $chat->user?->name;
-        $courierName = $chat->counterparty?->name;
+        $isMerchantCourierChat = $chat->counterparty_type === 'order_chat';
+        $merchant = ($chat->user?->role === 'merchant' || $chat->user?->role === 'owner')
+            ? $chat->user
+            : null;
+        $courier = $chat->counterparty?->isCourierRole() ? $chat->counterparty : null;
+
+        // Direct order chats always store the merchant as `user` and the
+        // intended courier as `counterparty`; keep that role contract
+        // explicit for the dashboard instead of depending on display text.
+        if ($isMerchantCourierChat) {
+            $merchant = $chat->user;
+            $courier = $chat->counterparty;
+        }
+
+        $merchantName = $merchant?->name;
+        $courierName = $courier?->name;
 
         if ($chat->counterparty_type === 'order_support') {
             $courierName ??= $order ? $this->operationalCourierFor($order)?->name : null;
             $displayTitle = 'شكوى / تأخر — '.($courierName ?: 'مندوب غير مكلّف').($order?->track_no ? ' — '.$order->track_no : '');
-        } elseif ($chat->counterparty_type === 'order_chat') {
+        } elseif ($isMerchantCourierChat) {
             $displayTitle = 'محادثة الطلب — '.($merchantName ?: 'تاجر').' ↔ '.($courierName ?: 'مندوب').($order?->track_no ? ' — '.$order->track_no : '');
         } else {
             $displayTitle = $chat->title_ar ?: ($merchantName ?: 'الدعم الفني');
@@ -714,10 +790,32 @@ class ChatController extends Controller
             'last_message' => $chat->last_message,
             'last_at' => $chat->last_at?->diffForHumans(),
             'unread' => $this->unreadFor($chat, $viewer),
-            'user' => $chat->user ? ['name' => $chat->user->name, 'phone' => $chat->user->phone] : null,
-            'counterparty' => $chat->counterparty ? ['name' => $chat->counterparty->name, 'phone' => $chat->counterparty->phone] : null,
+            'channel' => $isMerchantCourierChat ? 'merchant_courier' : 'support',
+            'read_only' => $isMerchantCourierChat,
+            'can_reply' => ! $isMerchantCourierChat && $viewer->canUseAdminPermission('chat', 'create'),
+            'user' => $this->adminParticipantPayload($chat->user),
+            'counterparty' => $this->adminParticipantPayload($chat->counterparty),
+            'merchant' => $this->adminParticipantPayload($merchant),
+            'courier' => $this->adminParticipantPayload($courier),
+            'merchant_name' => $merchantName,
+            'courier_name' => $courierName,
             'counterparty_type' => $chat->counterparty_type,
+            'order_id' => $chat->order_id,
+            'track_no' => $order?->track_no,
+            'tracking_no' => $order?->track_no,
             'order' => $this->adminOrderContext($order),
         ];
+    }
+
+    /** @return array<string, int|string|null>|null */
+    private function adminParticipantPayload(?User $user): ?array
+    {
+        return $user ? [
+            'id' => $user->id,
+            'name' => $user->name,
+            'phone' => $user->phone,
+            'role' => $user->role,
+            'shop_name' => $user->shop_name,
+        ] : null;
     }
 }

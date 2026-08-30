@@ -149,6 +149,54 @@ class BranchPortalControllerTest extends TestCase
             ->assertJsonPath('props.summary.onlineCouriers', 1);
     }
 
+    public function test_branch_portal_exposes_only_fresh_last_known_locations_for_its_own_couriers(): void
+    {
+        [$platform, $otherTenant] = $this->tenants();
+        $visible = $this->branch($platform, 'BGD-LOCATION', 'فرع بغداد للمواقع');
+        $hidden = $this->branch($platform, 'BSR-LOCATION', 'فرع البصرة للمواقع');
+        $owner = $this->user($platform, 'owner', 'location-portal-owner');
+        $owner->managedBranches()->attach($visible->id, ['access_role' => BranchMembership::OWNER]);
+
+        $freshCourier = $this->user($otherTenant, 'courier', 'a-fresh-location-courier', $visible->id);
+        $freshCourier->update([
+            'address' => 'بغداد — الكرادة — شارع 62',
+            'current_latitude' => 33.3152412,
+            'current_longitude' => 44.3660731,
+            'location_accuracy_meters' => 18,
+            'location_updated_at' => now(),
+        ]);
+
+        $staleCourier = $this->user($otherTenant, 'courier', 'b-stale-location-courier', $visible->id);
+        $staleCourier->update([
+            'current_latitude' => 33.3200000,
+            'current_longitude' => 44.3700000,
+            'location_updated_at' => now()->subMinutes(16),
+        ]);
+
+        $hiddenCourier = $this->user($otherTenant, 'courier', 'hidden-location-courier', $hidden->id);
+        $hiddenCourier->update([
+            'current_latitude' => 33.3250000,
+            'current_longitude' => 44.3750000,
+            'location_updated_at' => now(),
+        ]);
+
+        TenantContext::set($otherTenant);
+
+        $this->actingAs($owner)
+            ->withHeader('X-Inertia', 'true')
+            ->get('/__tests/branch-portal')
+            ->assertOk()
+            ->assertJsonCount(2, 'props.couriers')
+            ->assertJsonPath('props.couriers.0.id', $freshCourier->id)
+            ->assertJsonPath('props.couriers.0.location.latitude', 33.3152412)
+            ->assertJsonPath('props.couriers.0.location.longitude', 44.3660731)
+            ->assertJsonPath('props.couriers.0.location.accuracy_meters', 18)
+            ->assertJsonPath('props.couriers.0.location.address_label', 'بغداد — الكرادة — شارع 62')
+            ->assertJsonPath('props.couriers.1.id', $staleCourier->id)
+            ->assertJsonPath('props.couriers.1.location', null)
+            ->assertJsonMissing(['id' => $hiddenCourier->id]);
+    }
+
     public function test_production_portal_route_keeps_owner_isolated_from_admin_and_mobile_api(): void
     {
         [$platform, $otherTenant] = $this->tenants();
@@ -267,7 +315,7 @@ class BranchPortalControllerTest extends TestCase
 
     private function user(Tenant $tenant, string $role, string $username, ?int $branchId = null): User
     {
-        return User::create([
+        $user = User::create([
             'tenant_id' => $tenant->id,
             'branch_id' => $branchId,
             'name' => $username,
@@ -278,6 +326,14 @@ class BranchPortalControllerTest extends TestCase
             'role' => $role,
             'status' => 'active',
         ]);
+
+        // The super flag is intentionally not mass-assignable in application
+        // code. This fixture models the explicit bootstrap authority.
+        if ($role === 'admin') {
+            $user->forceFill(['is_super_admin' => true])->save();
+        }
+
+        return $user;
     }
 
     private function order(Tenant $tenant, string $trackNo, Branch $branch): Order

@@ -10,6 +10,8 @@ use Database\Seeders\DemoSeeder;
 use Database\Seeders\PlanSeeder;
 use Database\Seeders\ProvinceSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class MerchantVerificationAndSafeDeletionTest extends TestCase
@@ -114,6 +116,34 @@ class MerchantVerificationAndSafeDeletionTest extends TestCase
         $merchant->refresh();
         $this->assertFalse($merchant->isMerchantVerified());
         $this->assertNull($merchant->merchant_verified_by);
+    }
+
+    public function test_merchant_verification_rejects_a_document_bundle_above_the_safe_request_limit(): void
+    {
+        Storage::fake('public');
+        config()->set('registration.merchant_verification_documents.max_file_kilobytes', 480);
+        config()->set('registration.merchant_verification_documents.max_total_kilobytes', 1600);
+
+        $merchant = User::where('role', 'merchant')->firstOrFail();
+        $documentsBefore = Document::where('user_id', $merchant->id)->count();
+
+        $this->actingAs($merchant)
+            ->post('/profile/verification', [
+                'name' => 'تاجر حجم كبير',
+                'address' => 'بغداد — الكرادة',
+                'phone' => '07900009876',
+                'identity_number' => 'ID-UPLOAD-LIMIT',
+                // Each file is valid individually, but the four-file request
+                // must stay below the shared-hosting-safe aggregate limit.
+                'id_front_document' => UploadedFile::fake()->create('id-front.pdf', 450, 'application/pdf'),
+                'id_back_document' => UploadedFile::fake()->create('id-back.pdf', 450, 'application/pdf'),
+                'residence_document' => UploadedFile::fake()->create('residence-front.pdf', 450, 'application/pdf'),
+                'residence_back_document' => UploadedFile::fake()->create('residence-back.pdf', 450, 'application/pdf'),
+            ])
+            ->assertRedirect()
+            ->assertSessionHasErrors('documents');
+
+        $this->assertSame($documentsBefore, Document::where('user_id', $merchant->id)->count());
     }
 
     public function test_admin_cannot_grant_public_merchant_verification_to_a_courier(): void

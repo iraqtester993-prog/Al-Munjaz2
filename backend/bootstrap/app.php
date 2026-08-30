@@ -6,6 +6,9 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Exceptions\PostTooLargeException;
 use Illuminate\Http\Request;
 use App\Http\Middleware\ActiveUserMiddleware;
+use App\Http\Middleware\DashboardPermissionMiddleware;
+use App\Http\Middleware\DashboardSuperAdminMiddleware;
+use App\Http\Middleware\DashboardUserPermissionMiddleware;
 use App\Http\Middleware\EnsureDashboardHost;
 use App\Http\Middleware\HandleInertiaRequests;
 use App\Http\Middleware\RoleMiddleware;
@@ -35,7 +38,7 @@ return Application::configure(basePath: dirname(__DIR__))
         }, subdomains: false);
 
         $middleware->redirectUsersTo(fn ($request) => match ($request->user()?->role) {
-            'admin' => '/dashboard',
+            'admin' => $request->user()->firstAdminDashboardPath() ?? '/dashboard/access-denied',
             'owner', 'branch_manager' => '/dashboard/branch',
             default => '/app',
         });
@@ -57,19 +60,30 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => RoleMiddleware::class,
             'active' => ActiveUserMiddleware::class,
             'dashboard.host' => EnsureDashboardHost::class,
+            'dashboard.permission' => DashboardPermissionMiddleware::class,
+            'dashboard.super-admin' => DashboardSuperAdminMiddleware::class,
+            'dashboard.user-permission' => DashboardUserPermissionMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        // A PHP-level post_max_size rejection happens before the registration
-        // controller can validate the individual courier documents.  Convert
-        // it to the same useful form error instead of a generic server page.
-        // (A reverse-proxy 413 is prevented by browser-side image preparation.)
+        // A PHP-level post_max_size rejection happens before an upload
+        // controller can validate individual documents. Convert it to a
+        // useful form error instead of a generic server page. A reverse-proxy
+        // 413 is prevented by browser-side image preparation.
         $exceptions->render(function (PostTooLargeException $exception, Request $request) {
-            if (! $request->is('register')) {
-                return null;
+            if ($request->is('register')) {
+                return redirect()->route('register', ['role' => 'courier'])
+                    ->withErrors(['documents' => __('auth.courier_upload_request_too_large')]);
             }
 
-            return redirect()->route('register', ['role' => 'courier'])
-                ->withErrors(['documents' => __('auth.courier_upload_request_too_large')]);
+            if ($request->is('profile/verification')) {
+                $message = __('auth.merchant_verification_upload_request_too_large');
+
+                return redirect()->route('app.profile')
+                    ->withErrors(['documents' => $message])
+                    ->with('error', $message);
+            }
+
+            return null;
         });
     })->create();

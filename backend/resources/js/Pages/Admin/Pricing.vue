@@ -9,6 +9,9 @@ const props = defineProps({
     merchants: { type: Array, default: () => [] },
     provinces: { type: Array, default: () => [] },
     vehicles: { type: Array, default: () => [] },
+    canManagePricing: { type: Boolean, default: false },
+    canCreatePricing: { type: Boolean, default: false },
+    canUpdatePricing: { type: Boolean, default: false },
 })
 
 const page = usePage()
@@ -55,8 +58,13 @@ function localized(row) { return row?.[`name_${locale.value}`] || row?.name_ar |
 function provinceName(province) { return province?.[`name_${locale.value}`] || province?.name_ar || province?.name_en || '—' }
 function blank() { return { name_ar: '', name_en: '', name_ku: '', merchant_id: '', origin_province_id: '', destination_province_id: '', service: '', vehicle: '', min_weight_grams: 0, max_weight_grams: '', base_fee: '', return_fee: 0, priority: 100 } }
 
-function openCreate() { editor.value = 'create'; form.value = blank() }
+function openCreate() {
+    if (!props.canCreatePricing) return
+    editor.value = 'create'
+    form.value = blank()
+}
 function openEdit(rule) {
+    if (!props.canUpdatePricing) return
     editor.value = rule.id
     form.value = {
         name_ar: rule.name_ar || '', name_en: rule.name_en || '', name_ku: rule.name_ku || '', merchant_id: rule.merchant_id || '',
@@ -65,6 +73,7 @@ function openEdit(rule) {
     }
 }
 function submit() {
+    if (editor.value === 'create' ? !props.canCreatePricing : !props.canUpdatePricing) return
     if (busy.value || !form.value.name_ar || form.value.base_fee === '') return
     busy.value = true
     const target = editor.value === 'create' ? route('admin.pricing.store') : route('admin.pricing.update', editor.value)
@@ -73,7 +82,10 @@ function submit() {
     if (editor.value === 'create') router.post(target, payload, callback)
     else router.put(target, payload, callback)
 }
-function toggle(rule) { router.patch(route('admin.pricing.status', rule.id), { is_active: !rule.is_active }, { preserveScroll: true }) }
+function toggle(rule) {
+    if (!props.canUpdatePricing) return
+    router.patch(route('admin.pricing.status', rule.id), { is_active: !rule.is_active }, { preserveScroll: true })
+}
 function scope(rule) {
     const bits = []
     if (rule.merchant) bits.push(rule.merchant.shop_name || rule.merchant.name)
@@ -88,19 +100,19 @@ function scope(rule) {
     <AdminShell :title="l('title')">
         <header class="page-heading">
             <div><p>{{ l('eyebrow') }}</p><h2>{{ l('title') }}</h2><span>{{ l('subtitle') }}</span></div>
-            <button class="primary" type="button" @click="openCreate">＋ {{ l('create') }}</button>
+            <button v-if="canCreatePricing" class="primary" type="button" @click="openCreate">＋ {{ l('create') }}</button>
         </header>
 
         <section class="rule-grid">
             <article v-for="rule in rules" :key="rule.id" class="rule-card" :class="{ off: !rule.is_active }">
-                <header><span class="rule-badge">{{ rule.priority }}</span><div><h3>{{ localized(rule) }}</h3><p>{{ scope(rule) }}</p></div><button class="toggle" type="button" :class="{ on: rule.is_active }" @click="toggle(rule)"><i></i><span>{{ rule.is_active ? l('active') : l('inactive') }}</span></button></header>
+                <header><span class="rule-badge">{{ rule.priority }}</span><div><h3>{{ localized(rule) }}</h3><p>{{ scope(rule) }}</p></div><button v-if="canUpdatePricing" class="toggle" type="button" :class="{ on: rule.is_active }" @click="toggle(rule)"><i></i><span>{{ rule.is_active ? l('active') : l('inactive') }}</span></button></header>
                 <div class="rule-prices"><span><small>{{ l('fee') }}</small><b>{{ fmt(rule.base_fee) }} {{ t('IQD') }}</b></span><span><small>{{ l('returnFee') }}</small><b>{{ fmt(rule.return_fee) }} {{ t('IQD') }}</b></span></div>
-                <footer><span>{{ rule.min_weight_grams }}–{{ rule.max_weight_grams ?? '∞' }} g</span><button type="button" @click="openEdit(rule)">{{ l('edit') }}</button></footer>
+                <footer><span>{{ rule.min_weight_grams }}–{{ rule.max_weight_grams ?? '∞' }} g</span><button v-if="canUpdatePricing" type="button" @click="openEdit(rule)">{{ l('edit') }}</button></footer>
             </article>
             <div v-if="!rules.length" class="empty">{{ l('noRules') }}</div>
         </section>
 
-        <div v-if="editor !== null" class="dialog-backdrop" @click.self="editor = null">
+        <div v-if="editor !== null && (editor === 'create' ? canCreatePricing : canUpdatePricing)" class="dialog-backdrop" @click.self="editor = null">
             <form class="dialog pricing-dialog" @submit.prevent="submit">
                 <header><div><h3>{{ editor === 'create' ? l('create') : l('edit') }}</h3><p>{{ l('automatic') }}</p></div><button type="button" @click="editor = null">×</button></header>
                 <div class="dialog-body form-grid">

@@ -2,7 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Models\Branch;
+use App\Models\BranchMembership;
+use App\Models\DashboardPermissionProfile;
 use App\Models\Order;
+use App\Models\Tenant;
 use App\Models\User;
 use App\Tenancy\TenantContext;
 use Database\Seeders\DemoSeeder;
@@ -165,6 +169,169 @@ class CourierLocationTest extends TestCase
         $this->assertSame('33.3200111', $order->pickup_latitude);
         $this->assertSame('44.4100222', $order->pickup_longitude);
         $this->assertSame('متجر التاجر — الكرادة', $order->pickup_location_label);
+    }
+
+    public function test_dashboard_location_page_lists_active_couriers_and_only_exposes_a_fresh_selected_position(): void
+    {
+        $admin = User::where('role', 'admin')->firstOrFail();
+        $courier = User::where('username', 'مندوب')->firstOrFail();
+        $courier->update([
+            'address' => 'بغداد — الكرادة — شارع 62',
+            'current_latitude' => 33.3152412,
+            'current_longitude' => 44.3660731,
+            'location_accuracy_meters' => 18,
+            'location_updated_at' => now(),
+        ]);
+
+        $withoutLocation = User::create([
+            'tenant_id' => $courier->tenant_id,
+            'name' => 'مندوب بلا موقع',
+            'username' => 'courier-without-location',
+            'email' => 'courier-without-location@example.test',
+            'phone' => '07720000009',
+            'password' => 'Password123!',
+            'role' => 'pickup_courier',
+            'status' => 'active',
+            'is_online' => false,
+        ]);
+
+        $hiddenInactiveCourier = User::create([
+            'tenant_id' => $courier->tenant_id,
+            'name' => 'مندوب موقوف',
+            'username' => 'suspended-courier-location',
+            'email' => 'suspended-courier-location@example.test',
+            'phone' => '07720000010',
+            'password' => 'Password123!',
+            'role' => 'delivery_courier',
+            'status' => 'suspended',
+            'current_latitude' => 33.3200000,
+            'current_longitude' => 44.3700000,
+            'location_updated_at' => now(),
+        ]);
+
+        $this->actingAs($admin)
+            ->get('/dashboard/couriers/locations')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Admin/CourierLocations')
+                ->has('couriers', 2)
+                ->where('couriers.0.id', $courier->id)
+                ->where('couriers.0.location.latitude', 33.3152412)
+                ->where('couriers.0.location.longitude', 44.3660731)
+                ->where('couriers.0.location.accuracy_meters', 18)
+                ->where('couriers.0.location.address_label', 'بغداد — الكرادة — شارع 62')
+                ->where('couriers.1.id', $withoutLocation->id)
+                ->where('couriers.1.location', null));
+
+        $this->assertDatabaseHas('users', [
+            'id' => $hiddenInactiveCourier->id,
+            'current_latitude' => '33.3200000',
+        ]);
+    }
+
+    public function test_branch_dashboard_accounts_cannot_open_the_platform_wide_courier_locations_page(): void
+    {
+        $courier = User::where('username', 'مندوب')->firstOrFail();
+        $branchOwner = User::create([
+            'tenant_id' => $courier->tenant_id,
+            'name' => 'مالك فرع المواقع',
+            'username' => 'branch-owner-locations',
+            'email' => 'branch-owner-locations@example.test',
+            'phone' => '07720000011',
+            'password' => 'Password123!',
+            'role' => 'owner',
+            'status' => 'active',
+        ]);
+
+        $response = $this->actingAs($branchOwner)->get('/dashboard/couriers/locations');
+
+        $response->assertRedirect();
+        $this->assertStringEndsWith('/dashboard/branch', (string) $response->headers->get('Location'));
+    }
+
+    public function test_delegated_dashboard_operator_only_receives_couriers_in_its_tenant_or_explicit_branches(): void
+    {
+        $platform = Tenant::platform();
+        $courierTenant = User::where('username', 'مندوب')->value('tenant_id');
+        $profile = DashboardPermissionProfile::create([
+            'name' => 'مشاهدة مواقع مقيدة',
+            'permissions' => ['courier_locations' => ['view']],
+        ]);
+        $operator = User::create([
+            'tenant_id' => $platform->id,
+            'name' => 'مشغل مواقع مقيد',
+            'username' => 'scoped-location-operator',
+            'email' => 'scoped-location-operator@example.test',
+            'phone' => '07980000111',
+            'password' => 'Password123!',
+            'role' => 'admin',
+            'status' => 'active',
+            'permission_profile_id' => $profile->id,
+        ]);
+        $allowedBranch = Branch::withoutGlobalScopes()->create([
+            'tenant_id' => $platform->id,
+            'code' => 'LOC-SCOPE',
+            'name_ar' => 'فرع مواقع مقيد',
+            'is_platform_managed' => true,
+            'is_active' => true,
+        ]);
+        $operator->managedBranches()->attach($allowedBranch->id, [
+            'access_role' => BranchMembership::MANAGER,
+        ]);
+
+        $ownTenantCourier = $this->locationCourier([
+            'tenant_id' => $platform->id,
+            'name' => 'مندوب نفس المستأجر',
+            'username' => 'same-tenant-location-courier',
+            'email' => 'same-tenant-location-courier@example.test',
+            'phone' => '07720000012',
+        ]);
+        $allowedBranchCourier = $this->locationCourier([
+            'tenant_id' => $courierTenant,
+            'branch_id' => $allowedBranch->id,
+            'name' => 'مندوب فرع مسموح',
+            'username' => 'allowed-branch-location-courier',
+            'email' => 'allowed-branch-location-courier@example.test',
+            'phone' => '07720000013',
+        ]);
+        $foreignCourier = $this->locationCourier([
+            'tenant_id' => $courierTenant,
+            'name' => 'مندوب مستأجر آخر',
+            'username' => 'foreign-location-courier',
+            'email' => 'foreign-location-courier@example.test',
+            'phone' => '07720000014',
+        ]);
+
+        $response = $this->actingAs($operator)->get('/dashboard/couriers/locations');
+
+        $response
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Admin/CourierLocations')
+                ->has('couriers', 2));
+
+        $visibleIds = collect($response->inertiaPage()['props']['couriers'])
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $this->assertContains($ownTenantCourier->id, $visibleIds);
+        $this->assertContains($allowedBranchCourier->id, $visibleIds);
+        $this->assertNotContains($foreignCourier->id, $visibleIds);
+    }
+
+    /** @param array<string, mixed> $attributes */
+    private function locationCourier(array $attributes): User
+    {
+        return User::create($attributes + [
+            'password' => 'Password123!',
+            'role' => 'courier',
+            'status' => 'active',
+            'is_online' => true,
+            'current_latitude' => 33.3152412,
+            'current_longitude' => 44.3660731,
+            'location_updated_at' => now(),
+        ]);
     }
 
     public function test_courier_can_clear_their_shared_point_and_the_dashboard_hides_stale_points(): void

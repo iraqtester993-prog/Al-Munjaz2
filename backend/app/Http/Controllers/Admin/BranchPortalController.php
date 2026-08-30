@@ -12,6 +12,7 @@ use App\Models\Order;
 use App\Models\Scopes\TenantScope;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\CourierLocationService;
 use App\Services\OrderOperationalAssignmentService;
 use App\Services\OrderPickupRecoveryService;
 use App\Services\OrderWorkflowService;
@@ -70,6 +71,13 @@ class BranchPortalController extends Controller
                 'name_en' => $branch->name_en,
                 'name_ku' => $branch->name_ku,
                 'city' => $branch->city,
+                'province_id' => $branch->province_id ? (int) $branch->province_id : null,
+                'province' => $branch->province ? [
+                    'id' => $branch->province->id,
+                    'name_ar' => $branch->province->name_ar,
+                    'name_en' => $branch->province->name_en,
+                    'name_ku' => $branch->province->name_ku,
+                ] : null,
                 'phone' => $branch->phone,
                 'address' => $branch->address,
                 'is_active' => $branch->is_active,
@@ -229,10 +237,6 @@ class BranchPortalController extends Controller
         $actor = $this->operator($request, $permission);
         $data = $request->validate(['status' => ['required', Rule::in(['active', 'suspended', 'pending', 'rejected'])]]);
         $user = $this->scopedOperationalUser($user, $this->allowedBranchIds($actor));
-
-        if ($user->isCourierRole() && $data['status'] === 'active' && $user->documents()->where('status', '!=', 'approved')->exists()) {
-            return back()->withErrors(['status' => 'لا يمكن تفعيل المندوب قبل اعتماد جميع وثائقه.']);
-        }
 
         $user->update([
             'status' => $data['status'],
@@ -444,6 +448,7 @@ class BranchPortalController extends Controller
                 });
             })
             ->with([
+                'province:id,name_ar,name_en,name_ku',
                 'memberships' => fn ($memberships) => $memberships
                     ->where('user_id', $user->id)
                     ->where('access_role', $requiredAccessRole),
@@ -712,7 +717,7 @@ class BranchPortalController extends Controller
             ->limit(200)
             ->get([
                 'id', 'tenant_id', 'branch_id', 'name', 'username', 'email', 'phone', 'role', 'vehicle', 'address', 'identity_number',
-                'status', 'is_online', 'last_active_at', 'created_at',
+                'status', 'is_online', 'last_active_at', 'current_latitude', 'current_longitude', 'location_accuracy_meters', 'location_updated_at', 'created_at',
             ])
             ->map(fn (User $courier) => $this->courierPayload($courier, $branchLookup))
             ->values();
@@ -848,9 +853,47 @@ class BranchPortalController extends Controller
             'last_active_at' => $courier->last_active_at?->toIso8601String(),
             'created_at' => $courier->created_at?->toIso8601String(),
             'branch' => $this->branchPayload($branchLookup->get((int) $courier->branch_id)),
+            // A branch portal receives an operational pin only for an
+            // assigned courier with a recently consented location. It never
+            // receives a coordinate history or an old point presented as live.
+            'location' => $this->freshCourierLocationPayload($courier),
             // Courier documents are reviewed internally. They never grant
             // the public merchant verification mark.
             'documents' => $this->documentsPayload($courier),
+        ];
+    }
+
+    /**
+     * The branch-scoped courier list already applies the membership-derived
+     * `branch_id` boundary in `couriers()`. This helper only decides whether
+     * the current, last-known point is recent enough to expose for that
+     * already-authorised courier.
+     *
+     * @return array{latitude:float,longitude:float,accuracy_meters:int|null,updated_at:string,address_label:string|null}|null
+     */
+    private function freshCourierLocationPayload(User $courier): ?array
+    {
+        if (
+            $courier->current_latitude === null
+            || $courier->current_longitude === null
+            || $courier->location_updated_at === null
+            || $courier->location_updated_at->lessThan(
+                now()->subMinutes(CourierLocationService::OPERATIONAL_FRESHNESS_MINUTES),
+            )
+        ) {
+            return null;
+        }
+
+        $addressLabel = trim((string) $courier->address);
+
+        return [
+            'latitude' => (float) $courier->current_latitude,
+            'longitude' => (float) $courier->current_longitude,
+            'accuracy_meters' => $courier->location_accuracy_meters === null
+                ? null
+                : (int) $courier->location_accuracy_meters,
+            'updated_at' => $courier->location_updated_at->toIso8601String(),
+            'address_label' => $addressLabel === '' ? null : $addressLabel,
         ];
     }
 

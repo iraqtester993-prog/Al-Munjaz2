@@ -22,18 +22,32 @@ class BranchController extends Controller
 {
     public function index(Request $request)
     {
-        $platformTenant = Tenant::platform();
-        $branches = $this->networkBranches()
+        $canCreateBranches = $request->user()->canUseAdminPermission('branches', 'create');
+        $canUpdateBranches = $request->user()->canUseAdminPermission('branches', 'update');
+        $canManageBranches = $canCreateBranches || $canUpdateBranches;
+
+        $branchQuery = $this->networkBranches()
             ->with('province:id,name_ar,name_en,name_ku')
-            ->with(['members' => fn ($members) => $members->select('users.id', 'users.name', 'users.username', 'users.role', 'users.status')])
             ->withCount([
                 'users',
                 'originOrders as outbound_orders_count',
                 'destinationOrders as inbound_orders_count',
-            ])
+            ]);
+
+        // Branch accounts and their legacy dashboard permissions are only
+        // needed when provisioning or changing branch access. A read-only
+        // branch viewer should not receive staff usernames or privilege maps.
+        if ($canManageBranches) {
+            $branchQuery->with([
+                'members' => fn ($members) => $members->select('users.id', 'users.name', 'users.username', 'users.email', 'users.role', 'users.status'),
+            ]);
+        }
+
+        $branches = $branchQuery
             ->orderBy('name_ar')
             ->get()
-            ->map(fn (Branch $branch) => [
+            ->map(function (Branch $branch) use ($canManageBranches): array {
+                $payload = [
                 'id' => $branch->id,
                 'code' => $branch->code,
                 'name_ar' => $branch->name_ar,
@@ -57,54 +71,72 @@ class BranchController extends Controller
                 // departures (or count a cross-branch route twice).
                 'outbound_orders_count' => $branch->outbound_orders_count,
                 'inbound_orders_count' => $branch->inbound_orders_count,
-                // Passwords are intentionally never returned after the one-time
-                // creation flash.  The dashboard may still audit which access
-                // accounts have been granted to this branch.
-                'access_accounts' => $branch->members->map(fn (User $user) => [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'username' => $user->username,
-                    'role' => $user->pivot?->access_role === BranchMembership::OWNER ? 'owner' : 'branch_manager',
-                    'status' => $user->status,
-                    'permissions' => $user->dashboard_permissions ?? [],
-                ])->values(),
-            ]);
+                ];
 
-        return Inertia::render('Admin/Branches', [
+                if ($canManageBranches) {
+                    // Passwords are intentionally never returned after the
+                    // one-time creation flash. The dashboard may still audit
+                    // which access accounts have been granted to this branch.
+                    $payload['access_accounts'] = $branch->members->map(fn (User $user) => [
+                        'id' => $user->id,
+                        'name' => $user->name,
+                        'username' => $user->username,
+                        'email' => $user->email,
+                        'role' => $user->pivot?->access_role === BranchMembership::OWNER ? 'owner' : 'branch_manager',
+                        'status' => $user->status,
+                        'permissions' => $user->dashboard_permissions ?? [],
+                    ])->values();
+                }
+
+                return $payload;
+            });
+
+        $props = [
             'branches' => $branches,
+            'canCreateBranches' => $canCreateBranches,
+            'canUpdateBranches' => $canUpdateBranches,
+            'canManageBranches' => $canManageBranches,
+        ];
+
+        if ($canManageBranches) {
+            $platformTenant = Tenant::platform();
             // A platform owner may be explicitly attached to more than one
             // branch. Only already-active dashboard accounts from the
             // platform tenant are exposed for that safe assignment.
-            'accessUsers' => User::query()
+            $props['accessUsers'] = User::query()
                 ->where('tenant_id', $platformTenant->id)
                 ->where('status', 'active')
                 ->whereIn('role', ['owner', 'branch_manager'])
                 ->orderBy('name')
                 ->orderBy('id')
-                ->get(['id', 'name', 'username', 'role', 'dashboard_permissions'])
+                ->get(['id', 'name', 'username', 'email', 'role', 'dashboard_permissions'])
                 ->map(fn (User $user) => [
                     'id' => $user->id,
                     'name' => $user->name,
                     'username' => $user->username,
+                    'email' => $user->email,
                     'role' => $user->role,
                     'permissions' => $user->dashboard_permissions ?? [],
                 ])
-                ->values(),
-            'provinces' => Province::query()
-                ->whereNull('tenant_id')
+                ->values();
+            $props['provinces'] = Province::query()
+                ->platform()
+                ->active()
                 ->orderBy('sort_order')
                 ->orderBy('name_ar')
-                ->get(['id', 'name_ar', 'name_en', 'name_ku'])
-                ->values(),
-            'dashboardPermissions' => User::DASHBOARD_PERMISSIONS,
-        ]);
+                ->get(['id', 'name_ar', 'name_en', 'name_ku', 'is_active'])
+                ->values();
+            $props['dashboardPermissions'] = User::DASHBOARD_PERMISSIONS;
+        }
+
+        return Inertia::render('Admin/Branches', $props);
     }
 
     public function store(Request $request)
     {
         $platformTenant = Tenant::platform();
         $branch = null;
-        $credentials = null;
+        $credentials = [];
 
         \DB::transaction(function () use ($request, $platformTenant, &$branch, &$credentials): void {
             $branch = Branch::withoutGlobalScope(TenantScope::class)->create($this->validatedBranchData($request) + [
@@ -113,16 +145,18 @@ class BranchController extends Controller
                 'is_active' => true,
             ]);
 
-            if ($request->boolean('create_access_account')) {
-                $credentials = $this->createBranchAccessAccount($request, $branch, $platformTenant);
-            }
+            // A governorate cannot be operational without a local dashboard
+            // account. This account is always newly provisioned rather than
+            // accepting a browser-selected existing account, so its single
+            // membership remains the authorisation boundary for its branch.
+            $credentials = $this->createGeneratedBranchManager($branch, $platformTenant);
         });
 
         $this->record($request, $branch, 'branch.created', ['is_active' => true]);
 
         $response = back()->with('success', __('Branch created successfully.'));
 
-        return $credentials ? $response->with('branch_credentials', $credentials) : $response;
+        return $response->with('branch_credentials', $credentials);
     }
 
     /**
@@ -152,6 +186,7 @@ class BranchController extends Controller
             'user_id' => $credentials['user_id'],
             'role' => $credentials['role'],
             'username' => $credentials['username'],
+            'email' => $credentials['email'],
         ]);
 
         return back()
@@ -241,13 +276,21 @@ class BranchController extends Controller
             $uniqueProvince->ignore($branch->id);
         }
 
+        $provinceExists = Rule::exists('provinces', 'id')->whereNull('tenant_id');
+        // A historic branch may retain its disabled governorate long enough
+        // for an operator to correct its name or contact details. New branch
+        // assignments (and a move to another governorate) must be active.
+        if (! $branch || (int) $request->input('province_id') !== (int) $branch->province_id) {
+            $provinceExists->where('is_active', true);
+        }
+
         $data = $request->validate([
             'code' => ['required', 'string', 'max:20', $uniqueCode],
             'name_ar' => ['required', 'string', 'max:120'],
             'name_en' => ['nullable', 'string', 'max:120'],
             'name_ku' => ['nullable', 'string', 'max:120'],
             'city' => ['required', 'string', 'max:60'],
-            'province_id' => ['required', 'integer', Rule::exists('provinces', 'id')->whereNull('tenant_id'), $uniqueProvince],
+            'province_id' => ['required', 'integer', $provinceExists, $uniqueProvince],
             'phone' => ['nullable', 'string', 'max:30'],
             'address' => ['nullable', 'string', 'max:255'],
         ]);
@@ -256,16 +299,55 @@ class BranchController extends Controller
     }
 
     /**
+     * Provision the one local manager that is created together with every
+     * operating branch. Its email is a dashboard login identifier, not an
+     * invitation or a recoverable secret; only the one-time flash response
+     * contains the plaintext password.
+     *
+     * @return array{user_id:int,branch_id:int,branch_name:string,province_id:int,province:array{id:int,name_ar:string,name_en:?string,name_ku:?string}|null,role:string,username:string,email:string,password:string,login_url:string}
+     */
+    private function createGeneratedBranchManager(Branch $branch, Tenant $platformTenant): array
+    {
+        $branch->loadMissing('province:id,name_ar,name_en,name_ku');
+
+        $username = $this->nextBranchUsername($branch->code);
+        $email = $this->nextBranchEmail($branch->code);
+        $password = $this->generatedPassword();
+        $manager = User::create([
+            'tenant_id' => $platformTenant->id,
+            'branch_id' => $branch->id,
+            'name' => Str::limit('مدير '.($branch->name_ar ?: $branch->code), 120, ''),
+            'username' => $username,
+            'email' => $email,
+            // Dashboard accounts use email/password, so this is an internal
+            // unique contact marker rather than a real person's phone number.
+            'phone' => 'branch-manager-'.$branch->id,
+            'password' => $password,
+            'role' => 'branch_manager',
+            'status' => 'active',
+            'locale' => 'ar',
+            'theme' => 'light',
+            'dashboard_permissions' => $this->resolvedPermissions('branch_manager', null),
+        ]);
+
+        $branch->members()->attach($manager->id, [
+            'access_role' => BranchMembership::MANAGER,
+        ]);
+
+        return $this->branchCredentials($manager, $branch, $password);
+    }
+
+    /**
      * Create a least-privilege account whose only dashboard visibility is the
-     * one branch membership below.  The plaintext password exists solely in
+     * one branch membership below. The plaintext password exists solely in
      * the immediate Inertia flash response; it is never stored in a setting,
      * activity payload, or API response.
      *
-     * @return array{user_id:int,branch_id:int,branch_name:string,role:string,username:string,password:string,login_url:string}
+     * @return array{user_id:int,branch_id:int,branch_name:string,province_id:int,province:array{id:int,name_ar:string,name_en:?string,name_ku:?string}|null,role:string,username:string,email:string,password:string,login_url:string}
      */
     private function createBranchAccessAccount(Request $request, Branch $branch, Tenant $platformTenant): array
     {
-        foreach (['access_name', 'access_phone', 'access_username'] as $field) {
+        foreach (['access_name', 'access_phone', 'access_username', 'access_email'] as $field) {
             if (is_string($request->input($field))) {
                 $request->merge([$field => trim((string) $request->input($field))]);
             }
@@ -275,6 +357,7 @@ class BranchController extends Controller
             'access_name' => ['required', 'string', 'max:120'],
             'access_phone' => ['required', 'string', 'max:30', Rule::unique('users', 'phone')],
             'access_username' => ['nullable', 'string', 'alpha_dash', 'min:3', 'max:60', Rule::unique('users', 'username')],
+            'access_email' => ['nullable', 'email', 'max:190', Rule::unique('users', 'email')],
             'access_password' => ['nullable', 'string', 'min:10', 'max:120'],
             'access_role' => ['required', Rule::in(['owner', 'branch_manager'])],
             'access_permissions' => ['nullable', 'array'],
@@ -284,6 +367,9 @@ class BranchController extends Controller
         $username = filled($data['access_username'] ?? null)
             ? $data['access_username']
             : $this->nextBranchUsername($branch->code);
+        $email = filled($data['access_email'] ?? null)
+            ? $data['access_email']
+            : $this->nextBranchEmail($branch->code);
         $password = filled($data['access_password'] ?? null)
             ? $data['access_password']
             : $this->generatedPassword();
@@ -294,6 +380,7 @@ class BranchController extends Controller
             'branch_id' => $branch->id,
             'name' => $data['access_name'],
             'username' => $username,
+            'email' => $email,
             'phone' => $data['access_phone'],
             'password' => $password,
             'role' => $role,
@@ -307,15 +394,7 @@ class BranchController extends Controller
             'access_role' => $role === 'owner' ? BranchMembership::OWNER : BranchMembership::MANAGER,
         ]);
 
-        return [
-            'user_id' => $user->id,
-            'branch_id' => $branch->id,
-            'branch_name' => $branch->name_ar ?: $branch->code,
-            'role' => $role,
-            'username' => $username,
-            'password' => $password,
-            'login_url' => url('/dashboard/login'),
-        ];
+        return $this->branchCredentials($user, $branch, $password);
     }
 
     /**
@@ -379,11 +458,65 @@ class BranchController extends Controller
         return $candidate;
     }
 
+    private function nextBranchEmail(string $branchCode): string
+    {
+        $slug = Str::lower(Str::slug($branchCode));
+        $domain = Str::lower(trim((string) config('app.product_domain', 'almunjaz.local')));
+
+        // The configured product domain is deployment-controlled. Keep a
+        // valid local fallback so provisioning never emits an unusable email
+        // if a local development config has not supplied one yet.
+        if (! filter_var('manager@'.$domain, FILTER_VALIDATE_EMAIL)) {
+            $domain = 'almunjaz.local';
+        }
+
+        $maxLocalLength = max(3, min(64, 190 - strlen($domain) - 1));
+        $base = Str::limit('branch-manager-'.($slug ?: 'access'), $maxLocalLength, '');
+        $candidate = $base.'@'.$domain;
+        $suffix = 1;
+
+        while (User::withTrashed()->where('email', $candidate)->exists()) {
+            $suffix++;
+            $suffixText = '-'.$suffix;
+            $local = Str::limit($base, max(1, $maxLocalLength - strlen($suffixText)), '').$suffixText;
+            $candidate = $local.'@'.$domain;
+        }
+
+        return $candidate;
+    }
+
     private function generatedPassword(): string
     {
-        // The markers guarantee an immediately usable strong password while
-        // the random segment keeps it unguessable. It is shown exactly once.
-        return 'Mn!'.Str::random(14).'7';
+        // Laravel's generator uses random_int and guarantees a mixture of
+        // letters, numbers, and symbols. The plaintext is shown exactly once.
+        return Str::password(20, true, true, true, false);
+    }
+
+    /**
+     * @return array{user_id:int,branch_id:int,branch_name:string,province_id:int,province:array{id:int,name_ar:string,name_en:?string,name_ku:?string}|null,role:string,username:string,email:string,password:string,login_url:string}
+     */
+    private function branchCredentials(User $user, Branch $branch, string $password): array
+    {
+        $branch->loadMissing('province:id,name_ar,name_en,name_ku');
+
+        return [
+            'user_id' => $user->id,
+            'branch_id' => $branch->id,
+            'branch_name' => $branch->name_ar ?: $branch->code,
+            'province_id' => (int) $branch->province_id,
+            'province_name' => $branch->province?->name_ar,
+            'province' => $branch->province ? [
+                'id' => $branch->province->id,
+                'name_ar' => $branch->province->name_ar,
+                'name_en' => $branch->province->name_en,
+                'name_ku' => $branch->province->name_ku,
+            ] : null,
+            'role' => $user->role,
+            'username' => $user->username,
+            'email' => $user->email,
+            'password' => $password,
+            'login_url' => url('/dashboard/login'),
+        ];
     }
 
     /** @param array<int, string>|null $requested */

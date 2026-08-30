@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\ActivityLog;
 use App\Models\Branch;
 use App\Models\Order;
 use App\Models\OrderMovement;
@@ -13,6 +14,7 @@ use App\Services\OrderPickupRecoveryService;
 use App\Services\OrderWorkflowService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 
@@ -20,15 +22,42 @@ class AdminOrderController extends Controller
 {
     public function index(Request $request)
     {
-        $request->validate([
-            'filter' => ['nullable', Rule::in(array_merge(['all'], Order::FILTERABLE_STATUSES))],
+        $canUpdateOrders = $request->user()->canUseAdminPermission('orders', 'update');
+        $rules = [
+            'filter' => ['nullable', Rule::in(array_merge(['all', 'deleted'], Order::FILTERABLE_STATUSES))],
             'q' => ['nullable', 'string', 'max:120'],
-        ]);
+        ];
+
+        // Courier filtering is backed by the assignment directory below.
+        // A view-only operator can inspect orders, but must not use a hidden
+        // query parameter as an alternate way to inspect that directory.
+        if ($canUpdateOrders) {
+            $rules['courier_id'] = [
+            // This is deliberately limited to direct-order roles. A branch
+            // transporter can never be used as a hidden filter to inspect
+            // unrelated order data through the operations dashboard.
+                'nullable',
+                'integer',
+                Rule::exists('users', 'id')->where(fn ($users) => $users
+                    ->whereIn('role', User::DIRECT_ORDER_COURIER_ROLES)
+                    ->whereNull('deleted_at')),
+            ];
+        }
+
+        $request->validate($rules);
 
         // The operations dashboard serves the whole platform, including
         // merchant-owned orders and the shared branch network.
         $allOrders = Order::withoutGlobalScope(TenantScope::class);
-        $query = (clone $allOrders)->with([
+        $filter = $request->input('filter', 'all');
+        $showDeleted = $filter === 'deleted';
+
+        // Deleted orders are never silently discarded. They remain available
+        // to platform administration for review and a one-click restore.
+        $query = $showDeleted
+            ? (clone $allOrders)->onlyTrashed()
+            : clone $allOrders;
+        $query = $query->with([
             'courier:id,name,phone,vehicle',
             'pickupCourier:id,name,phone,vehicle',
             'deliveryCourier:id,name,phone,vehicle',
@@ -46,27 +75,48 @@ class AdminOrderController extends Controller
                 ->latest('occurred_at'),
         ]);
 
-        if ($request->input('filter') !== 'all' && $request->filled('filter')) {
-            $query->operationalStatus($request->input('filter'));
+        if ($filter !== 'all' && ! $showDeleted) {
+            $query->operationalStatus($filter);
         }
 
-        if ($q = $request->input('q')) {
+        $q = trim((string) $request->input('q', ''));
+        if ($q !== '') {
             $query->where(function ($b) use ($q) {
                 $b->where('track_no', 'like', "%{$q}%")
                     ->orWhere('customer_name_ar', 'like', "%{$q}%")
-                    ->orWhere('phone', 'like', "%{$q}%");
+                    ->orWhere('customer_name_en', 'like', "%{$q}%")
+                    ->orWhere('phone', 'like', "%{$q}%")
+                    ->orWhereHas('courier', fn ($courier) => $courier
+                        ->where(fn ($match) => $match
+                            ->where('name', 'like', "%{$q}%")
+                            ->orWhere('phone', 'like', "%{$q}%")))
+                    ->orWhereHas('pickupCourier', fn ($courier) => $courier
+                        ->where(fn ($match) => $match
+                            ->where('name', 'like', "%{$q}%")
+                            ->orWhere('phone', 'like', "%{$q}%")))
+                    ->orWhereHas('deliveryCourier', fn ($courier) => $courier
+                        ->where(fn ($match) => $match
+                            ->where('name', 'like', "%{$q}%")
+                            ->orWhere('phone', 'like', "%{$q}%")));
             });
         }
 
-        $orders = $query->latest('id')->paginate(25);
-        $orderCollection = $orders->getCollection();
-        $visibleTenantIds = $orderCollection
-            ->pluck('tenant_id')
-            ->filter()
-            ->map(fn ($tenantId) => (int) $tenantId)
-            ->unique()
-            ->values();
+        $courierId = $canUpdateOrders ? $request->integer('courier_id') : null;
 
+        if ($courierId) {
+            // A courier may own the whole order or only one operational leg.
+            // All three links are intentionally included so the selector
+            // reflects the actual work history of that courier.
+            $query->where(function ($assignments) use ($courierId) {
+                $assignments
+                    ->where('courier_id', $courierId)
+                    ->orWhere('pickup_courier_id', $courierId)
+                    ->orWhere('delivery_courier_id', $courierId);
+            });
+        }
+
+        $orders = $query->latest('id')->paginate(25)->withQueryString();
+        $orderCollection = $orders->getCollection();
         // Movements retain the branch that was selected at that point in the
         // route. Resolve them without a tenant scope so an administrator can
         // accurately inspect a shared-network route as well as a merchant's
@@ -96,59 +146,88 @@ class AdminOrderController extends Controller
             $counts[$status] = (clone $allOrders)->where('status', $status)->count();
         }
         $counts['late'] = (clone $allOrders)->operationalStatus('late')->count();
+        $counts['deleted'] = (clone $allOrders)->onlyTrashed()->count();
 
-        $couriers = User::query()
-            ->whereIn('role', User::DIRECT_ORDER_COURIER_ROLES)
-            ->where('status', 'active')
-            ->with('provinces:id,name_ar')
-            ->get(['id', 'name', 'phone', 'role'])
-            ->map(fn (User $courier) => [
-                'id' => $courier->id,
-                'name' => $courier->name,
-                'phone' => $courier->phone,
-                'role' => $courier->role,
-                'assignment_roles' => app(OrderOperationalAssignmentService::class)->modesFor($courier),
-                'provinces' => $courier->provinces->map(fn ($province) => [
-                    'id' => $province->id,
-                    'name_ar' => $province->name_ar,
-                ])->all(),
-            ]);
+        $assignmentProps = [];
 
-        // Do not expose every merchant's private branch in every assignment
-        // dialog. The global operations network is shared; tenant-owned
-        // branches are returned only for merchants represented on this page.
-        $branchQuery = Branch::withoutGlobalScope(TenantScope::class)
-            ->where('is_active', true);
+        if ($canUpdateOrders) {
+            $visibleTenantIds = $orderCollection
+                ->pluck('tenant_id')
+                ->filter()
+                ->map(fn ($tenantId) => (int) $tenantId)
+                ->unique()
+                ->values();
 
-        if ($visibleTenantIds->isEmpty()) {
-            $branchQuery->where('is_platform_managed', true);
-        } else {
-            $branchQuery->where(function ($branches) use ($visibleTenantIds): void {
-                $branches
-                    ->where('is_platform_managed', true)
-                    ->orWhereIn('tenant_id', $visibleTenantIds->all());
-            });
+            $assignmentProps['couriers'] = User::query()
+                ->whereIn('role', User::DIRECT_ORDER_COURIER_ROLES)
+                ->where('status', 'active')
+                ->with('provinces:id,name_ar')
+                ->get(['id', 'name', 'phone', 'role'])
+                ->map(fn (User $courier) => [
+                    'id' => $courier->id,
+                    'name' => $courier->name,
+                    'phone' => $courier->phone,
+                    'role' => $courier->role,
+                    'assignment_roles' => app(OrderOperationalAssignmentService::class)->modesFor($courier),
+                    'provinces' => $courier->provinces->map(fn ($province) => [
+                        'id' => $province->id,
+                        'name_ar' => $province->name_ar,
+                    ])->all(),
+                ]);
+
+            // Keep the assignment list above active-only, but give the order
+            // search UI a complete non-deleted operational history. A suspended
+            // courier can no longer be assigned new work, yet administrators
+            // still need to find the orders previously assigned to that account.
+            $assignmentProps['courierFilters'] = User::query()
+                ->whereIn('role', User::DIRECT_ORDER_COURIER_ROLES)
+                ->orderBy('name')
+                ->get(['id', 'name', 'phone', 'role', 'status'])
+                ->map(fn (User $courier) => [
+                    'id' => $courier->id,
+                    'name' => $courier->name,
+                    'phone' => $courier->phone,
+                    'role' => $courier->role,
+                    'status' => $courier->status,
+                ]);
+
+            // Do not expose every merchant's private branch in every assignment
+            // dialog. The global operations network is shared; tenant-owned
+            // branches are returned only for merchants represented on this page.
+            $branchQuery = Branch::withoutGlobalScope(TenantScope::class)
+                ->where('is_active', true);
+
+            if ($visibleTenantIds->isEmpty()) {
+                $branchQuery->where('is_platform_managed', true);
+            } else {
+                $branchQuery->where(function ($branches) use ($visibleTenantIds): void {
+                    $branches
+                        ->where('is_platform_managed', true)
+                        ->orWhereIn('tenant_id', $visibleTenantIds->all());
+                });
+            }
+
+            $assignmentProps['branches'] = $branchQuery
+                ->orderBy('name_ar')
+                ->get(['id', 'tenant_id', 'code', 'name_ar', 'city', 'is_platform_managed'])
+                ->map(fn (Branch $branch) => [
+                    'id' => $branch->id,
+                    'tenant_id' => $branch->tenant_id,
+                    'code' => $branch->code,
+                    'name' => $branch->name_ar,
+                    'city' => $branch->city,
+                    'is_platform_managed' => $branch->is_platform_managed,
+                ]);
         }
-
-        $branches = $branchQuery
-            ->orderBy('name_ar')
-            ->get(['id', 'tenant_id', 'code', 'name_ar', 'city', 'is_platform_managed'])
-            ->map(fn (Branch $branch) => [
-                'id' => $branch->id,
-                'tenant_id' => $branch->tenant_id,
-                'code' => $branch->code,
-                'name' => $branch->name_ar,
-                'city' => $branch->city,
-                'is_platform_managed' => $branch->is_platform_managed,
-            ]);
 
         return Inertia::render('Admin/Orders', [
             'orders' => $orders,
             'counts' => $counts,
             'filter' => $request->input('filter', 'all'),
-            'q' => $request->input('q', ''),
-            'couriers' => $couriers,
-            'branches' => $branches,
+            'q' => $q,
+            'courierId' => $courierId ?: null,
+            'canUpdateOrders' => $canUpdateOrders,
+            ...$assignmentProps,
         ]);
     }
 
@@ -258,6 +337,41 @@ class AdminOrderController extends Controller
     }
 
     /**
+     * Merchant deletion is deliberately a soft delete. Give an administrator
+     * a safe recovery path instead of ever recreating an order by hand or
+     * losing its activity, chat, and ledger references.
+     */
+    public function restore(Request $request, int $orderId)
+    {
+        $trackNo = DB::transaction(function () use ($request, $orderId): string {
+            // Use an explicit id instead of the normal route binder, because
+            // the global binder intentionally excludes soft-deleted orders.
+            $order = Order::withoutGlobalScope(TenantScope::class)
+                ->withTrashed()
+                ->lockForUpdate()
+                ->findOrFail($orderId);
+
+            abort_unless($order->trashed(), 422, 'هذا الطلب ليس ضمن الطلبات المحذوفة.');
+
+            $order->restore();
+
+            ActivityLog::create([
+                'tenant_id' => $order->tenant_id,
+                'user_id' => $request->user()->id,
+                'action' => 'order.restored_by_admin',
+                'subject_type' => 'order',
+                'subject_id' => $order->id,
+                'data' => ['track_no' => $order->track_no, 'status' => $order->status],
+                'ip' => $request->ip(),
+            ]);
+
+            return $order->track_no;
+        });
+
+        return back()->with('success', 'تمت استعادة الطلب '.$trackNo.'.');
+    }
+
+    /**
      * Keep the dashboard's list and detail sheet driven by one operational
      * payload.  The client never has to infer a route, a ledger amount, or a
      * history item from presentation-only data.
@@ -327,6 +441,7 @@ class AdminOrderController extends Controller
             'date' => $order->date?->toDateString(),
             'created_at' => $this->iso($order->created_at),
             'updated_at' => $this->iso($order->updated_at),
+            'deleted_at' => $this->iso($order->deleted_at),
             'accepted_at' => $this->iso($order->accepted_at),
             'picked_at' => $this->iso($order->picked_at),
             'delivered_at' => $this->iso($order->delivered_at),

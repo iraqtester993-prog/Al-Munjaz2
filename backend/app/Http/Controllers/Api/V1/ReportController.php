@@ -14,7 +14,7 @@ class ReportController extends Controller
     public function finance(Request $request): JsonResponse
     {
         abort_unless(
-            $request->user()?->role === 'admin' && $request->user()->isActiveUser(),
+            $request->user()?->isSuperAdmin() && $request->user()->isActiveUser(),
             403,
         );
         $from = $request->date('from')?->startOfDay() ?? now()->subDays(29)->startOfDay();

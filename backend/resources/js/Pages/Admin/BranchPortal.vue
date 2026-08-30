@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { router, useForm, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import Flash from '../../Components/Flash.vue'
+import CourierLocationsMap from '../../Components/CourierLocationsMap.vue'
 import SheetModal from '../../Components/SheetModal.vue'
 
 const props = defineProps({
@@ -19,6 +20,7 @@ const selectedBranchKey = ref('all')
 const activeView = ref('overview')
 const theme = ref('light')
 const locale = ref('ar')
+const showAllLocationsMap = ref(false)
 const selectedOrder = ref(null)
 const detailsPerson = ref(null)
 const detailsKind = ref('merchant')
@@ -77,6 +79,11 @@ const copy = {
         orderList: 'قائمة طلبات الفرع',
         merchantList: 'تجار الفرع',
         courierList: 'مندوبي الفرع',
+        courierLocations: 'مواقع المندوبين',
+        allCourierLocations: 'جميع مواقع المندوبين',
+        courierLocationHint: 'تظهر المواقع الحديثة التي شاركها مندوبو الفروع المحددة فقط.',
+        noCourierLocations: 'لا توجد مواقع حديثة للمندوبين ضمن الفروع المحددة.',
+        showAllLocations: 'عرض جميع المواقع على الخريطة',
         noScopedOrders: 'لا توجد طلبات ضمن الفرع المحدد حالياً.',
         noMerchants: 'لا يوجد تجار مسجلون في هذا الفرع حالياً.',
         noCouriers: 'لا يوجد مندوبون مسجلون في هذا الفرع حالياً.',
@@ -176,6 +183,11 @@ const copy = {
         orderList: 'Branch order list',
         merchantList: 'Branch merchants',
         courierList: 'Branch couriers',
+        courierLocations: 'Courier locations',
+        allCourierLocations: 'All courier locations',
+        courierLocationHint: 'Only current locations shared by couriers in the selected branches are shown.',
+        noCourierLocations: 'There are no current courier locations in the selected branches.',
+        showAllLocations: 'Show all locations on map',
         noScopedOrders: 'There are no orders in the selected branch yet.',
         noMerchants: 'There are no merchants registered in this branch yet.',
         noCouriers: 'There are no couriers registered in this branch yet.',
@@ -275,6 +287,11 @@ const copy = {
         orderList: 'لیستی داواکارییەکانی لق',
         merchantList: 'بازرگانەکانی لق',
         courierList: 'گەیەنەرەکانی لق',
+        courierLocations: 'شوێنەکانی گەیەنەران',
+        allCourierLocations: 'هەموو شوێنەکانی گەیەنەران',
+        courierLocationHint: 'تەنها شوێنە نوێیە هاوبەشکراوەکانی گەیەنەرانی لقە دیاریکراوەکان پیشان دەدرێن.',
+        noCourierLocations: 'لە لقە دیاریکراوەکاندا هیچ شوێنێکی نوێی گەیەنەر نییە.',
+        showAllLocations: 'هەموو شوێنەکان لەسەر نەخشە پیشان بدە',
         noScopedOrders: 'لە ئێستادا هیچ داواکارییەک لەم لقە نییە.',
         noMerchants: 'لە ئێستادا هیچ بازرگانێک لەم لقەدا تۆمار نەکراوە.',
         noCouriers: 'لە ئێستادا هیچ گەیەنەرێک لەم لقەدا تۆمار نەکراوە.',
@@ -369,6 +386,7 @@ const tabs = computed(() => [
     { key: 'orders', label: text('orders'), count: visibleOrders.value.length },
     { key: 'merchants', label: text('merchants'), count: visibleMerchants.value.length },
     { key: 'couriers', label: text('couriers'), count: visibleCouriers.value.length },
+    { key: 'locations', label: text('courierLocations'), count: mappedCourierCount.value },
 ])
 
 const dashboardSummary = computed(() => {
@@ -417,6 +435,18 @@ const visibleCouriers = computed(() => {
     if (isAllBranches.value) return props.couriers
     return props.couriers.filter((courier) => Number(courier.branch_id) === Number(selectedBranchKey.value))
 })
+
+const mappedCourierCount = computed(() => visibleCouriers.value.filter((courier) => {
+    const latitude = Number(courier?.location?.latitude)
+    const longitude = Number(courier?.location?.longitude)
+
+    return Number.isFinite(latitude)
+        && Number.isFinite(longitude)
+        && latitude >= -90
+        && latitude <= 90
+        && longitude >= -180
+        && longitude <= 180
+}).length)
 
 function text(key) {
     return copy[locale.value]?.[key] || copy.ar[key] || key
@@ -902,6 +932,27 @@ onMounted(() => applyTheme(theme.value))
                 <div v-else class="empty-state"><span>⌁</span><p>{{ text('noCouriers') }}</p></div>
             </section>
 
+            <section v-else-if="branches.length && activeView === 'locations'" class="operational-panel">
+                <div class="section-heading">
+                    <div><span class="eyebrow">{{ text('courierLocations') }}</span><h2>{{ text('allCourierLocations') }}</h2></div>
+                    <span class="count-chip mono">{{ fmt(mappedCourierCount) }}</span>
+                </div>
+
+                <div class="location-overview-card">
+                    <span class="location-overview-icon" aria-hidden="true">
+                        <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-5.2 7-12A7 7 0 1 0 5 9c0 6.8 7 12 7 12Z" /><circle cx="12" cy="9" r="2.2" /><path d="M4 19h4M16 19h4" /></svg>
+                    </span>
+                    <div>
+                        <b>{{ text('allCourierLocations') }}</b>
+                        <p>{{ mappedCourierCount ? text('courierLocationHint') : text('noCourierLocations') }}</p>
+                    </div>
+                    <button type="button" class="manage-button primary location-overview-action" :disabled="!mappedCourierCount" @click="showAllLocationsMap = true">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s7-5.2 7-12A7 7 0 1 0 5 9c0 6.8 7 12 7 12Z" /><circle cx="12" cy="9" r="2.2" /></svg>
+                        {{ text('showAllLocations') }}
+                    </button>
+                </div>
+            </section>
+
             <SheetModal :open="!!selectedOrder" :title="text('orderManagement')" :subtitle="selectedOrder?.track_no" :wide="true" @close="closeOrder">
                 <div v-if="selectedOrder" class="portal-sheet">
                     <div class="sheet-order-summary">
@@ -1011,6 +1062,14 @@ onMounted(() => applyTheme(theme.value))
 
             <section v-if="!branches.length" class="empty-portal"><span>⌂</span><h1>{{ text('portal') }}</h1><p>{{ text('noBranches') }}</p></section>
         </main>
+
+        <CourierLocationsMap
+            v-if="showAllLocationsMap"
+            :couriers="visibleCouriers"
+            :locale="locale"
+            :theme="theme"
+            @close="showAllLocationsMap = false"
+        />
     </div>
 </template>
 
@@ -1041,6 +1100,7 @@ onMounted(() => applyTheme(theme.value))
 .card-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:11px;padding-top:10px;border-top:1px solid var(--border)}
 .manage-button{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 11px;border:1px solid color-mix(in srgb,var(--primary) 28%,var(--border));border-radius:9px;color:var(--primary-strong);background:var(--primary-tint);font:inherit;font-size:10px;font-weight:900;cursor:pointer}.manage-button:hover{filter:brightness(.97)}.manage-button:disabled{opacity:.55;cursor:not-allowed}.manage-button.primary{color:#fff;background:var(--primary);border-color:var(--primary)}.manage-button.success{color:var(--success);background:var(--success-tint);border-color:color-mix(in srgb,var(--success) 30%,var(--border))}.manage-button.warning{color:var(--warning);background:var(--warning-tint);border-color:color-mix(in srgb,var(--warning) 36%,var(--border))}.manage-button.danger{color:var(--danger);background:var(--danger-tint);border-color:color-mix(in srgb,var(--danger) 36%,var(--border))}
 .verified-mark{display:inline-flex;align-items:center;gap:4px;color:var(--success);font-size:9px;font-weight:900}.portal-sheet{display:grid;gap:13px}.sheet-order-summary,.person-sheet-head,.sheet-actions{display:flex;align-items:center;gap:10px}.sheet-order-summary{justify-content:space-between;padding:11px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2)}.sheet-data-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}.sheet-data-grid>div{min-width:0;padding:10px;border:1px solid var(--border);border-radius:11px;background:var(--surface-2)}.sheet-data-grid .wide{grid-column:span 2}.sheet-data-grid dt{color:var(--ink-faint);font-size:9px;font-weight:900}.sheet-data-grid dd{margin:5px 0 0;overflow-wrap:anywhere;color:var(--ink);font-size:11px;font-weight:800;line-height:1.55}.sheet-data-grid dd small{display:block;margin-top:3px;color:var(--ink-faint);font-size:9px}.note-value{color:var(--ink-soft)!important}.person-sheet-head{padding:12px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2)}.person-sheet-head>div{display:grid;flex:1;gap:2px;min-width:0}.person-sheet-head>div b{overflow:hidden;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.person-sheet-head>div span{color:var(--ink-faint);font-size:9px;font-weight:800}.person-sheet-head .person-avatar{width:39px;height:39px}.verification-state{display:inline-flex;padding:4px 7px;border-radius:999px;color:var(--warning);background:var(--warning-tint);font-size:9px;font-weight:900}.verification-state.verified{color:var(--success);background:var(--success-tint)}.verification-state.rejected{color:var(--danger);background:var(--danger-tint)}.portal-action-form,.edit-person-form{display:grid;gap:9px;padding:13px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2)}.portal-action-form h4{margin:0;color:var(--ink);font-size:12px}.portal-action-form label,.edit-person-form label{display:grid;gap:5px;color:var(--ink-soft);font-size:9px;font-weight:900}.portal-action-form select,.portal-action-form textarea,.edit-person-form input,.edit-person-form select,.edit-person-form textarea{box-sizing:border-box;width:100%;border:1px solid var(--border);border-radius:9px;outline:0;padding:8px 9px;color:var(--ink);background:var(--surface);font:inherit;font-size:11px;font-weight:700}.portal-action-form textarea,.edit-person-form textarea{resize:vertical}.portal-error{color:var(--danger);font-size:10px;font-weight:800}.documents-area{padding:12px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2)}.documents-area h4{margin:0 0 9px;font-size:12px}.document-row{display:flex;align-items:center;gap:7px;padding:8px 0;border-top:1px solid var(--border)}.document-row:first-of-type{border-top:0}.document-row>button{min-width:0;overflow:hidden;border:0;color:var(--primary-strong);background:transparent;font:inherit;font-size:9.5px;font-weight:900;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}.document-row>span{margin-inline-start:auto;padding:4px 6px;border-radius:999px;color:var(--warning);background:var(--warning-tint);font-size:8px;font-weight:900}.document-row>span.approved{color:var(--success);background:var(--success-tint)}.document-row>span.rejected{color:var(--danger);background:var(--danger-tint)}.document-actions{display:flex;gap:4px}.document-actions button{border:0;border-radius:7px;padding:4px 6px;color:var(--success);background:var(--success-tint);font:inherit;font-size:8px;font-weight:900;cursor:pointer}.document-actions button:last-child{color:var(--danger);background:var(--danger-tint)}.sheet-actions{flex-wrap:wrap}.edit-person-form{grid-template-columns:repeat(2,minmax(0,1fr))}.edit-person-form .wide{grid-column:span 2}.edit-person-form .manage-button{width:max-content}
-@media(max-width:760px){.portal-tabs{margin-bottom:14px}.portal-tab{min-height:34px;padding:0 10px;font-size:10px}.operational-panel{padding:14px;border-radius:16px}.scoped-order-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.people-grid{grid-template-columns:1fr}.scoped-order-foot{align-items:flex-start;flex-direction:column;gap:5px}}
+.location-overview-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;padding:19px;border:1px solid color-mix(in srgb,var(--primary) 25%,var(--border));border-radius:16px;background:linear-gradient(135deg,var(--primary-tint),var(--surface-2))}.location-overview-icon{display:grid;place-items:center;width:48px;height:48px;border-radius:14px;color:var(--primary-strong);background:var(--surface)}.location-overview-card>div{display:grid;gap:4px}.location-overview-card b{font-size:13px}.location-overview-card p{margin:0;color:var(--ink-soft);font-size:10.5px;font-weight:700;line-height:1.65}.location-overview-action{min-height:38px;gap:7px;white-space:nowrap}
+@media(max-width:760px){.portal-tabs{margin-bottom:14px}.portal-tab{min-height:34px;padding:0 10px;font-size:10px}.operational-panel{padding:14px;border-radius:16px}.scoped-order-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.people-grid{grid-template-columns:1fr}.scoped-order-foot{align-items:flex-start;flex-direction:column;gap:5px}.location-overview-card{grid-template-columns:auto minmax(0,1fr);padding:15px}.location-overview-action{grid-column:span 2;width:100%}}
 @media(max-width:440px){.portal-tab{padding:0 9px}.portal-tab b{display:none}.scoped-order-card,.person-card{padding:12px}.scoped-order-head{align-items:flex-start;flex-direction:column}.status-pill{align-self:flex-start}.sheet-data-grid,.edit-person-form{grid-template-columns:1fr}.sheet-data-grid .wide,.edit-person-form .wide{grid-column:span 1}.document-row{align-items:flex-start;flex-wrap:wrap}.document-actions{width:100%}}
 </style>

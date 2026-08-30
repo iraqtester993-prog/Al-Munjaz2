@@ -28,8 +28,13 @@ class AdminPlatformController extends Controller
      * subscriptions, invoices, and dashboard operators live in one audited
      * area while operational pages continue to focus on delivery work.
      */
-    public function index()
+    public function index(Request $request)
     {
+        $user = $request->user();
+        $canManageOperators = $user->isSuperAdmin();
+        $canCreatePlatform = $user->canUseAdminPermission('platform', 'create');
+        $canUpdatePlatform = $user->canUseAdminPermission('platform', 'update');
+
         $monthUsage = Order::withoutGlobalScope(TenantScope::class)
             ->where('created_at', '>=', now()->startOfMonth())
             ->selectRaw('tenant_id, COUNT(*) as total')
@@ -104,43 +109,6 @@ class AdminPlatformController extends Controller
             ])
             ->values();
 
-        $operators = User::withoutGlobalScopes()
-            ->where('role', 'admin')
-            ->with('tenant:id,name,slug')
-            ->orderBy('status')
-            ->orderBy('name')
-            ->get(['id', 'tenant_id', 'name', 'username', 'email', 'phone', 'role', 'status', 'last_active_at', 'created_at'])
-            ->map(fn (User $user) => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'username' => $user->username,
-                'email' => $user->email,
-                'phone' => $user->phone,
-                'status' => $user->status,
-                'last_active_at' => $user->last_active_at?->toDateTimeString(),
-                'created_at' => $user->created_at?->toDateString(),
-                'tenant' => $user->tenant ? ['id' => $user->tenant->id, 'name' => $user->tenant->name] : null,
-            ])
-            ->values();
-
-        $invitations = DashboardInvitation::query()
-            ->with(['inviter:id,name', 'acceptedBy:id,name'])
-            ->latest('id')
-            ->limit(80)
-            ->get()
-            ->map(fn (DashboardInvitation $invitation) => [
-                'id' => $invitation->id,
-                'name' => $invitation->name,
-                'email' => $invitation->email,
-                'role' => $invitation->role,
-                'expires_at' => $invitation->expires_at?->toDateTimeString(),
-                'accepted_at' => $invitation->accepted_at?->toDateTimeString(),
-                'invited_by' => $invitation->inviter?->name,
-                'accepted_by' => $invitation->acceptedBy?->name,
-                'state' => $invitation->accepted_at ? 'accepted' : ($invitation->expires_at->isPast() ? 'expired' : 'pending'),
-            ])
-            ->values();
-
         $subscriptionRows = $subscriptions
             ->map(fn (Subscription $subscription) => $this->subscriptionData($subscription))
             ->values();
@@ -148,27 +116,79 @@ class AdminPlatformController extends Controller
             ->map(fn (Invoice $invoice) => $this->invoiceData($invoice))
             ->values();
 
-        return Inertia::render('Admin/Platform', [
-            'summary' => [
-                'companies' => $companies->count(),
-                'active_subscriptions' => $subscriptions->where('status', 'active')->count(),
-                'trials' => $subscriptions->where('status', 'trial')->count(),
-                'monthly_revenue' => (int) $subscriptions
-                    ->where('status', 'active')
-                    ->where('billing_period', 'monthly')
-                    ->sum('amount'),
-                'outstanding' => (int) $recentInvoices
-                    ->whereIn('status', ['issued', 'overdue'])
-                    ->sum('amount'),
-                'operators' => $operators->count(),
-            ],
+        $summary = [
+            'companies' => $companies->count(),
+            'active_subscriptions' => $subscriptions->where('status', 'active')->count(),
+            'trials' => $subscriptions->where('status', 'trial')->count(),
+            'monthly_revenue' => (int) $subscriptions
+                ->where('status', 'active')
+                ->where('billing_period', 'monthly')
+                ->sum('amount'),
+            'outstanding' => (int) $recentInvoices
+                ->whereIn('status', ['issued', 'overdue'])
+                ->sum('amount'),
+        ];
+
+        $props = [
+            'summary' => $summary,
             'companies' => $companies,
             'plans' => $plans,
             'subscriptions' => $subscriptionRows,
             'invoices' => $invoiceRows,
-            'operators' => $operators,
-            'invitations' => $invitations,
-        ]);
+            'canManageOperators' => $canManageOperators,
+            'canCreatePlatform' => $canCreatePlatform,
+            'canUpdatePlatform' => $canUpdatePlatform,
+        ];
+
+        // Dashboard-staff records and invitation metadata are not part of
+        // the commercial platform view. Only a super administrator can see
+        // (or provision) them.
+        if ($canManageOperators) {
+            $operators = User::withoutGlobalScopes()
+                ->where('role', 'admin')
+                ->with('tenant:id,name,slug')
+                ->orderBy('status')
+                ->orderBy('name')
+                ->get(['id', 'tenant_id', 'name', 'username', 'email', 'phone', 'role', 'status', 'last_active_at', 'created_at'])
+                ->map(fn (User $user) => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'username' => $user->username,
+                    'email' => $user->email,
+                    'phone' => $user->phone,
+                    'status' => $user->status,
+                    'last_active_at' => $user->last_active_at?->toDateTimeString(),
+                    'created_at' => $user->created_at?->toDateString(),
+                    'tenant' => $user->tenant ? ['id' => $user->tenant->id, 'name' => $user->tenant->name] : null,
+                ])
+                ->values();
+
+            $props['summary']['operators'] = $operators->count();
+            $props['operators'] = $operators;
+            $props['invitations'] = DashboardInvitation::query()
+                ->with(['inviter:id,name', 'acceptedBy:id,name', 'permissionProfile:id,name'])
+                ->latest('id')
+                ->limit(80)
+                ->get()
+                ->map(fn (DashboardInvitation $invitation) => [
+                    'id' => $invitation->id,
+                    'name' => $invitation->name,
+                    'email' => $invitation->email,
+                    'role' => $invitation->role,
+                    'expires_at' => $invitation->expires_at?->toDateTimeString(),
+                    'accepted_at' => $invitation->accepted_at?->toDateTimeString(),
+                    'invited_by' => $invitation->inviter?->name,
+                    'accepted_by' => $invitation->acceptedBy?->name,
+                    'permission_profile' => $invitation->permissionProfile ? [
+                        'id' => $invitation->permissionProfile->id,
+                        'name' => $invitation->permissionProfile->name,
+                    ] : null,
+                    'state' => $invitation->accepted_at ? 'accepted' : ($invitation->expires_at->isPast() ? 'expired' : 'pending'),
+                ])
+                ->values();
+        }
+
+        return Inertia::render('Admin/Platform', $props);
     }
 
     public function storeCompany(Request $request)
@@ -384,10 +404,20 @@ class AdminPlatformController extends Controller
      */
     public function invite(Request $request)
     {
+        // An invitation can carry a named profile. Allowing a limited
+        // platform operator to choose that profile would let them mint an
+        // account stronger than their own, so provisioning dashboard staff
+        // is deliberately a super-admin-only action.
+        abort_unless($request->user()?->isSuperAdmin(), 403);
+
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
             'email' => ['required', 'email', 'max:190'],
             'expires_in_days' => ['required', 'integer', 'min:1', 'max:30'],
+            // A profile is optional for backwards compatible invitation
+            // links. A staff account without one is denied the dashboard
+            // until a super administrator assigns it from Permissions.
+            'permission_profile_id' => ['nullable', 'integer', Rule::exists('dashboard_permission_profiles', 'id')],
         ]);
 
         abort_if(User::withoutGlobalScopes()->where('email', $data['email'])->exists(), 422, __('A user already uses this email.'));
@@ -403,6 +433,7 @@ class AdminPlatformController extends Controller
             'name' => $data['name'],
             'email' => Str::lower($data['email']),
             'role' => DashboardInvitation::ROLE,
+            'permission_profile_id' => $data['permission_profile_id'] ?? null,
             'token_hash' => hash('sha256', $token),
             'expires_at' => now()->addDays((int) $data['expires_in_days']),
         ]);
@@ -454,6 +485,7 @@ class AdminPlatformController extends Controller
                 'role' => DashboardInvitation::ROLE,
                 'status' => 'active',
                 'phone_verified_at' => now(),
+                'permission_profile_id' => $locked->permission_profile_id,
             ]);
 
             $locked->update(['accepted_at' => now(), 'accepted_by' => $user->id]);
@@ -474,7 +506,8 @@ class AdminPlatformController extends Controller
         Auth::login($user, true);
         $request->session()->regenerate();
 
-        return redirect()->route('admin.dashboard')->with('success', __('Welcome to the platform dashboard.'));
+        return redirect()->to($user->firstAdminDashboardPath() ?? '/dashboard/access-denied')
+            ->with('success', __('Welcome to the platform dashboard.'));
     }
 
     /** @return array<string, mixed> */

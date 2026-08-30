@@ -13,13 +13,18 @@ use Inertia\Inertia;
 
 class AdminNotificationController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
+        $canCreateNotifications = $request->user()->canUseAdminPermission('notifications', 'create');
+
         $campaigns = NotificationCampaign::query()
             ->with(['creator:id,name', 'targetUser:id,name,role'])
-            ->withCount('notifications')
             ->withCount([
-                'notifications as read_count' => fn ($query) => $query->whereNotNull('read_at'),
+                // Inbox removal is a personal soft-delete. Keep delivery
+                // totals stable so the dashboard remains an audit history of
+                // what was sent, rather than a snapshot of inbox visibility.
+                'notifications as notifications_count' => fn ($query) => $query->withTrashed(),
+                'notifications as read_count' => fn ($query) => $query->withTrashed()->whereNotNull('read_at'),
             ])
             ->latest('id')
             ->limit(40)
@@ -42,7 +47,7 @@ class AdminNotificationController extends Controller
                 'sent_at' => $campaign->sent_at?->diffForHumans(),
             ]);
 
-        $deliveries = Notification::query()
+        $deliveries = Notification::withTrashed()
             ->with('user:id,name,role')
             ->whereNotNull('campaign_id')
             ->latest('id')
@@ -57,45 +62,65 @@ class AdminNotificationController extends Controller
                     'role' => $notification->user->role,
                 ] : null,
                 'read' => $notification->read_at !== null,
+                'removed_from_inbox' => $notification->trashed(),
                 'created_at' => $notification->created_at?->diffForHumans(),
             ]);
 
-        $recipients = User::query()
-            ->whereIn('role', User::NOTIFICATION_RECIPIENT_ROLES)
-            ->where('status', 'active')
-            ->orderBy('name')
-            ->limit(500)
-            ->get(['id', 'name', 'phone', 'role'])
-            ->map(fn (User $user) => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'phone' => $user->phone,
-                'role' => $user->role,
-            ]);
-
-        return Inertia::render('Admin/Notifications', [
+        $props = [
             'campaigns' => $campaigns,
             'deliveries' => $deliveries,
-            'recipients' => $recipients,
+            'canCreateNotifications' => $canCreateNotifications,
             'counts' => [
                 'campaigns' => NotificationCampaign::query()->count(),
-                'deliveries' => Notification::query()->whereNotNull('campaign_id')->count(),
-                'unread' => Notification::query()->whereNotNull('campaign_id')->whereNull('read_at')->count(),
+                'deliveries' => Notification::withTrashed()->whereNotNull('campaign_id')->count(),
+                'unread' => Notification::withTrashed()->whereNotNull('campaign_id')->whereNull('read_at')->count(),
             ],
-        ]);
+        ];
+
+        // The recipient picker contains up to 500 names and phone numbers.
+        // Viewing sent campaigns does not require access to that directory.
+        if ($canCreateNotifications) {
+            $props['recipients'] = User::query()
+                ->whereIn('role', User::NOTIFICATION_RECIPIENT_ROLES)
+                ->where('status', 'active')
+                ->orderBy('name')
+                ->limit(500)
+                ->get(['id', 'name', 'phone', 'role'])
+                ->map(fn (User $user) => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'phone' => $user->phone,
+                    'role' => $user->role,
+                ]);
+        }
+
+        return Inertia::render('Admin/Notifications', $props);
     }
 
     public function store(Request $request, AdminNotificationDispatcher $dispatcher)
     {
+        $audience = (string) $request->input('audience');
+        $requiresTarget = in_array($audience, NotificationCampaign::TARGETED_AUDIENCES, true);
+        $targetRoles = match ($audience) {
+            'merchant' => ['merchant'],
+            'courier' => User::COURIER_ROLES,
+            default => User::NOTIFICATION_RECIPIENT_ROLES,
+        };
+
         $data = $request->validate([
             'audience' => ['required', Rule::in(NotificationCampaign::AUDIENCES)],
             'target_user_id' => [
-                Rule::requiredIf($request->input('audience') === 'user'),
+                Rule::requiredIf($requiresTarget),
+                // Never silently turn a stale "specific user" selection into
+                // a broadcast when an operator switches back to a general
+                // audience in the dashboard.
+                Rule::prohibitedIf(! $requiresTarget),
                 'nullable',
                 'integer',
                 Rule::exists('users', 'id')->where(fn ($query) => $query
-                    ->whereIn('role', User::NOTIFICATION_RECIPIENT_ROLES)
-                    ->where('status', 'active')),
+                    ->whereIn('role', $targetRoles)
+                    ->where('status', 'active')
+                    ->whereNull('deleted_at')),
             ],
             'type' => ['required', Rule::in(['announcement', 'system', 'account', 'finance', 'order'])],
             'title_ar' => ['required', 'string', 'max:160'],

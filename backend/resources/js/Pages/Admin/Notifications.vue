@@ -9,9 +9,11 @@ const props = defineProps({
     deliveries: { type: Array, default: () => [] },
     recipients: { type: Array, default: () => [] },
     counts: { type: Object, default: () => ({}) },
+    canCreateNotifications: { type: Boolean, default: false },
 })
 
 const showTranslations = ref(false)
+const recipientQuery = ref('')
 const form = useForm({
     audience: 'all',
     target_user_id: '',
@@ -24,24 +26,47 @@ const form = useForm({
     body_ku: '',
 })
 
+const courierRoles = ['courier', 'pickup_courier', 'delivery_courier', 'transporter']
+const individualAudiences = ['merchant', 'courier']
+
+const selectedRecipients = computed(() => {
+    if (form.audience === 'merchant') {
+        return props.recipients.filter((recipient) => recipient.role === 'merchant')
+    }
+
+    if (form.audience === 'courier') {
+        return props.recipients.filter((recipient) => courierRoles.includes(recipient.role))
+    }
+
+    return []
+})
+
+const filteredRecipients = computed(() => {
+    const query = recipientQuery.value.trim().toLocaleLowerCase()
+    if (!query) return selectedRecipients.value
+
+    return selectedRecipients.value.filter((recipient) => [recipient.name, recipient.phone]
+        .filter(Boolean)
+        .some((value) => String(value).toLocaleLowerCase().includes(query)))
+})
+
+const recipientSearchPlaceholder = computed(() => `${t('Search')} ${t('Name')} / ${t('Phone')}`)
+
 const recipientEstimate = computed(() => {
     if (form.audience === 'merchants') return props.recipients.filter((recipient) => recipient.role === 'merchant').length
-    if (form.audience === 'couriers') return props.recipients.filter((recipient) => ['courier', 'pickup_courier', 'delivery_courier', 'transporter'].includes(recipient.role)).length
-    if (form.audience === 'pickup_couriers') return props.recipients.filter((recipient) => recipient.role === 'pickup_courier').length
-    if (form.audience === 'delivery_couriers') return props.recipients.filter((recipient) => recipient.role === 'delivery_courier').length
-    if (form.audience === 'transporters') return props.recipients.filter((recipient) => recipient.role === 'transporter').length
-    if (form.audience === 'user') return form.target_user_id ? 1 : 0
+    if (form.audience === 'couriers') return props.recipients.filter((recipient) => courierRoles.includes(recipient.role)).length
+    if (individualAudiences.includes(form.audience)) {
+        return selectedRecipients.value.some((recipient) => String(recipient.id) === String(form.target_user_id)) ? 1 : 0
+    }
     return props.recipients.length
 })
 
 const audienceOptions = computed(() => [
-    { value: 'all', label: t('All active merchants and couriers') },
+    { value: 'all', label: t('All Users') },
     { value: 'merchants', label: t('All Merchants') },
-    { value: 'couriers', label: t('All Operational Couriers') },
-    { value: 'pickup_couriers', label: t('Pickup Couriers') },
-    { value: 'delivery_couriers', label: t('Delivery Couriers') },
-    { value: 'transporters', label: t('Transporters') },
-    { value: 'user', label: t('Specific Account') },
+    { value: 'merchant', label: `${t('Specific Account')} — ${t('Merchant')}` },
+    { value: 'couriers', label: t('All Couriers') },
+    { value: 'courier', label: `${t('Specific Account')} — ${t('Courier')}` },
 ])
 
 const typeOptions = computed(() => [
@@ -54,7 +79,14 @@ const typeOptions = computed(() => [
 
 function setAudience(value) {
     form.audience = value
-    if (value !== 'user') form.target_user_id = ''
+    recipientQuery.value = ''
+    if (!individualAudiences.includes(value)) {
+        form.target_user_id = ''
+        return
+    }
+
+    const targetStillMatchesAudience = selectedRecipients.value.some((recipient) => String(recipient.id) === String(form.target_user_id))
+    if (!targetStillMatchesAudience) form.target_user_id = ''
 }
 
 function recipientLabel(recipient) {
@@ -62,14 +94,19 @@ function recipientLabel(recipient) {
 }
 
 function audienceLabel(campaign) {
+    const targetName = campaign.target_user?.name || t('One Account')
+    const individualLabel = (role) => `${t('Specific Account')} — ${role} · ${targetName}`
     const labels = {
         all: t('All Users'),
         merchants: t('Merchants'),
-        couriers: t('All Operational Couriers'),
-        pickup_couriers: t('Pickup Couriers'),
-        delivery_couriers: t('Delivery Couriers'),
-        transporters: t('Transporters'),
-        user: campaign.target_user?.name || t('One Account'),
+        merchant: individualLabel(t('Merchant')),
+        couriers: t('Couriers'),
+        courier: individualLabel(t('Courier')),
+        // Campaigns dispatched before the role-specific target audiences
+        // remain understandable in the delivery history.
+        user: campaign.target_user?.role === 'merchant'
+            ? individualLabel(t('Merchant'))
+            : individualLabel(t('Courier')),
     }
 
     return labels[campaign.audience] || campaign.audience
@@ -96,6 +133,7 @@ function typeClass(type) {
 }
 
 function submit() {
+    if (!props.canCreateNotifications) return
     form.post(route('admin.notifications.store'), {
         preserveScroll: true,
         onSuccess: () => {
@@ -122,8 +160,8 @@ function submit() {
             </div>
         </section>
 
-        <div class="notification-grid">
-            <form class="panel composer-panel" @submit.prevent="submit">
+        <div class="notification-grid" :class="{ 'history-only': !canCreateNotifications }">
+            <form v-if="canCreateNotifications" class="panel composer-panel" @submit.prevent="submit">
                 <header class="panel-head composer-head">
                     <div class="compose-icon">✦</div>
                     <div><h3>{{ t('Compose Notification') }}</h3><p>{{ t('Send a clear in-app message to all active users, a role, or one account.') }}</p></div>
@@ -147,11 +185,12 @@ function submit() {
                         </label>
                     </div>
 
-                    <label v-if="form.audience === 'user'" class="field">
-                        <span>{{ t('Recipient') }}</span>
+                    <label v-if="individualAudiences.includes(form.audience)" class="field">
+                        <span>{{ form.audience === 'merchant' ? t('Merchant') : t('Courier') }}</span>
+                        <input v-model="recipientQuery" type="search" :placeholder="recipientSearchPlaceholder" autocomplete="off" />
                         <select v-model="form.target_user_id" required>
                             <option disabled value="">{{ t('Choose active user') }}</option>
-                            <option v-for="recipient in recipients" :key="recipient.id" :value="recipient.id">{{ recipientLabel(recipient) }}</option>
+                            <option v-for="recipient in filteredRecipients" :key="recipient.id" :value="recipient.id">{{ recipientLabel(recipient) }}</option>
                         </select>
                         <small v-if="form.errors.target_user_id" class="field-error">{{ form.errors.target_user_id }}</small>
                     </label>
@@ -239,5 +278,5 @@ function submit() {
 </template>
 
 <style scoped>
-.notification-heading{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:21px}.eyebrow{margin:0 0 3px;color:var(--primary);font-size:10px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.notification-heading h2{margin:0;color:var(--ink);font-size:23px;font-weight:900;line-height:1.35}.notification-heading>div>p:last-child{max-width:650px;margin:5px 0 0;color:var(--ink-faint);font-size:12px;font-weight:650;line-height:1.75}.notification-totals{display:flex;align-items:center;gap:8px;flex:none}.notification-totals span{display:grid;gap:0;min-width:70px;padding:7px 10px;border:1px solid var(--border);border-radius:10px;color:var(--ink-faint);background:var(--surface);font-size:8.5px;font-weight:800;text-align:center}.notification-totals b{color:var(--ink);font-size:14px;font-weight:900;line-height:1.35}.notification-totals .unread-total b{color:var(--accent)}.notification-grid{display:grid;grid-template-columns:minmax(330px,.88fr) minmax(0,1.12fr);gap:18px;align-items:start}.composer-panel,.history-panel,.delivery-panel{margin:0}.composer-head{align-items:flex-start}.composer-head>div:last-child{flex:1}.panel-head h3{margin:0}.panel-head p{margin:3px 0 0;color:var(--ink-faint);font-size:10.5px;font-weight:650;line-height:1.65}.compose-icon{width:36px;height:36px;display:grid;place-items:center;flex:none;border-radius:11px;color:var(--primary-strong);background:var(--primary-tint);font-size:17px;font-weight:900}.composer-body{display:grid;gap:14px}.form-row{display:grid;grid-template-columns:1fr 1fr;gap:11px}.field{display:grid;gap:6px;color:var(--ink-soft);font-size:10.5px;font-weight:850}.field input,.field textarea,.field select{width:100%;border:1px solid var(--border);border-radius:10px;outline:none;color:var(--ink);background:var(--surface-2);font:inherit;font-size:11.5px;font-weight:700;transition:border-color .15s,box-shadow .15s}.field input,.field select{min-height:41px;padding:9px 10px}.field textarea{min-height:80px;padding:9px 10px;line-height:1.65;resize:vertical}.field input:focus,.field textarea:focus,.field select:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-tint)}.field-error{color:var(--danger);font-size:9.5px;font-weight:780;line-height:1.5}.recipient-strip{display:flex;align-items:center;gap:7px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;color:var(--ink-soft);background:var(--surface-2);font-size:10px;font-weight:800}.recipient-strip b{margin-inline-start:auto;color:var(--ink);font-size:13px;font-weight:900}.recipient-dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 4px var(--success-tint)}.language-block{min-width:0;margin:0;padding:12px;border:1px solid var(--border);border-radius:12px}.language-block legend{padding:0 5px;color:var(--primary-strong);font-size:10px;font-weight:900}.language-block .field+.field{margin-top:10px}.translations-toggle{display:inline-flex;align-items:center;justify-content:flex-start;gap:7px;width:max-content;padding:5px 0;border:0;color:var(--primary-strong);font:inherit;font-size:10.5px;font-weight:850}.translations-toggle span{width:17px;height:17px;display:grid;place-items:center;border-radius:5px;color:#062033;background:var(--primary);font-size:14px;line-height:1}.translation-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.language-block.compact{padding:10px}.send-button{min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;border:0;border-radius:11px;color:#062033;background:linear-gradient(135deg,var(--primary),#0ea5e9);font:inherit;font-size:12px;font-weight:900;transition:filter .15s,opacity .15s}.send-button:hover:not(:disabled){filter:brightness(1.08)}.send-button:disabled{cursor:not-allowed;opacity:.6}.send-spinner{width:14px;height:14px;border:2px solid rgba(6,32,51,.25);border-top-color:#062033;border-radius:50%;animation:spin .65s linear infinite}.dispatch-note{margin:-5px 0 0;color:var(--ink-faint);font-size:9.5px;font-weight:650;line-height:1.65}.form-error{margin-top:-4px}.history-stack{display:grid;gap:18px}.campaign-list{display:grid}.campaign-row{display:flex;gap:14px;padding:14px 17px;border-bottom:1px solid var(--border)}.campaign-row:last-child{border-bottom:0}.campaign-main{min-width:0;flex:1}.campaign-meta{display:flex;align-items:center;gap:6px;margin-bottom:5px;color:var(--ink-faint);font-size:9.5px;font-weight:800}.type-chip{display:inline-flex;padding:3px 7px;border-radius:20px;font-size:8.5px;font-weight:900}.type-announcement{color:var(--primary-strong);background:var(--primary-tint)}.type-system{color:var(--st-approved);background:var(--st-approved-tint)}.type-account{color:var(--warning);background:var(--warning-tint)}.type-finance{color:var(--success);background:var(--success-tint)}.type-order{color:var(--st-courier);background:var(--st-courier-tint)}.campaign-main>b{display:block;overflow:hidden;color:var(--ink);font-size:12px;font-weight:900;line-height:1.55;text-overflow:ellipsis;white-space:nowrap}.campaign-main p{display:-webkit-box;overflow:hidden;margin:2px 0 0;color:var(--ink-soft);font-size:10.5px;font-weight:650;line-height:1.6;-webkit-box-orient:vertical;-webkit-line-clamp:2}.campaign-main small{display:block;margin-top:5px;color:var(--ink-faint);font-size:9px;font-weight:700}.campaign-counts{display:grid;align-content:start;gap:5px;min-width:56px}.campaign-counts span{display:grid;padding:4px 6px;border-radius:7px;color:var(--ink-faint);background:var(--surface-2);font-size:8px;font-weight:800;text-align:center}.campaign-counts b{color:var(--ink);font-size:11px;font-weight:900}.delivery-list{display:grid}.delivery-row{display:flex;align-items:center;gap:9px;padding:10px 17px;border-bottom:1px solid var(--border)}.delivery-row:last-child{border-bottom:0}.delivery-state{width:8px;height:8px;flex:none;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-tint)}.delivery-state.read{background:var(--success);box-shadow:0 0 0 3px var(--success-tint)}.delivery-row>div{min-width:0;flex:1}.delivery-row b,.delivery-row span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.delivery-row b{color:var(--ink);font-size:10.5px;font-weight:900}.delivery-row span{color:var(--ink-faint);font-size:9px;font-weight:700}.delivery-row small{padding:3px 6px;border-radius:6px;color:var(--ink-soft);background:var(--surface-2);font-size:8px;font-weight:850}.empty-state{padding:27px 16px;color:var(--ink-faint);font-size:10.5px;font-weight:750;text-align:center}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:1080px){.notification-grid{grid-template-columns:1fr}.history-stack{grid-template-columns:1.15fr .85fr;align-items:start}.delivery-panel{height:max-content}}@media(max-width:680px){.notification-heading{align-items:flex-start;flex-direction:column}.notification-heading h2{font-size:20px}.notification-totals{width:100%}.notification-totals span{flex:1}.form-row,.translation-grid,.history-stack{grid-template-columns:1fr}.campaign-row{padding:13px}.delivery-row{padding:10px 13px}.campaign-counts{min-width:48px}.panel-head{padding:14px}.panel-body{padding:14px}}@media(max-width:390px){.campaign-row{gap:8px}.campaign-counts{display:none}.notification-totals span{min-width:0}}
+.notification-heading{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:21px}.eyebrow{margin:0 0 3px;color:var(--primary);font-size:10px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.notification-heading h2{margin:0;color:var(--ink);font-size:23px;font-weight:900;line-height:1.35}.notification-heading>div>p:last-child{max-width:650px;margin:5px 0 0;color:var(--ink-faint);font-size:12px;font-weight:650;line-height:1.75}.notification-totals{display:flex;align-items:center;gap:8px;flex:none}.notification-totals span{display:grid;gap:0;min-width:70px;padding:7px 10px;border:1px solid var(--border);border-radius:10px;color:var(--ink-faint);background:var(--surface);font-size:8.5px;font-weight:800;text-align:center}.notification-totals b{color:var(--ink);font-size:14px;font-weight:900;line-height:1.35}.notification-totals .unread-total b{color:var(--accent)}.notification-grid{display:grid;grid-template-columns:minmax(330px,.88fr) minmax(0,1.12fr);gap:18px;align-items:start}.notification-grid.history-only{grid-template-columns:minmax(0,1fr)}.composer-panel,.history-panel,.delivery-panel{margin:0}.composer-head{align-items:flex-start}.composer-head>div:last-child{flex:1}.panel-head h3{margin:0}.panel-head p{margin:3px 0 0;color:var(--ink-faint);font-size:10.5px;font-weight:650;line-height:1.65}.compose-icon{width:36px;height:36px;display:grid;place-items:center;flex:none;border-radius:11px;color:var(--primary-strong);background:var(--primary-tint);font-size:17px;font-weight:900}.composer-body{display:grid;gap:14px}.form-row{display:grid;grid-template-columns:1fr 1fr;gap:11px}.field{display:grid;gap:6px;color:var(--ink-soft);font-size:10.5px;font-weight:850}.field input,.field textarea,.field select{width:100%;border:1px solid var(--border);border-radius:10px;outline:none;color:var(--ink);background:var(--surface-2);font:inherit;font-size:11.5px;font-weight:700;transition:border-color .15s,box-shadow .15s}.field input,.field select{min-height:41px;padding:9px 10px}.field textarea{min-height:80px;padding:9px 10px;line-height:1.65;resize:vertical}.field input:focus,.field textarea:focus,.field select:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-tint)}.field-error{color:var(--danger);font-size:9.5px;font-weight:780;line-height:1.5}.recipient-strip{display:flex;align-items:center;gap:7px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;color:var(--ink-soft);background:var(--surface-2);font-size:10px;font-weight:800}.recipient-strip b{margin-inline-start:auto;color:var(--ink);font-size:13px;font-weight:900}.recipient-dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 4px var(--success-tint)}.language-block{min-width:0;margin:0;padding:12px;border:1px solid var(--border);border-radius:12px}.language-block legend{padding:0 5px;color:var(--primary-strong);font-size:10px;font-weight:900}.language-block .field+.field{margin-top:10px}.translations-toggle{display:inline-flex;align-items:center;justify-content:flex-start;gap:7px;width:max-content;padding:5px 0;border:0;color:var(--primary-strong);font:inherit;font-size:10.5px;font-weight:850}.translations-toggle span{width:17px;height:17px;display:grid;place-items:center;border-radius:5px;color:#062033;background:var(--primary);font-size:14px;line-height:1}.translation-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.language-block.compact{padding:10px}.send-button{min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;border:0;border-radius:11px;color:#062033;background:linear-gradient(135deg,var(--primary),#0ea5e9);font:inherit;font-size:12px;font-weight:900;transition:filter .15s,opacity .15s}.send-button:hover:not(:disabled){filter:brightness(1.08)}.send-button:disabled{cursor:not-allowed;opacity:.6}.send-spinner{width:14px;height:14px;border:2px solid rgba(6,32,51,.25);border-top-color:#062033;border-radius:50%;animation:spin .65s linear infinite}.dispatch-note{margin:-5px 0 0;color:var(--ink-faint);font-size:9.5px;font-weight:650;line-height:1.65}.form-error{margin-top:-4px}.history-stack{display:grid;gap:18px}.campaign-list{display:grid}.campaign-row{display:flex;gap:14px;padding:14px 17px;border-bottom:1px solid var(--border)}.campaign-row:last-child{border-bottom:0}.campaign-main{min-width:0;flex:1}.campaign-meta{display:flex;align-items:center;gap:6px;margin-bottom:5px;color:var(--ink-faint);font-size:9.5px;font-weight:800}.type-chip{display:inline-flex;padding:3px 7px;border-radius:20px;font-size:8.5px;font-weight:900}.type-announcement{color:var(--primary-strong);background:var(--primary-tint)}.type-system{color:var(--st-approved);background:var(--st-approved-tint)}.type-account{color:var(--warning);background:var(--warning-tint)}.type-finance{color:var(--success);background:var(--success-tint)}.type-order{color:var(--st-courier);background:var(--st-courier-tint)}.campaign-main>b{display:block;overflow:hidden;color:var(--ink);font-size:12px;font-weight:900;line-height:1.55;text-overflow:ellipsis;white-space:nowrap}.campaign-main p{display:-webkit-box;overflow:hidden;margin:2px 0 0;color:var(--ink-soft);font-size:10.5px;font-weight:650;line-height:1.6;-webkit-box-orient:vertical;-webkit-line-clamp:2}.campaign-main small{display:block;margin-top:5px;color:var(--ink-faint);font-size:9px;font-weight:700}.campaign-counts{display:grid;align-content:start;gap:5px;min-width:56px}.campaign-counts span{display:grid;padding:4px 6px;border-radius:7px;color:var(--ink-faint);background:var(--surface-2);font-size:8px;font-weight:800;text-align:center}.campaign-counts b{color:var(--ink);font-size:11px;font-weight:900}.delivery-list{display:grid}.delivery-row{display:flex;align-items:center;gap:9px;padding:10px 17px;border-bottom:1px solid var(--border)}.delivery-row:last-child{border-bottom:0}.delivery-state{width:8px;height:8px;flex:none;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-tint)}.delivery-state.read{background:var(--success);box-shadow:0 0 0 3px var(--success-tint)}.delivery-row>div{min-width:0;flex:1}.delivery-row b,.delivery-row span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.delivery-row b{color:var(--ink);font-size:10.5px;font-weight:900}.delivery-row span{color:var(--ink-faint);font-size:9px;font-weight:700}.delivery-row small{padding:3px 6px;border-radius:6px;color:var(--ink-soft);background:var(--surface-2);font-size:8px;font-weight:850}.empty-state{padding:27px 16px;color:var(--ink-faint);font-size:10.5px;font-weight:750;text-align:center}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:1080px){.notification-grid{grid-template-columns:1fr}.history-stack{grid-template-columns:1.15fr .85fr;align-items:start}.delivery-panel{height:max-content}}@media(max-width:680px){.notification-heading{align-items:flex-start;flex-direction:column}.notification-heading h2{font-size:20px}.notification-totals{width:100%}.notification-totals span{flex:1}.form-row,.translation-grid,.history-stack{grid-template-columns:1fr}.campaign-row{padding:13px}.delivery-row{padding:10px 13px}.campaign-counts{min-width:48px}.panel-head{padding:14px}.panel-body{padding:14px}}@media(max-width:390px){.campaign-row{gap:8px}.campaign-counts{display:none}.notification-totals span{min-width:0}}
 </style>

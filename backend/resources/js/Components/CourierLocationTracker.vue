@@ -8,6 +8,7 @@ const page = usePage()
 const user = computed(() => page.props.auth?.user || {})
 const isCourier = computed(() => ['courier', 'pickup_courier', 'delivery_courier', 'transporter'].includes(user.value?.role))
 const preferenceKey = computed(() => `almunjaz:location-sharing-enabled:${user.value?.id || 'guest'}`)
+const confirmationKey = computed(() => `almunjaz:location-sharing-confirmed:${user.value?.id || 'guest'}`)
 
 let watchId = null
 let sentAt = 0
@@ -16,6 +17,7 @@ let sending = false
 let sessionPermissionGranted = false
 let trackingAttempt = 0
 let nativeTracking = false
+let sessionSharingConfirmed = false
 
 function sharingEnabled() {
     try {
@@ -23,6 +25,23 @@ function sharingEnabled() {
     } catch (_) {
         return false
     }
+}
+
+function sharingConfirmed() {
+    if (sessionSharingConfirmed) return true
+
+    try {
+        return window.localStorage.getItem(confirmationKey.value) === 'true'
+    } catch (_) {
+        return false
+    }
+}
+
+function isInstalledApp() {
+    const nativeBridge = window.AlMunjazNativeLocation
+    const nativeShell = nativeBridge && typeof nativeBridge.start === 'function'
+
+    return window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true || nativeShell
 }
 
 function stopTracking() {
@@ -116,15 +135,15 @@ async function startTracking() {
     stopTracking()
     const attempt = trackingAttempt
 
-    // Location is never requested implicitly.  The account owner enables it
-    // from Profile first; until then this component is completely inert.
-    if (!isCourier.value || !sharingEnabled() || !navigator.geolocation) return
+    // Location is never requested implicitly. The courier grants it from the
+    // post-install gate, and tracking remains inert in a normal browser tab.
+    if (!isCourier.value || !isInstalledApp() || !sharingEnabled() || !sharingConfirmed() || !navigator.geolocation) return
     if (!(await hasGrantedLocationPermission()) || attempt !== trackingAttempt) return
 
     // The asynchronous permission check above may complete after a role,
     // preference, or visibility change. Verify the inert conditions again
     // immediately before starting the native watcher.
-    if (!isCourier.value || !sharingEnabled() || attempt !== trackingAttempt) return
+    if (!isCourier.value || !isInstalledApp() || !sharingEnabled() || !sharingConfirmed() || attempt !== trackingAttempt) return
 
     // The future Capacitor shell supplies this bridge and keeps the native
     // location service alive after the web view is closed. Until then, the
@@ -153,8 +172,12 @@ async function startTracking() {
 }
 
 function onLocationPreferenceChanged(event) {
+    sessionSharingConfirmed = Boolean(event.detail?.enabled && event.detail?.confirmed)
     if (event.detail?.enabled && event.detail?.userInitiated) sessionPermissionGranted = true
-    if (!event.detail?.enabled) sessionPermissionGranted = false
+    if (!event.detail?.enabled) {
+        sessionPermissionGranted = false
+        sessionSharingConfirmed = false
+    }
     startTracking()
 }
 
@@ -164,8 +187,15 @@ function onVisibilityChanged() {
     if (!nativeTracking && document.visibilityState === 'visible') startTracking()
 }
 
+function onAppInstalled() {
+    // A just-installed app may be opened in standalone mode immediately.
+    // Re-check the stored, user-approved sharing preference at that point.
+    startTracking()
+}
+
 onMounted(() => {
     window.addEventListener('almunjaz:location-sharing-changed', onLocationPreferenceChanged)
+    window.addEventListener('appinstalled', onAppInstalled)
     document.addEventListener('visibilitychange', onVisibilityChanged)
     startTracking()
 })
@@ -173,11 +203,12 @@ onMounted(() => {
 onBeforeUnmount(() => {
     stopTracking()
     window.removeEventListener('almunjaz:location-sharing-changed', onLocationPreferenceChanged)
+    window.removeEventListener('appinstalled', onAppInstalled)
     document.removeEventListener('visibilitychange', onVisibilityChanged)
 })
 </script>
 
 <template>
-    <!-- Intentionally visual-free: location sharing is controlled in Profile. -->
+    <!-- Intentionally visual-free: sharing is enabled from the installed-app gate. -->
     <span hidden aria-hidden="true" />
 </template>

@@ -16,4 +16,7 @@ return [
     'courier_document_too_large' => 'The :document must not exceed :max MB.',
     'courier_documents_total_too_large' => 'The courier documents together must not exceed :max MB. Choose smaller images and try again.',
     'courier_upload_request_too_large' => 'The selected images are larger than the hosting upload limit. Choose smaller images or select them again to optimize them automatically.',
+    'merchant_verification_document_too_large' => 'Each verification document must not exceed :max MB.',
+    'merchant_verification_documents_total_too_large' => 'The verification documents together must not exceed :max MB. Choose smaller images and try again.',
+    'merchant_verification_upload_request_too_large' => 'The selected images are larger than the hosting upload limit. Choose smaller images or select them again to optimize them automatically.',
 ];

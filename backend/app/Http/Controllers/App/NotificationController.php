@@ -15,7 +15,7 @@ class NotificationController extends Controller
             ->latest('id')
             ->limit(60)
             ->get()
-            ->map(fn (Notification $notification) => $this->present($notification));
+            ->map(fn (Notification $notification) => $this->present($notification, $request->user()));
 
         $unread = $notifications->where('read', false)->count();
 
@@ -42,7 +42,7 @@ class NotificationController extends Controller
             ->orderBy('id')
             ->limit(60)
             ->get()
-            ->map(fn (Notification $notification) => $this->present($notification))
+            ->map(fn (Notification $notification) => $this->present($notification, $request->user()))
             ->values();
 
         return response()->json([
@@ -54,9 +54,56 @@ class NotificationController extends Controller
 
     public function readAll(Request $request)
     {
-        $this->visibleNotifications($request->user())
+        // A general campaign produces personal delivery rows, so this safely
+        // affects only this account. Legacy tenant-wide rows intentionally
+        // stay untouched: they have no per-user read state to update.
+        $this->ownedNotifications($request->user())
             ->whereNull('read_at')
             ->update(['read_at' => now()]);
+
+        return back();
+    }
+
+    /**
+     * Mark one delivery in the signed-in user's inbox as read.
+     *
+     * Dashboard campaigns create one notification row per recipient.  Do not
+     * let a user update a tenant-wide/legacy row here: its read state would
+     * otherwise be changed for every account that can see that row.
+     */
+    public function read(Request $request, Notification $notification)
+    {
+        $notification = $this->ownedNotification($request, $notification);
+
+        if ($notification->read_at === null) {
+            $notification->update(['read_at' => now()]);
+        }
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'data' => [
+                    'id' => $notification->id,
+                    'read_at' => $notification->read_at?->toIso8601String(),
+                ],
+            ]);
+        }
+
+        return back();
+    }
+
+    /**
+     * Remove only the signed-in user's delivery from their inbox.
+     *
+     * Notification uses SoftDeletes, so the dashboard campaign and every
+     * other recipient's delivery remain intact for audit/history purposes.
+     */
+    public function destroy(Request $request, Notification $notification)
+    {
+        $this->ownedNotification($request, $notification)->delete();
+
+        if ($request->expectsJson()) {
+            return response()->noContent();
+        }
 
         return back();
     }
@@ -72,14 +119,36 @@ class NotificationController extends Controller
             });
     }
 
-    private function present(Notification $notification): array
+    private function ownedNotifications($user)
     {
+        return Notification::query()->where('user_id', $user->id);
+    }
+
+    /**
+     * A personal inbox operation must never affect another recipient's
+     * delivery or a shared legacy notification. Dashboard broadcasts are
+     * always per-recipient, which makes individual soft deletion safe.
+     */
+    private function ownedNotification(Request $request, Notification $notification): Notification
+    {
+        abort_unless((int) $notification->user_id === (int) $request->user()->id, 403);
+
+        return $notification;
+    }
+
+    private function present(Notification $notification, $user): array
+    {
+        $isOwner = (int) $notification->user_id === (int) $user->id;
+
         return [
             'id' => $notification->id,
             'type' => $notification->type,
             'title' => $notification->titleFor(),
             'body' => $notification->bodyFor(),
             'read' => $notification->read_at !== null,
+            // Legacy tenant-wide rows are still readable, but have no single
+            // owner and therefore cannot be changed from one user's inbox.
+            'can_manage' => $isOwner,
             'time' => $notification->created_at->diffForHumans(),
             'created_at' => $notification->created_at?->toIso8601String(),
         ];

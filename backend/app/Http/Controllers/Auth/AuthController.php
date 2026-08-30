@@ -99,7 +99,17 @@ class AuthController extends Controller
             'password' => ['required', 'string'],
         ]);
 
-        $user = User::where('username', $credentials['username'])->first();
+        // The existing dashboard form calls this field "username". Accept a
+        // generated branch-manager email there as well so newly provisioned
+        // branch credentials are usable without a second login surface.
+        $identifier = trim($credentials['username']);
+        $user = User::query()
+            ->where(function ($accounts) use ($identifier): void {
+                $accounts
+                    ->where('username', $identifier)
+                    ->orWhere('email', $identifier);
+            })
+            ->first();
 
         if (! $user || ! in_array($user->role, ['admin', 'owner', 'branch_manager'], true) || ! Hash::check($credentials['password'], $user->password)) {
             return back()->withErrors(['username' => __('auth.failed')]);
@@ -112,7 +122,11 @@ class AuthController extends Controller
         Auth::login($user, true);
         $request->session()->regenerate();
 
-        return redirect()->intended($this->homeFor($user));
+        // A restricted platform operator must start at an allowed module,
+        // not at the aggregate /dashboard response. Do not honour an old
+        // intended dashboard URL here because it may be a module the profile
+        // was never allowed to open.
+        return redirect()->to($this->homeFor($user));
     }
 
     public function registerForm(string $role)
@@ -365,7 +379,7 @@ class AuthController extends Controller
     protected function homeFor(User $user): string
     {
         return match ($user->role) {
-            'admin' => '/dashboard',
+            'admin' => $user->firstAdminDashboardPath() ?? '/dashboard/access-denied',
             'owner', 'branch_manager' => '/dashboard/branch',
             'merchant', 'courier', 'pickup_courier', 'delivery_courier', 'transporter' => '/app',
             default => '/login',
@@ -414,6 +428,8 @@ class AuthController extends Controller
             ->where('branches.is_active', true)
             ->whereNotNull('branches.province_id')
             ->join('provinces', 'provinces.id', '=', 'branches.province_id')
+            ->whereNull('provinces.tenant_id')
+            ->where('provinces.is_active', true)
             ->orderBy('provinces.sort_order')
             ->orderBy('branches.name_ar')
             ->get([
@@ -447,6 +463,7 @@ class AuthController extends Controller
             ->where('is_platform_managed', true)
             ->where('is_active', true)
             ->where('province_id', $provinceId)
+            ->whereHas('province', fn ($province) => $province->platform()->active())
             ->orderBy('name_ar')
             ->first();
     }

@@ -43,6 +43,15 @@ class CourierOrderAssignmentService
                 'المستخدم المختار ليس مندوباً نشطاً.'
             );
             $this->ensure(! $requireOnDuty || $courier->is_online, 'فعّل حالة الاستلام أولاً لاستلام الطلب.');
+
+            // A self-claimed delivery is an operational action by the
+            // courier, unlike a dashboard assignment by an administrator.
+            // Check the freshly locked courier record so a stale browser
+            // state cannot claim a job after location sharing has stopped.
+            if ($requireOnDuty) {
+                app(CourierLocationService::class)->requireFreshOperationalLocation($courier);
+            }
+
             $this->ensure(
                 app(CourierOrderAccess::class)->canClaim($delivery, $courier),
                 'هذا الطلب لم يعد متاحاً لهذا المندوب.'

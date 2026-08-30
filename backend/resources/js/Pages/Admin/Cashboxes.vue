@@ -1,75 +1,148 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { router, usePage } from '@inertiajs/vue3'
-import { route } from 'ziggy-js'
+import { computed } from 'vue'
+import { usePage } from '@inertiajs/vue3'
 import AdminShell from '../../Components/AdminShell.vue'
 
-const props = defineProps({ cashboxes: { type: Array, default: () => [] }, vouchers: { type: Array, default: () => [] }, summary: { type: Object, default: () => ({}) } })
+const props = defineProps({
+    cashboxes: { type: Array, default: () => [] },
+    vouchers: { type: Array, default: () => [] },
+    summary: { type: Object, default: () => ({}) },
+})
+
 const page = usePage()
 const locale = computed(() => page.props.locale || 'ar')
-const dialog = ref(null)
-const busy = ref(false)
-const voucher = ref({ cashbox_id: '', direction: 1, type: 'receipt', amount: '', note: '' })
-const transfer = ref({ from_cashbox_id: '', to_cashbox_id: '', amount: '', note: '' })
-const create = ref({ kind: 'vault', name_ar: '', name_en: '', name_ku: '' })
+
+// Cashboxes are deliberately not a second wallet or a generic accounting
+// ledger. A branch cashbox represents delivery revenue physically handed over
+// by couriers. Qi credits, courier budgets, and ordinary wallet activity stay
+// on the Finance page and never appear in this operational view.
 const labels = {
-    title: { ar: 'الصناديق المالية', en: 'Cashboxes', ku: 'سندووقە داراییەکان' },
-    eyebrow: { ar: 'الرقابة المالية', en: 'Financial control', ku: 'کۆنترۆڵی دارایی' },
-    subtitle: { ar: 'صناديق الفروع والخزنة والبنك، مع سندات قبض وصرف وتحويل لا يمكن تكرارها دون أثر تدقيقي.', en: 'Branch, vault, and bank cashboxes with auditable receipt, payment, and transfer vouchers.', ku: 'سندووقەکانی لق، خەزنە و بانک لەگەڵ بەڵگەی وەرگرتن و پارەدان و گواستنەوەی ڕێکخراو.' },
-    total: { ar: 'إجمالي الأرصدة', en: 'Total balances', ku: 'کۆی باڵانسەکان' },
+    title: { ar: 'صناديق تحصيل إيرادات التوصيل', en: 'Delivery Revenue Cashboxes', ku: 'سندووقەکانی داهاتی گەیاندن' },
+    eyebrow: { ar: 'تحصيلات الفروع', en: 'Branch collections', ku: 'کۆکردنەوەی لقەکان' },
+    subtitle: { ar: 'تُعرض هنا تحصيلات إيرادات التوصيل التي سلّمها المندوبون إلى الفروع فقط. شحن Qi والميزانية وحركات المحفظة لا تدخل ضمن الصناديق.', en: 'Only delivery-revenue collections handed over by couriers to branches appear here. Qi top-ups, budgets, and wallet activity are excluded.', ku: 'تەنها داهاتی گەیاندنی وەرگیراو لە لایەن پێگەیەنەران و رادەستی لق کراو لێرە پیشان دەدرێت. بارکردنی Qi و بودجە و جوڵەی جزدان لێرە نییە.' },
+    total: { ar: 'إجمالي تحصيلات التوصيل', en: 'Total delivery collections', ku: 'کۆی کۆکردنەوەی گەیاندن' },
     branches: { ar: 'صناديق الفروع', en: 'Branch cashboxes', ku: 'سندووقەکانی لقەکان' },
-    vault: { ar: 'الخزنة', en: 'Vault', ku: 'خەزنە' },
-    bank: { ar: 'البنك', en: 'Bank', ku: 'بانک' },
-    newBox: { ar: 'صندوق مركزي جديد', en: 'New central cashbox', ku: 'سندووقی ناوەندی نوێ' },
-    receipt: { ar: 'سند قبض/صرف', en: 'Receipt / payment voucher', ku: 'بەڵگەی وەرگرتن/پارەدان' },
-    transfer: { ar: 'تحويل بين الصناديق', en: 'Cashbox transfer', ku: 'گواستنەوەی نێوان سندووقەکان' },
-    branch: { ar: 'فرع', en: 'Branch', ku: 'لق' },
-    active: { ar: 'نشط', en: 'Active', ku: 'چالاک' },
-    inactive: { ar: 'موقوف', en: 'Inactive', ku: 'ناچالاک' },
-    balance: { ar: 'الرصيد الحالي', en: 'Current balance', ku: 'باڵانسی ئێستا' },
-    cashbox: { ar: 'الصندوق', en: 'Cashbox', ku: 'سندووق' },
-    amount: { ar: 'المبلغ', en: 'Amount', ku: 'بڕ' },
-    operation: { ar: 'العملية', en: 'Operation', ku: 'کردار' },
-    receive: { ar: 'قبض', en: 'Receipt', ku: 'وەرگرتن' },
-    pay: { ar: 'صرف', en: 'Payment', ku: 'پارەدان' },
-    note: { ar: 'ملاحظة', en: 'Note', ku: 'تێبینی' },
-    from: { ar: 'من صندوق', en: 'From cashbox', ku: 'لە سندووقی' },
-    to: { ar: 'إلى صندوق', en: 'To cashbox', ku: 'بۆ سندووقی' },
-    create: { ar: 'إنشاء', en: 'Create', ku: 'دروستکردن' },
-    submit: { ar: 'ترحيل السند', en: 'Post voucher', ku: 'تۆمارکردنی بەڵگە' },
-    transferSubmit: { ar: 'تنفيذ التحويل', en: 'Post transfer', ku: 'جێبەجێکردنی گواستنەوە' },
-    cancel: { ar: 'إلغاء', en: 'Cancel', ku: 'هەڵوەشاندنەوە' },
-    nameAr: { ar: 'الاسم بالعربية', en: 'Arabic name', ku: 'ناو بە عەرەبی' },
-    nameEn: { ar: 'الاسم بالإنجليزية', en: 'English name', ku: 'ناو بە ئینگلیزی' },
-    nameKu: { ar: 'الاسم بالكردية', en: 'Kurdish name', ku: 'ناو بە کوردی' },
-    kind: { ar: 'نوع الصندوق', en: 'Cashbox type', ku: 'جۆری سندووق' },
-    history: { ar: 'سجل الحركات', en: 'Voucher ledger', ku: 'تۆماری جوڵەکان' },
+    active: { ar: 'الصناديق النشطة', en: 'Active cashboxes', ku: 'سندووقە چالاکەکان' },
+    entries: { ar: 'سندات التحصيل المعروضة', en: 'Displayed collection vouchers', ku: 'بەڵگەکانی کۆکردنەوەی پیشاندراو' },
+    branch: { ar: 'الفرع', en: 'Branch', ku: 'لق' },
+    vault: { ar: 'الخزنة المركزية', en: 'Central vault', ku: 'خەزنەی ناوەندی' },
+    bank: { ar: 'صندوق البنك', en: 'Bank cashbox', ku: 'سندووقی بانک' },
+    balance: { ar: 'رصيد تحصيلات التوصيل', en: 'Delivery collection balance', ku: 'باڵانسی کۆکردنەوەی گەیاندن' },
+    scope: { ar: 'تحصيلات التوصيل فقط', en: 'Delivery collections only', ku: 'تەنها کۆکردنەوەی گەیاندن' },
+    ledger: { ar: 'سجل تحصيلات التوصيل', en: 'Delivery collections ledger', ku: 'تۆماری کۆکردنەوەی گەیاندن' },
+    ledgerSubtitle: { ar: 'السجل أدناه مخصّص لتسليمات المندوبين المعتمدة للفروع، ولا يعرض أي شحن أو ميزانية أو حركة محفظة عامة.', en: 'This ledger contains only approved courier handovers to branches; it excludes top-ups, budgets, and general wallet activity.', ku: 'ئەم تۆمارە تەنها دەستبەدەستکردنی پێگەیەنەران بۆ لقەکان پیشان دەدات؛ بارکردن، بودجە و جوڵەی گشتی جزدان لێی نیشان نادرێت.' },
     date: { ar: 'التاريخ', en: 'Date', ku: 'بەروار' },
     reference: { ar: 'المرجع', en: 'Reference', ku: 'سەرچاوە' },
+    movement: { ar: 'الحركة', en: 'Movement', ku: 'جوڵە' },
+    cashbox: { ar: 'صندوق التحصيل', en: 'Collection cashbox', ku: 'سندووقی کۆکردنەوە' },
     actor: { ar: 'المسؤول', en: 'Operator', ku: 'بەرپرسیار' },
-    noVouchers: { ar: 'لا توجد سندات بعد.', en: 'No vouchers yet.', ku: 'هێشتا هیچ بەڵگەیەک نییە.' },
+    amount: { ar: 'مبلغ التحصيل', en: 'Collection amount', ku: 'بڕی کۆکردنەوە' },
+    note: { ar: 'ملاحظة', en: 'Note', ku: 'تێبینی' },
+    noCollections: { ar: 'لا توجد تحصيلات توصيل مسلّمة بعد.', en: 'No delivery collections have been handed over yet.', ku: 'هێشتا هیچ کۆکردنەوەی گەیاندنێک رادەست نەکراوە.' },
+    currency: { ar: 'د.ع', en: 'IQD', ku: 'د.ع' },
+    handover: { ar: 'تسليم تحصيلات المندوب', en: 'Courier collection handover', ku: 'رادەستکردنی کۆکردنەوەی پێگەیەنەر' },
+    transferIn: { ar: 'تحويل تحصيلات إلى الصندوق', en: 'Collections transferred in', ku: 'گواستنەوەی کۆکردنەوە بۆ سندووق' },
+    transferOut: { ar: 'تحويل تحصيلات من الصندوق', en: 'Collections transferred out', ku: 'گواستنەوەی کۆکردنەوە لە سندووق' },
 }
-function l(key) { return labels[key]?.[locale.value] || labels[key]?.ar || key }
-function boxName(box) { return box?.[`name_${locale.value}`] || box?.name_ar || box?.name_en || '—' }
-function kindLabel(kind) { return kind === 'branch' ? l('branches') : kind === 'bank' ? l('bank') : l('vault') }
-function open(which) { dialog.value = which; busy.value = false }
-function close() { dialog.value = null; busy.value = false }
-function submitVoucher() { if (busy.value || !voucher.value.cashbox_id || !Number(voucher.value.amount)) return; busy.value = true; router.post(route('admin.cashboxes.voucher'), { ...voucher.value, cashbox_id: Number(voucher.value.cashbox_id), amount: Number(voucher.value.amount), direction: Number(voucher.value.direction) }, { preserveScroll: true, onSuccess: () => { voucher.value = { cashbox_id: '', direction: 1, type: 'receipt', amount: '', note: '' }; close() }, onFinish: () => busy.value = false }) }
-function submitTransfer() { if (busy.value || !transfer.value.from_cashbox_id || !transfer.value.to_cashbox_id || !Number(transfer.value.amount)) return; busy.value = true; router.post(route('admin.cashboxes.transfer'), { ...transfer.value, from_cashbox_id: Number(transfer.value.from_cashbox_id), to_cashbox_id: Number(transfer.value.to_cashbox_id), amount: Number(transfer.value.amount) }, { preserveScroll: true, onSuccess: () => { transfer.value = { from_cashbox_id: '', to_cashbox_id: '', amount: '', note: '' }; close() }, onFinish: () => busy.value = false }) }
-function submitCreate() { if (busy.value || !create.value.name_ar) return; busy.value = true; router.post(route('admin.cashboxes.store'), create.value, { preserveScroll: true, onSuccess: () => { create.value = { kind: 'vault', name_ar: '', name_en: '', name_ku: '' }; close() }, onFinish: () => busy.value = false }) }
-function toggle(box) { router.patch(route('admin.cashboxes.status', box.id), { is_active: !box.is_active }, { preserveScroll: true }) }
+
+function l(key) {
+    return labels[key]?.[locale.value] || labels[key]?.ar || key
+}
+
+function boxName(box) {
+    return box?.[`name_${locale.value}`] || box?.name_ar || box?.name_en || '—'
+}
+
+function kindLabel(kind) {
+    return kind === 'branch' ? l('branch') : kind === 'bank' ? l('bank') : l('vault')
+}
+
+function movementLabel(type) {
+    return type === 'transfer_in' ? l('transferIn') : type === 'transfer_out' ? l('transferOut') : l('handover')
+}
+
+const collectionCashboxes = computed(() => props.cashboxes.filter((box) => ['branch', 'vault', 'bank'].includes(box.kind)))
+const branchCashboxes = computed(() => collectionCashboxes.value.filter((box) => box.kind === 'branch'))
+const collectionVouchers = computed(() => props.vouchers.filter((voucher) => ['courier_handover', 'transfer_in', 'transfer_out'].includes(voucher.type)))
+const activeCashboxes = computed(() => collectionCashboxes.value.filter((box) => box.is_active).length)
+const collectionBalance = computed(() => Number(props.summary.delivery_collections ?? props.summary.balance ?? 0) || 0)
 </script>
 
 <template>
     <AdminShell :title="l('title')">
-        <header class="page-heading"><div><p>{{ l('eyebrow') }}</p><h2>{{ l('title') }}</h2><span>{{ l('subtitle') }}</span></div><div class="heading-actions"><button class="secondary" type="button" @click="open('voucher')">{{ l('receipt') }}</button><button class="secondary" type="button" @click="open('transfer')">⇄ {{ l('transfer') }}</button><button class="primary" type="button" @click="open('create')">＋ {{ l('newBox') }}</button></div></header>
-        <section class="kpi-grid"><article v-for="item in [{ key:'total',value:summary.balance,color:'var(--primary)'},{key:'branches',value:summary.branch_balance,color:'var(--success)'},{key:'vault',value:summary.vault_balance,color:'var(--accent)'},{key:'bank',value:summary.bank_balance,color:'var(--st-approved)'}]" :key="item.key" class="kpi"><span class="ki" :style="{color:item.color}">▣</span><span><strong class="kval mono">{{ fmt(item.value || 0) }}</strong><small>{{ t('IQD') }}</small><b class="klab">{{ l(item.key) }}</b></span></article></section>
-        <section class="cashbox-grid"><article v-for="box in cashboxes" :key="box.id" class="box-card" :class="{off:!box.is_active}"><header><span class="box-icon">{{ box.kind === 'bank' ? '⌂' : box.kind === 'vault' ? '◈' : '▣' }}</span><div><h3>{{ boxName(box) }}</h3><p>{{ box.branch ? `${box.branch.city} · ${l('branch')}` : kindLabel(box.kind) }}</p></div><button v-if="!box.branch" class="switch" type="button" :class="{on:box.is_active}" @click="toggle(box)"><i></i></button></header><div class="box-balance"><span>{{ l('balance') }}</span><b class="mono">{{ fmt(box.balance) }} <small>{{ t('IQD') }}</small></b></div><footer><span :class="box.is_active?'ok':'off-label'">● {{ box.is_active ? l('active') : l('inactive') }}</span><span>{{ kindLabel(box.kind) }}</span></footer></article></section>
-        <section class="panel ledger"><header class="panel-head"><span><h3>{{ l('history') }}</h3><p>{{ l('subtitle') }}</p></span></header><div class="table-scroll"><table class="tbl"><thead><tr><th>{{ l('date') }}</th><th>{{ l('reference') }}</th><th>{{ l('operation') }}</th><th>{{ l('cashbox') }}</th><th>{{ l('actor') }}</th><th>{{ l('amount') }}</th></tr></thead><tbody><tr v-for="row in vouchers" :key="row.id"><td class="mono">{{ row.occurred_at?.slice(0,16).replace('T',' ') }}</td><td class="mono">{{ row.reference }}</td><td><span class="voucher-type" :class="row.direction > 0 ? 'in' : 'out'">{{ row.type.replaceAll('_',' ') }}</span></td><td>{{ boxName(row.cashbox) }}<small v-if="row.counterparty">↔ {{ boxName(row.counterparty) }}</small></td><td>{{ row.actor?.name || '—' }}</td><td class="mono" :class="row.direction > 0 ? 'plus' : 'minus'">{{ row.direction > 0 ? '+' : '−' }}{{ fmt(row.amount) }}</td></tr></tbody></table><div v-if="!vouchers.length" class="empty">{{ l('noVouchers') }}</div></div></section>
-        <div v-if="dialog" class="dialog-backdrop" @click.self="close"><form v-if="dialog==='voucher'" class="dialog" @submit.prevent="submitVoucher"><header><h3>{{ l('receipt') }}</h3><button type="button" @click="close">×</button></header><div class="dialog-body form"><label><span>{{ l('cashbox') }}</span><select v-model="voucher.cashbox_id" required><option value="" disabled>—</option><option v-for="box in cashboxes.filter(x=>x.is_active)" :key="box.id" :value="box.id">{{ boxName(box) }}</option></select></label><label><span>{{ l('operation') }}</span><select v-model="voucher.direction"><option :value="1">{{ l('receive') }}</option><option :value="-1">{{ l('pay') }}</option></select></label><label><span>{{ l('amount') }} ({{ t('IQD') }})</span><input v-model="voucher.amount" type="number" min="1" required></label><label><span>{{ l('note') }}</span><textarea v-model="voucher.note" rows="3"></textarea></label></div><footer><button class="secondary" type="button" @click="close">{{ l('cancel') }}</button><button class="primary" :disabled="busy">{{ l('submit') }}</button></footer></form><form v-else-if="dialog==='transfer'" class="dialog" @submit.prevent="submitTransfer"><header><h3>{{ l('transfer') }}</h3><button type="button" @click="close">×</button></header><div class="dialog-body form"><label><span>{{ l('from') }}</span><select v-model="transfer.from_cashbox_id" required><option value="" disabled>—</option><option v-for="box in cashboxes.filter(x=>x.is_active)" :key="box.id" :value="box.id">{{ boxName(box) }}</option></select></label><label><span>{{ l('to') }}</span><select v-model="transfer.to_cashbox_id" required><option value="" disabled>—</option><option v-for="box in cashboxes.filter(x=>x.is_active && x.id !== Number(transfer.from_cashbox_id))" :key="box.id" :value="box.id">{{ boxName(box) }}</option></select></label><label><span>{{ l('amount') }} ({{ t('IQD') }})</span><input v-model="transfer.amount" type="number" min="1" required></label><label><span>{{ l('note') }}</span><textarea v-model="transfer.note" rows="3"></textarea></label></div><footer><button class="secondary" type="button" @click="close">{{ l('cancel') }}</button><button class="primary" :disabled="busy">{{ l('transferSubmit') }}</button></footer></form><form v-else class="dialog" @submit.prevent="submitCreate"><header><h3>{{ l('newBox') }}</h3><button type="button" @click="close">×</button></header><div class="dialog-body form"><label><span>{{ l('kind') }}</span><select v-model="create.kind"><option value="vault">{{ l('vault') }}</option><option value="bank">{{ l('bank') }}</option></select></label><label><span>{{ l('nameAr') }}</span><input v-model.trim="create.name_ar" required></label><label><span>{{ l('nameEn') }}</span><input v-model.trim="create.name_en"></label><label><span>{{ l('nameKu') }}</span><input v-model.trim="create.name_ku"></label></div><footer><button class="secondary" type="button" @click="close">{{ l('cancel') }}</button><button class="primary" :disabled="busy">{{ l('create') }}</button></footer></form></div>
+        <header class="page-heading">
+            <div>
+                <p>{{ l('eyebrow') }}</p>
+                <h2>{{ l('title') }}</h2>
+                <span>{{ l('subtitle') }}</span>
+            </div>
+        </header>
+
+        <section class="kpi-grid">
+            <article class="kpi kpi-primary">
+                <span class="ki">↧</span>
+                <span><strong class="kval mono">{{ fmt(collectionBalance) }}</strong><small>{{ l('currency') }}</small><b class="klab">{{ l('total') }}</b></span>
+            </article>
+            <article class="kpi">
+                <span class="ki">▣</span>
+                <span><strong class="kval mono">{{ branchCashboxes.length }}</strong><b class="klab">{{ l('branches') }}</b></span>
+            </article>
+            <article class="kpi">
+                <span class="ki">●</span>
+                <span><strong class="kval mono">{{ activeCashboxes }}</strong><b class="klab">{{ l('active') }}</b></span>
+            </article>
+            <article class="kpi">
+                <span class="ki">≡</span>
+                <span><strong class="kval mono">{{ collectionVouchers.length }}</strong><b class="klab">{{ l('entries') }}</b></span>
+            </article>
+        </section>
+
+        <section class="cashbox-grid">
+            <article v-for="box in collectionCashboxes" :key="box.id" class="box-card" :class="{ off: !box.is_active }">
+                <header>
+                    <span class="box-icon">▣</span>
+                    <div>
+                        <h3>{{ boxName(box) }}</h3>
+                        <p>{{ box.branch ? `${box.branch.city} · ${l('branch')}` : kindLabel(box.kind) }}</p>
+                    </div>
+                </header>
+                <div class="box-balance">
+                    <span>{{ l('balance') }}</span>
+                    <b class="mono">{{ fmt(box.balance) }} <small>{{ l('currency') }}</small></b>
+                </div>
+                <footer>
+                    <span :class="box.is_active ? 'ok' : 'off-label'">● {{ box.is_active ? l('active') : '—' }}</span>
+                    <span>{{ l('scope') }}</span>
+                </footer>
+            </article>
+            <div v-if="!collectionCashboxes.length" class="empty-card">{{ l('noCollections') }}</div>
+        </section>
+
+        <section class="panel ledger">
+            <header class="panel-head">
+                <span><h3>{{ l('ledger') }}</h3><p>{{ l('ledgerSubtitle') }}</p></span>
+            </header>
+            <div class="table-scroll">
+                <table v-if="collectionVouchers.length" class="tbl">
+                    <thead><tr><th>{{ l('date') }}</th><th>{{ l('reference') }}</th><th>{{ l('movement') }}</th><th>{{ l('cashbox') }}</th><th>{{ l('actor') }}</th><th>{{ l('amount') }}</th><th>{{ l('note') }}</th></tr></thead>
+                    <tbody>
+                        <tr v-for="row in collectionVouchers" :key="row.id">
+                            <td class="mono">{{ row.occurred_at?.slice(0, 16).replace('T', ' ') }}</td>
+                            <td class="mono">{{ row.reference }}</td>
+                            <td><span class="movement-chip" :class="row.direction > 0 ? 'in' : 'out'">{{ movementLabel(row.type) }}</span><small v-if="row.counterparty">↔ {{ boxName(row.counterparty) }}</small></td>
+                            <td><b>{{ boxName(row.cashbox) }}</b><small v-if="row.cashbox?.branch">{{ row.cashbox.branch.city }}</small></td>
+                            <td>{{ row.actor?.name || '—' }}</td>
+                            <td class="mono" :class="row.direction > 0 ? 'plus' : 'minus'">{{ row.direction > 0 ? '+' : '−' }}{{ fmt(row.amount) }} <small>{{ l('currency') }}</small></td>
+                            <td class="note-cell">{{ row.note || '—' }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div v-else class="empty">{{ l('noCollections') }}</div>
+            </div>
+        </section>
     </AdminShell>
 </template>
 
 <style scoped>
-.page-heading{display:flex;align-items:end;justify-content:space-between;gap:18px;margin-bottom:18px}.page-heading p{margin:0 0 4px;color:var(--primary);font-size:10px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.page-heading h2{margin:0;color:var(--ink);font-size:24px;font-weight:900}.page-heading span{display:block;max-width:680px;margin-top:5px;color:var(--ink-faint);font-size:11px;font-weight:650;line-height:1.7}.heading-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:end}.primary,.secondary{min-height:38px;padding:8px 12px;border:0;border-radius:10px;font:900 10.5px var(--font);cursor:pointer}.primary{color:#062033;background:linear-gradient(135deg,var(--primary),#0ea5e9)}.secondary{border:1px solid var(--border);color:var(--ink-soft);background:var(--surface)}.kpi-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:17px}.kpi{min-height:86px;display:flex;align-items:center;gap:11px;padding:15px;border:1px solid var(--border);border-radius:14px;background:var(--surface)}.ki{display:grid;place-items:center;width:35px;height:35px;border-radius:10px;background:var(--surface-2);font-size:18px}.kpi>span:last-child{display:grid;gap:1px}.kval{color:var(--ink);font-size:16px}.kpi small{color:var(--ink-faint);font-size:8px;font-weight:800}.klab{color:var(--ink-faint);font-size:9px;font-weight:800}.cashbox-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:13px;margin-bottom:17px}.box-card{border:1px solid var(--border);border-radius:15px;background:var(--surface);overflow:hidden}.box-card.off{opacity:.62}.box-card header{display:flex;align-items:center;gap:9px;padding:14px}.box-icon{display:grid;place-items:center;width:35px;height:35px;border-radius:10px;color:#062033;background:linear-gradient(135deg,var(--primary),#0ea5e9);font-size:15px;font-weight:900}.box-card header>div{min-width:0;flex:1}.box-card h3{overflow:hidden;margin:0;color:var(--ink);font-size:12px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.box-card p{margin:3px 0 0;color:var(--ink-faint);font-size:9px;font-weight:700}.switch{border:0;background:transparent;cursor:pointer}.switch i{display:block;position:relative;width:24px;height:13px;border-radius:99px;background:var(--danger-tint)}.switch i:after{position:absolute;top:3px;inset-inline-start:3px;width:7px;height:7px;border-radius:50%;background:var(--danger);content:''}.switch.on i{background:var(--success-tint)}.switch.on i:after{inset-inline-start:14px;background:var(--success)}.box-balance{display:grid;gap:4px;margin:0 14px;padding:12px;border-radius:11px;background:var(--surface-2)}.box-balance span{color:var(--ink-faint);font-size:9px;font-weight:800}.box-balance b{color:var(--ink);font-size:17px}.box-balance small{font-size:9px;color:var(--ink-faint)}.box-card footer{display:flex;justify-content:space-between;padding:12px 14px;color:var(--ink-faint);font-size:9px;font-weight:800}.ok,.plus{color:var(--success)}.off-label,.minus{color:var(--danger)}.ledger{margin:0}.panel-head{align-items:flex-start}.panel-head h3{margin:0;color:var(--ink);font-size:13px}.panel-head p{margin:4px 0 0;color:var(--ink-faint);font-size:9.5px;font-weight:650}.table-scroll{overflow:auto}.tbl{min-width:760px}.tbl small{display:block;margin-top:2px;color:var(--ink-faint);font-size:8.5px}.voucher-type{display:inline-flex;padding:3px 7px;border-radius:20px;background:var(--surface-2);color:var(--ink-soft);font-size:9px;font-weight:850;text-transform:capitalize}.voucher-type.in{color:var(--success);background:var(--success-tint)}.voucher-type.out{color:var(--danger);background:var(--danger-tint)}.dialog-backdrop{position:fixed;z-index:90;inset:0;display:grid;place-items:center;padding:18px;background:rgba(8,18,17,.58);backdrop-filter:blur(4px)}.dialog{width:min(100%,470px);overflow:hidden;border:1px solid var(--border);border-radius:18px;background:var(--surface);box-shadow:0 28px 70px rgba(0,0,0,.3)}.dialog header,.dialog footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border)}.dialog footer{justify-content:flex-end;border-top:1px solid var(--border);border-bottom:0}.dialog h3{margin:0;color:var(--ink);font-size:14px}.dialog header button{width:28px;height:28px;border:0;border-radius:8px;color:var(--ink-soft);background:var(--surface-2);font-size:20px;cursor:pointer}.dialog-body{padding:16px}.form{display:grid;gap:12px}.form label{display:grid;gap:5px;color:var(--ink-soft);font-size:10px;font-weight:850}.form input,.form select,.form textarea{width:100%;min-height:39px;padding:8px 9px;border:1px solid var(--border);border-radius:9px;outline:0;color:var(--ink);background:var(--surface-2);font:700 11px var(--font)}.form textarea{resize:vertical}.form input:focus,.form select:focus,.form textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-tint)}.empty{padding:28px;color:var(--ink-faint);font-size:11px;font-weight:750;text-align:center}@media(max-width:850px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.page-heading{align-items:start;flex-direction:column}.heading-actions{width:100%;justify-content:start}}@media(max-width:520px){.kpi-grid{grid-template-columns:1fr 1fr}.heading-actions{display:grid;grid-template-columns:1fr}.heading-actions button{width:100%}.dialog-backdrop{align-items:end;padding:0}.dialog{width:100%;border-radius:19px 19px 0 0}}
+.page-heading{display:flex;align-items:end;justify-content:space-between;gap:18px;margin-bottom:18px}.page-heading p{margin:0 0 4px;color:var(--primary);font-size:10px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.page-heading h2{margin:0;color:var(--ink);font-size:24px;font-weight:900}.page-heading span{display:block;max-width:720px;margin-top:5px;color:var(--ink-faint);font-size:11px;font-weight:650;line-height:1.7}.kpi-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:17px}.kpi{min-height:86px;display:flex;align-items:center;gap:11px;padding:15px;border:1px solid var(--border);border-radius:14px;background:var(--surface)}.kpi-primary{border-color:color-mix(in srgb,var(--success) 28%,var(--border));background:linear-gradient(135deg,var(--surface),var(--success-tint))}.ki{display:grid;place-items:center;width:35px;height:35px;border-radius:10px;color:var(--primary-strong);background:var(--primary-tint);font-size:18px;font-weight:900}.kpi-primary .ki{color:var(--success);background:var(--success-tint)}.kpi>span:last-child{display:grid;gap:1px}.kval{color:var(--ink);font-size:16px}.kpi small{color:var(--ink-faint);font-size:8px;font-weight:800}.klab{color:var(--ink-faint);font-size:9px;font-weight:800}.cashbox-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:13px;margin-bottom:17px}.box-card{border:1px solid var(--border);border-radius:15px;background:var(--surface);overflow:hidden}.box-card.off{opacity:.62}.box-card header{display:flex;align-items:center;gap:9px;padding:14px}.box-icon{display:grid;place-items:center;width:35px;height:35px;border-radius:10px;color:var(--success);background:var(--success-tint);font-size:15px;font-weight:900}.box-card header>div{min-width:0;flex:1}.box-card h3{overflow:hidden;margin:0;color:var(--ink);font-size:12px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.box-card p{margin:3px 0 0;color:var(--ink-faint);font-size:9px;font-weight:700}.box-balance{display:grid;gap:4px;margin:0 14px;padding:12px;border-radius:11px;background:var(--surface-2)}.box-balance span{color:var(--ink-faint);font-size:9px;font-weight:800}.box-balance b{color:var(--ink);font-size:17px}.box-balance small{font-size:9px;color:var(--ink-faint)}.box-card footer{display:flex;justify-content:space-between;gap:8px;padding:12px 14px;color:var(--ink-faint);font-size:9px;font-weight:800}.ok,.plus{color:var(--success)}.off-label,.minus{color:var(--danger)}.ledger{margin:0}.panel-head{align-items:flex-start}.panel-head h3{margin:0;color:var(--ink);font-size:13px}.panel-head p{max-width:760px;margin:4px 0 0;color:var(--ink-faint);font-size:9.5px;font-weight:650;line-height:1.7}.table-scroll{overflow:auto}.tbl{min-width:860px}.tbl small{display:block;margin-top:2px;color:var(--ink-faint);font-size:8.5px}.movement-chip{display:inline-flex;padding:3px 7px;border-radius:20px;background:var(--surface-2);color:var(--ink-soft);font-size:9px;font-weight:850}.movement-chip.in{color:var(--success);background:var(--success-tint)}.movement-chip.out{color:var(--warning);background:var(--warning-tint)}.note-cell{max-width:270px;color:var(--ink-soft)}.empty,.empty-card{padding:28px;color:var(--ink-faint);font-size:11px;font-weight:750;text-align:center}.empty-card{display:grid;place-items:center;min-height:130px;border:1px dashed var(--border);border-radius:15px;background:var(--surface)}@media(max-width:850px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.page-heading{align-items:start;flex-direction:column}}@media(max-width:520px){.kpi-grid{grid-template-columns:1fr 1fr}.box-card footer{align-items:flex-start;flex-direction:column}}
 </style>

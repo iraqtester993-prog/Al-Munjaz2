@@ -21,4 +21,21 @@ return [
         'max_total_kilobytes' => (int) env('COURIER_DOCUMENT_TOTAL_MAX_KB', 1600),
         'target_image_kilobytes' => (int) env('COURIER_DOCUMENT_TARGET_IMAGE_KB', 300),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Merchant verification document request limits
+    |--------------------------------------------------------------------------
+    |
+    | The verification sheet sends four identity documents in one multipart
+    | request. Keep this bundle below the same conservative shared-hosting
+    | ceiling as courier registration so a proxy cannot reject it with HTTP
+    | 413 before Laravel has a chance to report a useful validation error.
+    |
+    */
+    'merchant_verification_documents' => [
+        'max_file_kilobytes' => (int) env('MERCHANT_VERIFICATION_DOCUMENT_MAX_KB', 480),
+        'max_total_kilobytes' => (int) env('MERCHANT_VERIFICATION_DOCUMENT_TOTAL_MAX_KB', 1600),
+        'target_image_kilobytes' => (int) env('MERCHANT_VERIFICATION_DOCUMENT_TARGET_IMAGE_KB', 300),
+    ],
 ];

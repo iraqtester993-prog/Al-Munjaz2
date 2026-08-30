@@ -21,14 +21,14 @@ class DashboardController extends Controller
         // scoped browser portal and never use the mobile API surface.
         abort_unless(
             $user?->isActiveUser()
-                && ($user->isAdmin() || $user->role === 'merchant' || $user->isCourierRole()),
+                && ($user->isSuperAdmin() || $user->role === 'merchant' || $user->isCourierRole()),
             403,
         );
 
-        // Platform administrators see the cross-tenant operating picture.
+        // Super administrators see the cross-tenant operating picture.
         // Merchants and couriers are intentionally narrowed to their own
         // authorised work queues below.
-        $orders = $user->isAdmin()
+        $orders = $user->isSuperAdmin()
             ? Order::withoutGlobalScope(TenantScope::class)
             : Order::query();
 
@@ -46,10 +46,10 @@ class DashboardController extends Controller
             'delivered_value' => (clone $orders)->where('status', 'delivered')->sum('price'),
             'available_balance' => $user->wallet?->balance ?? 0,
             'budget' => $user->wallet?->budget ?? 0,
-            'couriers' => $user->isAdmin()
+            'couriers' => $user->isSuperAdmin()
                 ? User::query()->whereIn('role', User::COURIER_ROLES)->where('status', 'active')->count()
                 : null,
-            'fees' => $user->isAdmin()
+            'fees' => $user->isSuperAdmin()
                 ? Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'delivery_fee')->sum('amount')
                 : null,
         ];

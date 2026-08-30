@@ -10,6 +10,15 @@ class ProvinceController extends Controller
 {
     public function index(): JsonResponse
     {
-        return response()->json(['data' => Province::query()->whereNull('tenant_id')->orderBy('sort_order')->get()->map(fn (Province $province) => ['id' => $province->id, 'name_ar' => $province->name_ar, 'name_en' => $province->name_en, 'name_ku' => $province->name_ku])]);
+        return response()->json(['data' => Province::platform()
+            ->active()
+            ->orderBy('sort_order')
+            ->get()
+            ->map(fn (Province $province) => [
+                'id' => $province->id,
+                'name_ar' => $province->name_ar,
+                'name_en' => $province->name_en,
+                'name_ku' => $province->name_ku,
+            ])]);
     }
 }

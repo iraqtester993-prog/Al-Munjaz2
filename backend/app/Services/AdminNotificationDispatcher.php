@@ -59,7 +59,9 @@ class AdminNotificationDispatcher
             $campaign = NotificationCampaign::create([
                 'created_by' => $actor->id,
                 'audience' => $payload['audience'],
-                'target_user_id' => $payload['audience'] === 'user' ? $payload['target_user_id'] : null,
+                'target_user_id' => in_array($payload['audience'], NotificationCampaign::TARGETED_AUDIENCES, true)
+                    ? $payload['target_user_id']
+                    : null,
                 'type' => $payload['type'],
                 'title_ar' => $payload['title_ar'],
                 'title_en' => $payload['title_en'] ?: null,
@@ -115,7 +117,13 @@ class AdminNotificationDispatcher
         });
     }
 
-    /** @param array{audience:string,target_user_id?:int|null} $payload */
+    /**
+     * Resolve only active mobile-app accounts.  In particular, `all` never
+     * includes dashboard users merely because they happen to have an active
+     * account in the same users table.
+     *
+     * @param array{audience:string,target_user_id?:int|null} $payload
+     */
     private function recipientsFor(array $payload): Builder
     {
         $query = User::query()
@@ -125,7 +133,9 @@ class AdminNotificationDispatcher
 
         return match ($payload['audience']) {
             'merchants' => $query->where('role', 'merchant'),
+            'merchant' => $query->where('role', 'merchant')->whereKey($payload['target_user_id']),
             'couriers' => $query->whereIn('role', User::COURIER_ROLES),
+            'courier' => $query->whereIn('role', User::COURIER_ROLES)->whereKey($payload['target_user_id']),
             'pickup_couriers' => $query->where('role', 'pickup_courier'),
             'delivery_couriers' => $query->where('role', 'delivery_courier'),
             'transporters' => $query->where('role', 'transporter'),

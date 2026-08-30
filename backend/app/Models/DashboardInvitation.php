@@ -11,7 +11,7 @@ class DashboardInvitation extends Model
 
     protected $fillable = [
         'invited_by', 'name', 'email', 'role', 'token_hash', 'expires_at',
-        'accepted_at', 'accepted_by',
+        'accepted_at', 'accepted_by', 'permission_profile_id',
     ];
 
     protected function casts(): array
@@ -30,6 +30,11 @@ class DashboardInvitation extends Model
     public function acceptedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'accepted_by');
+    }
+
+    public function permissionProfile(): BelongsTo
+    {
+        return $this->belongsTo(DashboardPermissionProfile::class, 'permission_profile_id');
     }
 
     public function isUsable(): bool

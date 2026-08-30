@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Concerns\BelongsToTenant;
 use App\Models\Scopes\TenantScope;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -76,5 +77,35 @@ class Chat extends Model
     public function messages(): HasMany
     {
         return $this->hasMany(ChatMessage::class);
+    }
+
+    /**
+     * Technical-support conversations. These are the only dashboard threads
+     * to which an administrator may send a reply.
+     */
+    public function scopeAdminSupportInbox(Builder $query): Builder
+    {
+        return $query->whereIn('counterparty_type', ['support', 'order_support']);
+    }
+
+    /**
+     * Direct merchant-to-courier conversations linked to an order.
+     *
+     * The dashboard may inspect these in its dedicated, read-only tab for
+     * operational review. Keeping the exact allow-list prevents historical
+     * or unknown counterparty markers from leaking into the dashboard.
+     */
+    public function scopeAdminMerchantCourierInbox(Builder $query): Builder
+    {
+        return $query->where('counterparty_type', 'order_chat');
+    }
+
+    /**
+     * All conversation types rendered by the dashboard, split by the
+     * controller into technical-support and merchant/courier tabs.
+     */
+    public function scopeAdminDashboardInbox(Builder $query): Builder
+    {
+        return $query->whereIn('counterparty_type', ['support', 'order_support', 'order_chat']);
     }
 }

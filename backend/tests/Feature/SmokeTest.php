@@ -495,6 +495,11 @@ class SmokeTest extends TestCase
     public function test_order_status_transition(): void
     {
         $courier = User::where('username', 'مندوب')->firstOrFail();
+        $courier->update([
+            'current_latitude' => 33.3152412,
+            'current_longitude' => 44.3660731,
+            'location_updated_at' => now(),
+        ]);
         $order = Order::where('status', 'pending')->whereNull('courier_id')->firstOrFail();
         $startingBudget = $courier->wallet->budget;
 

@@ -12,6 +12,7 @@ use App\Models\Setting;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Services\CustomerContactVisibility;
+use App\Services\CourierLocationService;
 use App\Services\CourierOrderAccess;
 use App\Services\OrderWorkflowService;
 use App\Services\PricingService;
@@ -104,7 +105,7 @@ class OrderController extends Controller
         // A merchant can create a delivery only in a province activated for
         // that account. Client-provided province ids are never trusted.
         abort_unless(
-            $user->provinces()->whereKey($data['province_id'])->exists(),
+            $user->provinces()->active()->whereKey($data['province_id'])->exists(),
             422,
             'المحافظة المختارة غير مفعلة لحسابك.',
         );
@@ -188,6 +189,7 @@ class OrderController extends Controller
             // primary delivery lifecycle. Only courier_id owns this generic
             // status endpoint.
             $this->authorizeCourierMutation($user, $order);
+            app(CourierLocationService::class)->requireFreshOperationalLocation($user);
 
             // A courier cannot jump from approval to delivery or register a
             // return here. Returns have their own two-step confirmation flow
@@ -214,6 +216,7 @@ class OrderController extends Controller
     {
         $user = $this->activeApiUser($request);
         $this->authorizeCourierMutation($user, $order);
+        app(CourierLocationService::class)->requireFreshOperationalLocation($user);
 
         $data = $request->validate([
             'fee_mode' => ['required', Rule::in(['none', 'fee'])],
@@ -243,6 +246,7 @@ class OrderController extends Controller
     {
         $user = $this->activeApiUser($request);
         $this->authorizeCourierMutation($user, $order);
+        app(CourierLocationService::class)->requireFreshOperationalLocation($user);
         $data = $request->validate(['note' => ['nullable', 'string', 'max:255']]);
 
         app(OrderWorkflowService::class)->confirmCourierReturnToMerchant(
@@ -367,7 +371,8 @@ class OrderController extends Controller
             ->where('tenant_id', Tenant::platform()->id)
             ->where('is_platform_managed', true)
             ->where('is_active', true)
-            ->where('province_id', $provinceId);
+            ->where('province_id', $provinceId)
+            ->whereHas('province', fn ($province) => $province->platform()->active());
 
         if ((int) $user->branch_id > 0) {
             return $branches->whereKey($user->branch_id)->first();

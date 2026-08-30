@@ -33,7 +33,7 @@ class AuthController extends Controller
         // dashboard credentials only. They must never mint a mobile API token
         // that could bypass the branch-membership authorisation boundary.
         abort_unless(
-            $user->isAdmin() || $user->role === 'merchant' || $user->isCourierRole(),
+            $user->isSuperAdmin() || $user->role === 'merchant' || $user->isCourierRole(),
             403,
         );
 

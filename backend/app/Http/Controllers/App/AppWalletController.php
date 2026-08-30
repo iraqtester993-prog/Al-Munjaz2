@@ -89,6 +89,9 @@ class AppWalletController extends Controller
 
         return Inertia::render('Mobile/Wallet', [
             'isCourier' => $isCourier,
+            'intent' => in_array($request->query('intent'), ['budget', 'qi'], true)
+                ? $request->query('intent')
+                : null,
             // Courier balance is prepaid Qi/administrative credit. It is
             // deliberately separate from their physical cash budget and
             // net collections so the company-fee deduction is transparent.
@@ -249,17 +252,12 @@ class AppWalletController extends Controller
             'note' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        // Cash budget is a declaration of the courier's available physical
-        // cash. It is posted only after administration has verified it, so a
-        // browser request can never self-credit a courier.
-        $finance->submit(
+        $finance->declareCourierBudget(
             $user,
-            FinanceRequest::BUDGET_RECHARGE,
             (int) $data['amount'],
-            null,
             $data['note'] ?? null,
         );
 
-        return back()->with('success', __('Cash budget request sent to administration.'));
+        return back()->with('success', __('Budget added successfully.'));
     }
 }

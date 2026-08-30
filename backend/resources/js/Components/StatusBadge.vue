@@ -16,6 +16,7 @@ const map = {
     damaged: { cls: 'b-warning', label: t('Damaged') },
     rejected: { cls: 'b-danger', label: t('Rejected') },
     late: { cls: 'b-warning', label: t('Late') },
+    deleted: { cls: 'b-neutral', label: t('Deleted') },
 }
 
 const item = computed(() => map[props.status] ?? { cls: 'b-neutral', label: props.status })

@@ -5,15 +5,21 @@ namespace App\Services;
 use App\Models\Branch;
 use App\Models\Cashbox;
 use App\Models\CashboxVoucher;
+use App\Models\FinanceRequest;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * An auditable double-entry layer for the physical cashboxes controlled by
- * the dashboard. Wallet transactions remain party ledgers; cashbox vouchers
- * describe where the physical money actually moved.
+ * An auditable custody ledger for courier delivery collections controlled by
+ * the dashboard. Wallet transactions (Qi credit and courier cash budget)
+ * are party ledgers and never belong to a cashbox.
+ *
+ * The only external inflow is an approved courier handover whose amount was
+ * verified against delivered-order collections. Transfers are allowed solely
+ * to move that same collection between custody locations; they never create
+ * or consume collection revenue.
  */
 class CashboxService
 {
@@ -51,13 +57,66 @@ class CashboxService
     }
 
     /**
-     * Posts a confirmed courier cash handover to the receiving branch.  The
-     * finance request and the physical cashbox entry share one reference so
-     * an accountant can reconcile the digital ledger with cash on site.
+     * Returns only the balance whose provenance is a courier delivery
+     * collection. Legacy/manual voucher rows and a historical cached balance
+     * are intentionally excluded without deleting either of them.
      */
-    public function receiveCourierHandover(Branch $branch, User $courier, int $amount, string $reference, ?string $note = null): CashboxVoucher
+    public function collectionBalance(Cashbox|int $cashbox): int
+    {
+        $cashboxId = $cashbox instanceof Cashbox ? $cashbox->id : $cashbox;
+
+        return max(0, (int) CashboxVoucher::withoutGlobalScopes()
+            ->where('cashbox_id', $cashboxId)
+            ->whereIn('type', CashboxVoucher::COLLECTION_CUSTODY_TYPES)
+            ->get(['direction', 'amount'])
+            ->sum(fn (CashboxVoucher $voucher): int => (int) $voucher->direction * (int) $voucher->amount));
+    }
+
+    /**
+     * @param iterable<int, Cashbox> $cashboxes
+     * @return array<int, int>
+     */
+    public function collectionBalances(iterable $cashboxes): array
+    {
+        $ids = collect($cashboxes)
+            ->pluck('id')
+            ->filter()
+            ->map(fn ($id): int => (int) $id)
+            ->values();
+
+        if ($ids->isEmpty()) {
+            return [];
+        }
+
+        return CashboxVoucher::withoutGlobalScopes()
+            ->whereIn('cashbox_id', $ids)
+            ->whereIn('type', CashboxVoucher::COLLECTION_CUSTODY_TYPES)
+            ->get(['cashbox_id', 'direction', 'amount'])
+            ->groupBy('cashbox_id')
+            ->map(fn ($vouchers): int => max(0, (int) $vouchers->sum(
+                fn (CashboxVoucher $voucher): int => (int) $voucher->direction * (int) $voucher->amount
+            )))
+            ->all();
+    }
+
+    /**
+     * Posts the only allowed cashbox inflow: an approved courier delivery
+     * collection handover to the receiving platform branch.  The finance
+     * request and physical voucher share one reference so the entry is
+     * traceable back to the delivered-order collection validation.
+     */
+    public function receiveCourierHandover(
+        Branch $branch,
+        User $courier,
+        FinanceRequest $request,
+        int $amount,
+        int $availableCollections,
+        ?string $note = null,
+    ): CashboxVoucher
     {
         $platform = Tenant::platform();
+        $this->assertEligibleHandover($branch, $courier, $request, $amount, $availableCollections, $platform);
+
         $cashbox = Cashbox::withoutGlobalScopes()
             ->where('branch_id', $branch->id)
             ->lockForUpdate()
@@ -78,54 +137,73 @@ class CashboxService
             ]);
         }
 
-        return $this->record(
+        return $this->recordCourierCollection(
             $cashbox,
-            1,
             $amount,
-            'courier_handover',
             $courier,
             $note,
-            $reference,
-            ['courier_id' => $courier->id, 'branch_id' => $branch->id],
+            $request,
+            $availableCollections,
         );
     }
 
-    public function record(
+    /**
+     * Generic receipts, payments, merchant settlements, opening balances,
+     * and wallet movements are intentionally not supported here.  They are
+     * not delivery collection revenue and must stay outside this ledger.
+     */
+    private function recordCourierCollection(
         Cashbox $cashbox,
-        int $direction,
         int $amount,
-        string $type,
         User $actor,
         ?string $note = null,
-        ?string $reference = null,
-        ?array $meta = null,
+        FinanceRequest $request,
+        int $availableCollections,
     ): CashboxVoucher {
-        if (! in_array($direction, [-1, 1], true) || $amount < 1 || ! in_array($type, CashboxVoucher::TYPES, true)) {
+        if ($amount < 1) {
             throw ValidationException::withMessages(['cashbox' => __('Invalid cashbox voucher data.')]);
         }
 
-        return DB::transaction(function () use ($cashbox, $direction, $amount, $type, $actor, $note, $reference, $meta): CashboxVoucher {
+        return DB::transaction(function () use ($cashbox, $amount, $actor, $note, $request, $availableCollections): CashboxVoucher {
             $cashbox = Cashbox::withoutGlobalScopes()->lockForUpdate()->findOrFail($cashbox->id);
             $this->assertActive($cashbox);
+            $this->assertCollectionCashbox($cashbox);
 
-            if ($direction < 0 && (int) $cashbox->balance < $amount) {
-                throw ValidationException::withMessages(['amount' => __('The selected cashbox has insufficient balance.')]);
+            if (CashboxVoucher::withoutGlobalScopes()
+                ->where('type', 'courier_handover')
+                ->where('reference', $request->reference)
+                ->exists()) {
+                throw ValidationException::withMessages([
+                    'cashbox' => 'تم ترحيل تسليم النقدية هذا إلى الصندوق مسبقاً.',
+                ]);
             }
 
-            $cashbox->update(['balance' => (int) $cashbox->balance + ($direction * $amount)]);
-            $this->syncBranchBalance($cashbox);
+            // The cached balance may contain a legacy manual entry. Rebase it
+            // on the auditable collection ledger rather than adding to that
+            // old number, so a new handover never revives non-delivery cash.
+            $collectionBalance = $this->collectionBalance($cashbox);
+            $newCollectionBalance = $collectionBalance + $amount;
+            $cashbox->update(['balance' => $newCollectionBalance]);
+            $this->syncBranchBalance($cashbox, $newCollectionBalance);
 
             return CashboxVoucher::withoutGlobalScopes()->create([
                 'tenant_id' => $cashbox->tenant_id,
                 'cashbox_id' => $cashbox->id,
                 'branch_id' => $cashbox->branch_id,
                 'actor_id' => $actor->id,
-                'type' => $type,
-                'direction' => $direction,
+                'type' => 'courier_handover',
+                'direction' => 1,
                 'amount' => $amount,
-                'reference' => $reference ?: $this->reference('CV'),
+                'reference' => $request->reference,
                 'note' => $note,
-                'meta' => $meta,
+                'meta' => [
+                    'collection_source' => 'delivered_order_collections',
+                    'finance_request_id' => $request->id,
+                    'finance_request_reference' => $request->reference,
+                    'courier_id' => $actor->id,
+                    'branch_id' => $cashbox->branch_id,
+                    'available_collections_before_handover' => $availableCollections,
+                ],
                 'occurred_at' => now(),
             ]);
         });
@@ -149,16 +227,29 @@ class CashboxService
             $to = $boxes->get($to->id) ?? throw ValidationException::withMessages(['to_cashbox_id' => __('Cashbox not found.')]);
             $this->assertActive($from);
             $this->assertActive($to);
+            $this->assertCollectionCashbox($from);
+            $this->assertCollectionCashbox($to);
 
-            if ((int) $from->balance < $amount) {
+            // Do not use the cached balance here: legacy/manual entries may
+            // still exist for audit history but must never be moved as
+            // delivery-collection cash.
+            $fromCollectionBalance = $this->collectionBalance($from);
+            $toCollectionBalance = $this->collectionBalance($to);
+
+            if ($fromCollectionBalance < $amount) {
                 throw ValidationException::withMessages(['amount' => __('The source cashbox has insufficient balance.')]);
             }
 
             $reference = $this->reference('CBT');
-            $from->update(['balance' => (int) $from->balance - $amount]);
-            $to->update(['balance' => (int) $to->balance + $amount]);
-            $this->syncBranchBalance($from);
-            $this->syncBranchBalance($to);
+            // As above, use collection-ledger values rather than a cached
+            // historic book value. This also prevents an old manual payment
+            // from making an otherwise valid collection transfer underflow.
+            $fromBalanceAfterTransfer = $fromCollectionBalance - $amount;
+            $toBalanceAfterTransfer = $toCollectionBalance + $amount;
+            $from->update(['balance' => $fromBalanceAfterTransfer]);
+            $to->update(['balance' => $toBalanceAfterTransfer]);
+            $this->syncBranchBalance($from, $fromBalanceAfterTransfer);
+            $this->syncBranchBalance($to, $toBalanceAfterTransfer);
 
             $out = CashboxVoucher::withoutGlobalScopes()->create([
                 'tenant_id' => $from->tenant_id,
@@ -171,7 +262,7 @@ class CashboxService
                 'amount' => $amount,
                 'reference' => $reference,
                 'note' => $note,
-                'meta' => ['counterparty' => $to->id],
+                'meta' => ['counterparty' => $to->id, 'collection_custody_transfer' => true],
                 'occurred_at' => now(),
             ]);
 
@@ -186,7 +277,7 @@ class CashboxService
                 'amount' => $amount,
                 'reference' => $reference,
                 'note' => $note,
-                'meta' => ['counterparty' => $from->id],
+                'meta' => ['counterparty' => $from->id, 'collection_custody_transfer' => true],
                 'occurred_at' => now(),
             ]);
 
@@ -201,12 +292,49 @@ class CashboxService
         }
     }
 
-    private function syncBranchBalance(Cashbox $cashbox): void
+    private function assertEligibleHandover(
+        Branch $branch,
+        User $courier,
+        FinanceRequest $request,
+        int $amount,
+        int $availableCollections,
+        Tenant $platform,
+    ): void {
+        $valid = $amount > 0
+            && $amount <= $availableCollections
+            && $amount <= (int) $request->amount
+            && $request->type === FinanceRequest::CASH_HANDOVER
+            && $request->status === FinanceRequest::APPROVED
+            && (int) $request->approved_amount === $amount
+            && (int) $request->user_id === (int) $courier->id
+            && (int) $request->branch_id === (int) $branch->id
+            && (bool) $branch->is_platform_managed
+            && (int) $branch->tenant_id === (int) $platform->id;
+
+        if (! $valid) {
+            throw ValidationException::withMessages([
+                'cashbox' => 'لا يمكن إضافة مبلغ للصندوق إلا من تسليم نقدي معتمد ومربوط بتحصيلات طلبات مسلّمة.',
+            ]);
+        }
+    }
+
+    private function assertCollectionCashbox(Cashbox $cashbox): void
+    {
+        $platformId = Tenant::platform()->id;
+
+        if ((int) $cashbox->tenant_id !== (int) $platformId || ! in_array($cashbox->kind, Cashbox::KINDS, true)) {
+            throw ValidationException::withMessages([
+                'cashbox' => 'هذا الصندوق ليس ضمن صناديق تحصيل إيرادات التوصيل.',
+            ]);
+        }
+    }
+
+    private function syncBranchBalance(Cashbox $cashbox, int $collectionBalance): void
     {
         if ($cashbox->branch_id) {
             Branch::withoutGlobalScopes()
                 ->whereKey($cashbox->branch_id)
-                ->update(['cash_balance' => $cashbox->balance]);
+                ->update(['cash_balance' => $collectionBalance]);
         }
     }
 

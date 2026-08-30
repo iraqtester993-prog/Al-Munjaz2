@@ -445,7 +445,7 @@ class OrderWorkflowService
         // present. The controller performs the branch boundary; the note is
         // still mandatory so an exceptional status cannot be an accidental
         // click by any dashboard user.
-        $canCorrect = $actor->isAdmin()
+        $canCorrect = $actor->canUseAdminPermission('orders', 'update')
             || (
                 in_array($actor->role, ['owner', 'branch_manager'], true)
                 && $actor->canUseDashboardPermission('orders')

@@ -126,7 +126,7 @@ class PlatformConsoleTest extends TestCase
         ]);
     }
 
-    public function test_dashboard_invitation_creates_an_active_platform_admin_account_once(): void
+    public function test_dashboard_invitation_creates_an_active_profileless_operator_once(): void
     {
         $token = 'test-dashboard-invitation-token';
         $invitation = DashboardInvitation::create([
@@ -150,21 +150,23 @@ class PlatformConsoleTest extends TestCase
             'phone' => '07999910001',
             'password' => 'StrongPassword123',
             'password_confirmation' => 'StrongPassword123',
-        ])->assertRedirect('/dashboard');
+        ])->assertRedirect('/dashboard/access-denied');
 
         $user = User::where('username', 'platform-invite-admin')->firstOrFail();
         $this->assertSame('admin', $user->role);
         $this->assertSame('active', $user->status);
+        $this->assertFalse($user->isSuperAdmin());
+        $this->assertNull($user->permission_profile_id);
         $this->assertSame(Tenant::PLATFORM_SLUG, $user->tenant->slug);
         $this->assertNotNull($invitation->fresh()->accepted_at);
         $this->assertSame($user->id, $invitation->fresh()->accepted_by);
 
-        // An invited administrator has a platform tenant context, but the
-        // console must still aggregate a merchant company's private branch.
+        // A profileless invitation is a real active account, but it cannot
+        // access any cross-tenant dashboard response until a super admin
+        // explicitly assigns a named permission profile.
         $this->actingAs($user)
             ->get('/dashboard/platform')
-            ->assertOk()
-            ->assertInertia(fn (Assert $page) => $page->where('companies.0.branches_count', 1));
+            ->assertForbidden();
 
         // The same public URL cannot mint another privileged account.
         $this->post('/logout')->assertRedirect();

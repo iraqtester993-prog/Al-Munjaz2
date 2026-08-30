@@ -51,16 +51,18 @@ class MobileFinancePresentationTest extends TestCase
                 ->where('orders.0.id', $order->id));
     }
 
-    public function test_courier_wallet_exposes_qi_credit_and_uses_administrative_review_for_cash_budget(): void
+    public function test_courier_can_add_declared_cash_budget_immediately_with_a_ledger_audit(): void
     {
         $courier = User::where('username', 'مندوب')->firstOrFail();
+        $startingBudget = (int) $courier->wallet->budget;
 
         $this->actingAs($courier)
-            ->get('/app/wallet')
+            ->get('/app/wallet?intent=budget')
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Mobile/Wallet')
                 ->where('isCourier', true)
+                ->where('intent', 'budget')
                 ->has('summary.completed_deliveries')
                 ->has('summary.returned_deliveries')
                 ->has('summary.collections_total')
@@ -68,14 +70,20 @@ class MobileFinancePresentationTest extends TestCase
                 ->has('transactions'));
 
         $this->actingAs($courier)
-            ->post('/app/wallet/budget', ['amount' => 100000, 'mode' => 'set'])
+            ->post('/app/wallet/budget', ['amount' => 100000, 'note' => 'نقد متاح لاستلام الطلبات'])
             ->assertRedirect();
 
-        $this->assertDatabaseHas('finance_requests', [
+        $this->assertSame($startingBudget + 100000, (int) $courier->wallet->fresh()->budget);
+        $this->assertDatabaseHas('transactions', [
             'user_id' => $courier->id,
             'type' => \App\Models\FinanceRequest::BUDGET_RECHARGE,
-            'status' => \App\Models\FinanceRequest::PENDING,
             'amount' => 100000,
+            'direction' => 1,
+            'finance_request_id' => null,
+        ]);
+        $this->assertDatabaseHas('activity_logs', [
+            'user_id' => $courier->id,
+            'action' => 'wallet.courier_budget_added',
         ]);
     }
 }

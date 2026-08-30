@@ -28,7 +28,10 @@ export function pickupNavigationHref(order) {
     const longitude = Number(order.pickup_longitude).toFixed(6)
     const label = pickupLocationLabel(order)
     const destination = `${latitude},${longitude}`
-    const query = label ? `${destination}(${encodeURIComponent(label)})` : destination
+    // `geo:0,0?q=` is the Android navigation-intent form. It lets the
+    // operating system offer the map/navigation apps installed by the courier
+    // instead of hard-coding one provider inside the PWA.
+    const query = encodeURIComponent(label ? `${destination} (${label})` : destination)
 
-    return `geo:${destination}?q=${query}`
+    return `geo:0,0?q=${query}`
 }

@@ -16,4 +16,7 @@ return [
     'courier_document_too_large' => ':document نابێت لە :max MB زیاتر بێت.',
     'courier_documents_total_too_large' => 'کۆی گشتی بەڵگەنامەکانی پەیک نابێت لە :max MB زیاتر بێت. وێنەی بچووکتر هەڵبژێرە و دووبارە هەوڵ بدە.',
     'courier_upload_request_too_large' => 'وێنە هەڵبژێردراوەکان لە سنووری بارکردنی میزبانی گەورەترن. وێنەی بچووکتر هەڵبژێرە یان دووبارە هەڵیان بژێرە بۆ باشترکردنی خۆکار.',
+    'merchant_verification_document_too_large' => 'هەر بەڵگەنامەیەکی پشتڕاستکردنەوە نابێت لە :max MB زیاتر بێت.',
+    'merchant_verification_documents_total_too_large' => 'کۆی گشتی بەڵگەنامەکانی پشتڕاستکردنەوە نابێت لە :max MB زیاتر بێت. وێنەی بچووکتر هەڵبژێرە و دووبارە هەوڵ بدە.',
+    'merchant_verification_upload_request_too_large' => 'وێنە هەڵبژێردراوەکان لە سنووری بارکردنی میزبانی گەورەترن. وێنەی بچووکتر هەڵبژێرە یان دووبارە هەڵیان بژێرە بۆ باشترکردنی خۆکار.',
 ];

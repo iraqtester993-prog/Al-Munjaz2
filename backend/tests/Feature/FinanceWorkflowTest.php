@@ -28,7 +28,7 @@ class FinanceWorkflowTest extends TestCase
         $this->seed(DemoSeeder::class);
     }
 
-    public function test_courier_cash_handover_and_cash_budget_are_approved_once_by_administration(): void
+    public function test_courier_cash_handover_needs_approval_while_declared_cash_budget_is_posted_immediately(): void
     {
         $courier = User::where('username', 'مندوب')->firstOrFail();
         $admin = User::where('role', 'admin')->firstOrFail();
@@ -93,36 +93,18 @@ class FinanceWorkflowTest extends TestCase
             ->post('/app/wallet/budget', ['amount' => 1000, 'note' => 'نقد متاح لاستلام الطلبات'])
             ->assertRedirect();
 
-        $recharge = FinanceRequest::withoutGlobalScopes()
-            ->where('user_id', $courier->id)
-            ->where('type', FinanceRequest::BUDGET_RECHARGE)
-            ->firstOrFail();
-
-        $this->actingAs($admin)
-            ->post("/dashboard/finance/requests/{$recharge->id}/approve", [
-                'approved_amount' => 1000,
-                'decision_note' => 'شحن معتمد',
-            ])
-            ->assertRedirect();
-
         $this->assertDatabaseHas('transactions', [
-            'finance_request_id' => $recharge->id,
             'user_id' => $courier->id,
             'type' => FinanceRequest::BUDGET_RECHARGE,
             'amount' => 1000,
             'direction' => 1,
+            'finance_request_id' => null,
         ]);
         $this->assertSame($startingBudget + 1000, (int) $courier->wallet->fresh()->budget);
-
-        // A second approval cannot create another ledger record or add money twice.
-        $this->actingAs($admin)
-            ->post("/dashboard/finance/requests/{$recharge->id}/approve", ['approved_amount' => 1000])
-            ->assertSessionHasErrors('finance');
-
-        $this->assertSame(1, Transaction::withoutGlobalScopes()
-            ->where('finance_request_id', $recharge->id)
-            ->count());
-        $this->assertSame($startingBudget + 1000, (int) $courier->wallet->fresh()->budget);
+        $this->assertDatabaseHas('activity_logs', [
+            'user_id' => $courier->id,
+            'action' => 'wallet.courier_budget_added',
+        ]);
     }
 
     public function test_qi_topup_needs_a_provider_reference_and_administrator_approval_before_crediting_the_courier(): void

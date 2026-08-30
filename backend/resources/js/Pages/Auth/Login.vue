@@ -4,17 +4,30 @@ import { router, useForm, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import Flash from '../../Components/Flash.vue'
 import PwaInstallBanner from '../../Components/PwaInstallBanner.vue'
+import DeveloperInfoSheet from '../../Components/DeveloperInfoSheet.vue'
 
 const page = usePage()
 const errors = computed(() => page.props.errors || {})
 const view = ref('start')
 const dark = ref(false)
 const showPassword = ref(false)
+const showDeveloperInfo = ref(false)
 
 const locale = computed(() => page.props.locale || 'ar')
 const branding = computed(() => page.props.branding || {
     name: t('Al-Munjaz Al-Saree'),
     logo_url: '/logo.png',
+})
+const developer = computed(() => page.props.developer || {})
+const developerName = computed(() => {
+    const values = developer.value?.developer_name || {}
+
+    for (const candidate of [locale.value, 'ar', 'en', 'ku']) {
+        const value = values[candidate]
+        if (typeof value === 'string' && value.trim() !== '') return value.trim()
+    }
+
+    return t('Iraq Techno Information Technology')
 })
 const roles = computed(() => [
     { key: 'merchant', label: t('Merchant App'), desc: t('My orders, statement, wallet'), icon: 'shop' },
@@ -143,11 +156,25 @@ function icon(name) {
 
             <p class="register-link-ref">{{ t('No account yet') }} <a @click="$inertia.visit(route('register', form.role))">{{ t('Create account') }}</a></p>
         </section>
+
+        <footer class="auth-product-footer">
+            <button class="developer-footer-button" type="button" @click="showDeveloperInfo = true">
+                <span>{{ t('Developed by') }}</span>
+                <b>{{ developerName }}</b>
+            </button>
+            <nav class="auth-legal-links" :aria-label="t('Legal links')">
+                <a :href="route('legal.privacy')">{{ t('Privacy Policy') }}</a>
+                <span aria-hidden="true">•</span>
+                <a :href="route('legal.terms')">{{ t('Terms of Use') }}</a>
+            </nav>
+        </footer>
+
+        <DeveloperInfoSheet :open="showDeveloperInfo" @close="showDeveloperInfo = false" />
     </main>
 </template>
 
 <style scoped>
-.reference-auth { min-height:100dvh; width:100%; color:#fff; background:linear-gradient(175deg, var(--primary-strong), var(--primary) 59%, var(--accent)); display:flex; flex-direction:column; overflow:hidden; }
+.reference-auth { min-height:100dvh; width:100%; color:#fff; background:linear-gradient(175deg, var(--primary-strong), var(--primary) 59%, var(--accent)); display:flex; flex-direction:column; overflow-x:hidden; overflow-y:auto; }
 .reference-auth.dark { background:linear-gradient(175deg, #08312e, #0f5450 59%, #7a4a17); }
 .reference-auth-header { display:grid; grid-template-columns:38px 1fr auto; align-items:center; padding:18px 18px 8px; }
 .reference-brand { display:flex; align-items:center; justify-content:center; gap:8px; font-size:14px; font-weight:900; }
@@ -187,4 +214,5 @@ function icon(name) {
 .register-link-ref { margin:17px 0 0; text-align:center; color:rgba(255,255,255,.76); font-size:11.5px; font-weight:600; }
 .register-link-ref a { color:#fff; font-weight:900; text-decoration:underline; cursor:pointer; }
 .existing-account-link{margin:18px 0 0;text-align:center}.existing-account-link button{color:rgba(255,255,255,.9);font:800 11px var(--font);text-decoration:underline;text-underline-offset:3px}
+.auth-product-footer{display:grid;gap:9px;padding:4px 22px calc(15px + env(safe-area-inset-bottom,0px));text-align:center}.developer-footer-button{display:grid;gap:1px;color:rgba(255,255,255,.86);font:inherit}.developer-footer-button span{font-size:9px;font-weight:700}.developer-footer-button b{color:#fff;font-size:10.5px;font-weight:900}.auth-legal-links{display:flex;align-items:center;justify-content:center;gap:8px;color:rgba(255,255,255,.64);font-size:9.5px;font-weight:750}.auth-legal-links a{color:inherit;text-decoration:underline;text-underline-offset:3px}.auth-legal-links a:active{color:#fff}
 </style>

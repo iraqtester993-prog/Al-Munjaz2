@@ -132,7 +132,6 @@ onUnmounted(() => window.clearInterval(ticker))
                     </div>
                     <div class="order-mid">
                         <b>{{ customerName(o) }}</b>
-                        <span class="mono">{{ o.track_no }}</span>
                     </div>
                     <div class="order-end">
                         <span class="order-date">{{ o.date }}</span>
@@ -140,7 +139,6 @@ onUnmounted(() => window.clearInterval(ticker))
                         <StatusBadge :status="o.status" />
                     </div>
                 </div>
-                <p v-if="o.notes" class="merchant-order-note"><b>{{ t('Notes') }}:</b> {{ o.notes }}</p>
                 <p v-if="o.vehicle_note" class="merchant-order-note merchant-order-vehicle-note"><b>{{ t('Vehicle Note') }}:</b> {{ o.vehicle_note }}</p>
                 <div v-if="(o.status === 'approved' || o.status === 'courier') && o.assigned_courier" class="merchant-courier-card">
                     <span class="merchant-courier-avatar">{{ o.assigned_courier.name?.slice(0, 1) || 'م' }}</span>

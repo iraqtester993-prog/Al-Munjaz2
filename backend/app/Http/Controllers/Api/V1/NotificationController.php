@@ -22,4 +22,18 @@ class NotificationController extends Controller
         $notification->update(['read_at' => now()]);
         return response()->json(['data' => ['id' => $notification->id, 'read_at' => $notification->read_at?->toISOString()]]);
     }
+
+    /**
+     * Soft-delete one personal inbox delivery. Campaigns intentionally have
+     * one row per recipient, so this never removes the campaign history or
+     * another user's delivered copy.
+     */
+    public function destroy(Request $request, Notification $notification): JsonResponse
+    {
+        abort_unless((int) $notification->user_id === (int) $request->user()->id, 403);
+
+        $notification->delete();
+
+        return response()->json(null, 204);
+    }
 }

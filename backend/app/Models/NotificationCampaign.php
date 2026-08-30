@@ -8,15 +8,32 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class NotificationCampaign extends Model
 {
+    /**
+     * A campaign always targets mobile application accounts.  Dashboard
+     * accounts (administrator, owner, branch manager, and support) are kept
+     * out of this list by the dispatcher, even when the audience is `all`.
+     *
+     * The specialised courier audiences and `user` are retained for existing
+     * saved campaigns and integrations.  New dashboard targeting should use
+     * `merchant` and `courier` for one selected account so its role remains
+     * part of the auditable campaign record.
+     *
+     * @var array<int, string>
+     */
     public const AUDIENCES = [
         'all',
         'merchants',
+        'merchant',
         'couriers',
+        'courier',
         'pickup_couriers',
         'delivery_couriers',
         'transporters',
         'user',
     ];
+
+    /** @var array<int, string> */
+    public const TARGETED_AUDIENCES = ['merchant', 'courier', 'user'];
 
     protected $fillable = [
         'created_by',

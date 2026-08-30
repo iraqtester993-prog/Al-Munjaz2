@@ -23,8 +23,6 @@ class MobileSlide extends Model
         'audience',
         'title_ar', 'title_en', 'title_ku',
         'body_ar', 'body_en', 'body_ku',
-        'tag_ar', 'tag_en', 'tag_ku',
-        'cta_ar', 'cta_en', 'cta_ku', 'action_url',
         'image_path', 'is_active', 'sort_order', 'starts_at', 'ends_at',
     ];
 
@@ -82,13 +80,6 @@ class MobileSlide extends Model
             'body_ar' => $this->body_ar,
             'body_en' => $this->body_en,
             'body_ku' => $this->body_ku,
-            'tag_ar' => $this->tag_ar,
-            'tag_en' => $this->tag_en,
-            'tag_ku' => $this->tag_ku,
-            'cta_ar' => $this->cta_ar,
-            'cta_en' => $this->cta_en,
-            'cta_ku' => $this->cta_ku,
-            'action_url' => $this->action_url,
             'accent' => $this->audience === 'courier',
             'image_url' => $this->image_path ? Storage::disk('public')->url($this->image_path) : null,
         ];

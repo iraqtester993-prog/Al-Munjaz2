@@ -19,16 +19,27 @@ class AdminCashboxController extends Controller
     {
         $cashboxes->ensureOperatingCashboxes();
 
-        $boxes = Cashbox::withoutGlobalScope(TenantScope::class)
+        $cashboxModels = Cashbox::withoutGlobalScope(TenantScope::class)
             ->with('branch:id,name_ar,name_en,name_ku,city')
+            ->where('tenant_id', Tenant::platform()->id)
             // ANSI CASE keeps the operating order portable across the
             // production MySQL database and SQLite used by automated tests.
             ->orderByRaw("CASE kind WHEN 'branch' THEN 1 WHEN 'vault' THEN 2 WHEN 'bank' THEN 3 ELSE 4 END")
             ->orderBy('name_ar')
-            ->get()
-            ->map(fn (Cashbox $box) => $this->boxPayload($box));
+            ->get();
+
+        $collectionBalances = $cashboxes->collectionBalances($cashboxModels);
+        $boxes = $cashboxModels->map(fn (Cashbox $box) => $this->boxPayload(
+            $box,
+            $collectionBalances[$box->id] ?? 0,
+        ));
 
         $vouchers = CashboxVoucher::withoutGlobalScope(TenantScope::class)
+            // Collection reporting deliberately excludes historical/manual
+            // receipts, payments, and opening balances.  New rows can only
+            // be courier handovers or custody transfers of those handovers.
+            ->where('tenant_id', Tenant::platform()->id)
+            ->whereIn('type', CashboxVoucher::COLLECTION_CUSTODY_TYPES)
             ->with([
                 'cashbox:id,name_ar,name_en,name_ku,kind',
                 'counterpartyCashbox:id,name_ar,name_en,name_ku,kind',
@@ -60,6 +71,7 @@ class AdminCashboxController extends Controller
                 'vault_balance' => (int) $boxes->where('kind', 'vault')->sum('balance'),
                 'bank_balance' => (int) $boxes->where('kind', 'bank')->sum('balance'),
             ],
+            'collection_scope' => 'courier_delivery_collections_only',
         ]);
     }
 
@@ -87,7 +99,9 @@ class AdminCashboxController extends Controller
     public function status(Request $request, Cashbox $cashbox)
     {
         $data = $request->validate(['is_active' => ['required', 'boolean']]);
-        $cashbox = Cashbox::withoutGlobalScope(TenantScope::class)->findOrFail($cashbox->id);
+        $cashbox = Cashbox::withoutGlobalScope(TenantScope::class)
+            ->where('tenant_id', Tenant::platform()->id)
+            ->findOrFail($cashbox->id);
 
         if ($cashbox->branch_id) {
             return back()->withErrors(['cashbox' => __('Branch cashboxes are controlled by the branch status.')]);
@@ -99,20 +113,16 @@ class AdminCashboxController extends Controller
         return back()->with('success', __('Cashbox status updated.'));
     }
 
-    public function voucher(Request $request, CashboxService $cashboxes)
+    /**
+     * Intentionally preserved as a safe route for older built clients.  A
+     * cashbox may receive money only through the approved courier-handover
+     * workflow, never through a dashboard-entered receipt/payment voucher.
+     */
+    public function voucher(Request $request)
     {
-        $data = $request->validate([
-            'cashbox_id' => ['required', 'integer', Rule::exists('cashboxes', 'id')],
-            'direction' => ['required', 'integer', Rule::in([-1, 1])],
-            'amount' => ['required', 'integer', 'min:1'],
-            'type' => ['required', Rule::in(['receipt', 'payment', 'merchant_settlement'])],
-            'note' => ['nullable', 'string', 'max:1000'],
+        return back()->withErrors([
+            'cashbox' => 'الصناديق تعرض تحصيلات إيرادات التوصيل المعتمدة فقط؛ لا تتوفر سندات قبض أو صرف يدوية.',
         ]);
-        $cashbox = Cashbox::withoutGlobalScope(TenantScope::class)->findOrFail($data['cashbox_id']);
-        $voucher = $cashboxes->record($cashbox, (int) $data['direction'], (int) $data['amount'], $data['type'], $request->user(), $data['note'] ?? null);
-        $this->activity($request, 'cashbox.voucher_recorded', $cashbox->id, ['voucher_id' => $voucher->id, 'reference' => $voucher->reference]);
-
-        return back()->with('success', __('Cashbox voucher posted.'));
     }
 
     public function transfer(Request $request, CashboxService $cashboxes)
@@ -124,15 +134,19 @@ class AdminCashboxController extends Controller
             'note' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $from = Cashbox::withoutGlobalScope(TenantScope::class)->findOrFail($data['from_cashbox_id']);
-        $to = Cashbox::withoutGlobalScope(TenantScope::class)->findOrFail($data['to_cashbox_id']);
+        $from = Cashbox::withoutGlobalScope(TenantScope::class)
+            ->where('tenant_id', Tenant::platform()->id)
+            ->findOrFail($data['from_cashbox_id']);
+        $to = Cashbox::withoutGlobalScope(TenantScope::class)
+            ->where('tenant_id', Tenant::platform()->id)
+            ->findOrFail($data['to_cashbox_id']);
         $result = $cashboxes->transfer($from, $to, (int) $data['amount'], $request->user(), $data['note'] ?? null);
         $this->activity($request, 'cashbox.transferred', $from->id, ['reference' => $result['out']->reference, 'to_cashbox_id' => $to->id, 'amount' => $data['amount']]);
 
         return back()->with('success', __('Cashbox transfer posted.'));
     }
 
-    private function boxPayload(Cashbox $box): array
+    private function boxPayload(Cashbox $box, ?int $collectionBalance = null): array
     {
         return [
             'id' => $box->id,
@@ -140,7 +154,12 @@ class AdminCashboxController extends Controller
             'name_ar' => $box->name_ar,
             'name_en' => $box->name_en,
             'name_ku' => $box->name_ku,
-            'balance' => (int) $box->balance,
+            // `balance` is the collection-only value used by the dashboard.
+            // Keep the historical cached amount available only as metadata so
+            // old manual records are neither deleted nor mixed into revenue.
+            'balance' => $collectionBalance ?? (int) $box->balance,
+            'historical_book_balance' => (int) $box->balance,
+            'balance_source' => 'courier_delivery_collections_only',
             'is_active' => (bool) $box->is_active,
             'branch' => $box->branch ? [
                 'id' => $box->branch->id,

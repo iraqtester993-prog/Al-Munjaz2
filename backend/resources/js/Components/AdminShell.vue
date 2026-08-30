@@ -13,6 +13,22 @@ const page = usePage()
 const isMenuOpen = ref(false)
 const user = computed(() => page.props.auth?.user)
 const adminBadges = computed(() => page.props.adminBadges || {})
+const isSuperAdmin = computed(() => Boolean(user.value?.is_super_admin))
+const adminPermissions = computed(() => user.value?.admin_permissions || {})
+
+// Navigation is only a convenience; the server independently protects every
+// route.  A restricted dashboard admin needs `view` for the matching module
+// before the link is exposed, while the audited super administrator sees the
+// complete dashboard navigation.
+function canViewModule(module) {
+    if (isSuperAdmin.value) return true
+
+    const actions = adminPermissions.value?.[module]
+    if (Array.isArray(actions)) return actions.includes('view')
+    if (actions && typeof actions === 'object') return Boolean(actions.view)
+
+    return false
+}
 // The reference dashboard opens in the navy/cyan operating view.  Keep a
 // per-browser preference so the user's explicit light-mode choice survives
 // navigation, while first-time dashboard sessions always start in dark mode.
@@ -54,8 +70,11 @@ const fallbackLabels = {
     'Cashboxes': { ar: 'الصناديق', en: 'Cashboxes', ku: 'سندووقەکان' },
     'Reports': { ar: 'التقارير والتحليلات', en: 'Reports & analytics', ku: 'ڕاپۆرت و شیکاری' },
     'Operational Team': { ar: 'الفريق والصلاحيات', en: 'Operational team', ku: 'تیمی کارپێکردن' },
+    'Employees': { ar: 'الموظفون', en: 'Employees', ku: 'کارمەندان' },
+    'Permissions': { ar: 'الصلاحيات', en: 'Permissions', ku: 'دەسەڵاتەکان' },
     'Mobile Content': { ar: 'محتوى التطبيق', en: 'Mobile content', ku: 'ناوەڕۆکی ئەپ' },
     'Courier Points': { ar: 'نقاط المندوب', en: 'Courier points', ku: 'خاڵەکانی گەیەنەر' },
+    'Courier locations': { ar: 'مواقع المندوبين', en: 'Courier locations', ku: 'شوێنەکانی گەیەنەران' },
 }
 
 const availableLocales = computed(() => (page.props.locales?.length ? page.props.locales : ['ar', 'en', 'ku']))
@@ -71,21 +90,34 @@ const nav = computed(() => {
         ].map((item) => ({ ...item, url: route(item.route) }))
     }
 
-    return [
-    { label: t('Dashboard'), icon: 'grid', route: 'admin.dashboard' },
-    { label: t('Orders'), icon: 'box', route: 'admin.orders' },
-    { label: localized('Branches and Funds'), icon: 'building', route: 'admin.branches' },
-    { label: t('Merchants'), icon: 'shop', route: 'admin.merchants' },
-    { label: localized('Operational Team'), icon: 'users', route: 'admin.couriers' },
-    { label: t('Finance'), icon: 'card', route: 'admin.finance', badge: adminBadges.value.finance },
-    { label: localized('Cashboxes'), icon: 'cashbox', route: 'admin.cashboxes' },
-    { label: localized('Reports'), icon: 'chart', route: 'admin.reports' },
-    { label: t('Chat'), icon: 'chat', route: 'admin.chat', badge: adminBadges.value.chat },
-    { label: t('Notifications'), icon: 'bell', route: 'admin.notifications', badge: adminBadges.value.notifications },
-    { label: localized('Mobile Content'), icon: 'image', route: 'admin.content' },
-    { label: localized('Courier Points'), icon: 'star', route: 'admin.loyalty' },
-    { label: t('Settings'), icon: 'settings', route: 'admin.settings' },
-    ].map((item) => ({ ...item, url: route(item.route) }))
+    const items = [
+        // The aggregate dashboard response is intentionally super-admin-only
+        // until it has a safely filtered data shape.
+        { label: t('Dashboard'), icon: 'grid', route: 'admin.dashboard', superOnly: true },
+        { label: t('Orders'), icon: 'box', route: 'admin.orders', module: 'orders' },
+        { label: localized('Branches and Funds'), icon: 'building', route: 'admin.branches', module: 'branches' },
+        { label: t('Merchants'), icon: 'shop', route: 'admin.merchants', module: 'merchants' },
+        { label: t('Couriers'), icon: 'bike', route: 'admin.couriers', module: 'couriers' },
+        { label: localized('Courier locations'), icon: 'pin', route: 'admin.couriers.locations', module: 'courier_locations' },
+        { label: t('Finance'), icon: 'card', route: 'admin.finance', module: 'finance', badge: adminBadges.value.finance },
+        { label: localized('Cashboxes'), icon: 'cashbox', route: 'admin.cashboxes', module: 'cashboxes' },
+        { label: localized('Reports'), icon: 'chart', route: 'admin.reports', module: 'reports' },
+        { label: t('Chat'), icon: 'chat', route: 'admin.chat', module: 'chat', badge: adminBadges.value.chat },
+        { label: t('Notifications'), icon: 'bell', route: 'admin.notifications', module: 'notifications', badge: adminBadges.value.notifications },
+        { label: localized('Mobile Content'), icon: 'image', route: 'admin.content', module: 'content' },
+        { label: localized('Courier Points'), icon: 'star', route: 'admin.loyalty', module: 'loyalty' },
+        // Employee accounts can manage the dashboard, so this stays visible
+        // only to the platform owner. The server enforces the same boundary.
+        { label: localized('Employees'), icon: 'users', route: 'admin.employees', superOnly: true },
+        // This surface is never delegated, even if a profile contains a
+        // permissions module. The server enforces the same super-admin rule.
+        { label: localized('Permissions'), icon: 'shield', route: 'admin.permissions', superOnly: true },
+        { label: t('Settings'), icon: 'settings', route: 'admin.settings', module: 'settings' },
+    ]
+
+    return items
+        .filter((item) => item.superOnly ? isSuperAdmin.value : canViewModule(item.module))
+        .map((item) => ({ ...item, url: route(item.route) }))
 })
 
 function preferenceRoute(kind) {
@@ -170,6 +202,7 @@ function icon(name) {
         building: 'M4 21V4a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v17M8 7h.01M12 7h.01M16 7h.01M8 11h.01M12 11h.01M16 11h.01M10 21v-5h4v5',
         shop: 'M4 10v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V10M2 7l1-3h18l1 3a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0Z',
         bike: 'M5 18a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm14-8a4 4 0 1 1 0 8 4 4 0 0 1 0-8ZM5 10h14m-7 0-2-4h5',
+        pin: 'M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Zm-8 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z',
         users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m14-11a4 4 0 1 0 0-8m-6 4a4 4 0 1 0 0-8',
         cashbox: 'M3 7h18v12H3zM7 7V4h10v3m-9 5h.01M12 12h.01M16 12h.01M8 16h8',
         chart: 'M4 20V10m6 10V4m6 16v-7m6 7V7',
@@ -178,6 +211,7 @@ function icon(name) {
         bell: 'M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6Zm5 11a2 2 0 0 0 4 0',
         image: 'M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13A1.5 1.5 0 0 1 18.5 20h-13A1.5 1.5 0 0 1 4 18.5v-13ZM7 16l3.3-3.3a1.3 1.3 0 0 1 1.8 0l1.9 1.9 1.5-1.5a1.3 1.3 0 0 1 1.8 0L20 16M9 9h.01',
         star: 'm12 3 2.75 5.57 6.15.9-4.45 4.34 1.05 6.13L12 17.05 6.5 19.94l1.05-6.13L3.1 9.47l6.15-.9L12 3Z',
+        shield: 'M12 3 20 6v5c0 5.14-3.41 8.9-8 10-4.59-1.1-8-4.86-8-10V6l8-3Zm-3.2 9.1 2.1 2.1 4.4-4.4',
         settings: 'M12 15.25A3.25 3.25 0 1 0 12 8.75a3.25 3.25 0 0 0 0 6.5Zm0-12.25v2m0 14v2m9-9h-2M5 12H3m15.36-6.36-1.42 1.42M7.06 16.94l-1.42 1.42m12.72 0-1.42-1.42M7.06 7.06 5.64 5.64',
         menu: 'M4 7h16M4 12h16M4 17h16',
         logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9',

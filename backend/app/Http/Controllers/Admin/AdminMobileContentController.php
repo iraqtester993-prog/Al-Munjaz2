@@ -96,13 +96,6 @@ class AdminMobileContentController extends Controller
             'body_ar' => ['nullable', 'string', 'max:1200'],
             'body_en' => ['nullable', 'string', 'max:1200'],
             'body_ku' => ['nullable', 'string', 'max:1200'],
-            'tag_ar' => ['nullable', 'string', 'max:80'],
-            'tag_en' => ['nullable', 'string', 'max:80'],
-            'tag_ku' => ['nullable', 'string', 'max:80'],
-            'cta_ar' => ['nullable', 'string', 'max:80'],
-            'cta_en' => ['nullable', 'string', 'max:80'],
-            'cta_ku' => ['nullable', 'string', 'max:80'],
-            'action_url' => ['nullable', 'string', 'max:500'],
             'image' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             'is_active' => ['required', 'boolean'],
             'sort_order' => ['required', 'integer', 'min:0', 'max:10000'],
@@ -110,15 +103,11 @@ class AdminMobileContentController extends Controller
             'ends_at' => ['nullable', 'date', 'after_or_equal:starts_at'],
         ]);
 
-        $actionUrl = trim((string) ($data['action_url'] ?? ''));
-        if ($actionUrl !== '' && ! preg_match('#^(?:/[^/]|https?://)#i', $actionUrl)) {
-            throw ValidationException::withMessages([
-                'action_url' => __('Use a safe internal path beginning with / or an http(s) link.'),
-            ]);
-        }
-        $data['action_url'] = $actionUrl ?: null;
-
-        foreach (['title_ar', 'title_en', 'title_ku', 'body_ar', 'body_en', 'body_ku', 'tag_ar', 'tag_en', 'tag_ku', 'cta_ar', 'cta_en', 'cta_ku'] as $field) {
+        // Slider cards are intentionally informational. Legacy tag, CTA text,
+        // and action URL fields are deliberately omitted from the validation
+        // whitelist, so older clients cannot reintroduce them on create or
+        // update. Their historical database values remain untouched.
+        foreach (['title_ar', 'title_en', 'title_ku', 'body_ar', 'body_en', 'body_ku'] as $field) {
             if (isset($data[$field]) && is_string($data[$field])) {
                 $data[$field] = trim($data[$field]) ?: null;
             }

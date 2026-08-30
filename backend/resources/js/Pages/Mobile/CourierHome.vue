@@ -66,6 +66,10 @@ function vehicleLabel(order) {
     }[order.delivery_vehicle] || t('Regular Delivery')
 }
 
+function orderTypeLabel(order) {
+    return order?.order_type || t('Not specified')
+}
+
 const deliverySteps = computed(() => ([
     { status: 'pending', label: t('Pending') },
     { status: 'approved', label: t('Approved') },
@@ -109,12 +113,19 @@ function openDetails(order) {
     selected.value = order
 }
 
+function reopenLocationGateIfRequired(errors) {
+    if (!errors?.location) return
+
+    window.dispatchEvent(new CustomEvent('almunjaz:location-required'))
+}
+
 function claim() {
     if (!selected.value || claiming.value) return
     claiming.value = true
     router.post(route('app.orders.claim', selected.value.id), {}, {
         preserveScroll: true,
         onSuccess: () => (selected.value = null),
+        onError: reopenLocationGateIfRequired,
         onFinish: () => (claiming.value = false),
     })
 }
@@ -175,7 +186,7 @@ onUnmounted(() => window.clearInterval(ticker))
                     <div class="available-order-head">
                         <div>
                             <h4>{{ customerName(order) }}</h4>
-                            <p><span class="mono">{{ order.track_no }}</span><b>•</b><span class="available-address">{{ customerAddress(order) }}</span></p>
+                            <p><span class="available-address">{{ customerAddress(order) }}</span></p>
                         </div>
                         <span class="new-order-chip">{{ t('New Order') }}</span>
                     </div>
@@ -187,7 +198,6 @@ onUnmounted(() => window.clearInterval(ticker))
                             {{ vehicleLabel(order) }}
                         </span>
                     </div>
-                    <p v-if="order.notes" class="available-order-note"><b>{{ t('Order Note') }}:</b> {{ order.notes }}</p>
                     <p v-if="order.vehicle_note" class="available-order-note available-vehicle-note"><b>{{ t('Vehicle Note') }}:</b> {{ order.vehicle_note }}</p>
                 </div>
 
@@ -212,14 +222,14 @@ onUnmounted(() => window.clearInterval(ticker))
         <section v-if="recentOrders.length" class="assigned-section">
             <div class="section-title">
                 <h3>{{ t('Recent Deliveries') }}</h3>
-                <a @click="$inertia.visit(route('app.orders'))">{{ t('See all') }}</a>
+                <a @click="$inertia.visit(route('app.orders', { list: 1 }))">{{ t('See all') }}</a>
             </div>
             <div class="list-card">
-                <button v-for="order in recentOrders" :key="order.id" class="courier-assigned-row" type="button" @click="$inertia.visit(route('app.orders'))">
+                <button v-for="order in recentOrders" :key="order.id" class="courier-assigned-row" type="button" @click="$inertia.visit(route('app.orders', { list: 1, open: order.id }))">
                     <span class="assigned-icon">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="M6 17l4-8h4l3 8M10 9h4M15 6a1.4 1.4 0 1 0 0-2.8A1.4 1.4 0 0 0 15 6Z"/></svg>
                     </span>
-                    <span class="order-mid"><b>{{ customerName(order) }}</b><small class="mono">{{ order.track_no }}</small></span>
+                    <span class="order-mid"><b>{{ customerName(order) }}</b></span>
                     <span class="order-end"><b class="mono">{{ fmt(order.price) }}</b><StatusBadge :status="order.status" /></span>
                 </button>
             </div>
@@ -247,6 +257,7 @@ onUnmounted(() => window.clearInterval(ticker))
                     <div class="detail-row"><span class="text-muted">{{ t('Customer') }}</span><b>{{ customerName(selected) }}</b></div>
                     <div class="detail-row"><span class="text-muted">{{ t('Phone') }}</span><b v-if="canViewCustomerPhone(selected)" class="mono">{{ selected.phone }}</b><b v-else class="customer-phone-locked" :aria-label="t('Phone')">•••••••••••</b></div>
                     <div class="detail-row"><span class="text-muted">{{ t('Address') }}</span><b>{{ customerAddress(selected) }}</b></div>
+                    <div class="detail-row"><span class="text-muted">{{ t('Order Type') }}</span><b class="delivery-vehicle-pill">{{ orderTypeLabel(selected) }}</b></div>
                     <div class="detail-row"><span class="text-muted">{{ t('Delivery Vehicle') }}</span><b class="delivery-vehicle-pill">{{ vehicleLabel(selected) }}</b></div>
                     <div v-if="selected.notes" class="detail-note-box"><b>{{ t('Order Note') }}:</b> {{ selected.notes }}</div>
                     <div v-if="selected.vehicle_note" class="detail-note-box vehicle-note-box"><b>{{ t('Vehicle Note') }}:</b> {{ selected.vehicle_note }}</div>
@@ -269,6 +280,20 @@ onUnmounted(() => window.clearInterval(ticker))
                         <span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 10c0 5.2-8 11-8 11S4 15.2 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{{ pickupLocationLabel(selected, t('Merchant pickup location')) }}</span>
                         <a :href="pickupNavigationHref(selected)">{{ t('Merchant location') }}</a>
                     </div>
+                    <a
+                        v-if="hasPickupLocation(selected)"
+                        class="merchant-pickup-location"
+                        :href="pickupNavigationHref(selected)"
+                        :aria-label="`${t('Open navigation apps')}: ${pickupLocationLabel(selected, t('Merchant pickup location'))}`"
+                    >
+                        <span class="merchant-pickup-icon" aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 5.2-8 11-8 11S4 15.2 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg></span>
+                        <span class="merchant-pickup-copy">
+                            <small>{{ t('Merchant pickup location') }}</small>
+                            <b>{{ pickupLocationLabel(selected, t('Merchant pickup location')) }}</b>
+                            <em>{{ t('The merchant saved this pickup point with the order.') }}</em>
+                        </span>
+                        <span class="merchant-pickup-open"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 14-7-4 14-3-6-7-1Z"/><path d="m12 13 3-3"/></svg>{{ t('Open navigation apps') }}</span>
+                    </a>
                     <div class="merchant-card-actions">
                         <a v-if="whatsappUrl(selected.merchant.phone)" :href="whatsappUrl(selected.merchant.phone)" target="_blank" rel="noopener">{{ t('WhatsApp') }}</a>
                         <button type="button" @click="openOrderChat(selected)">{{ t('Chat') }}</button>
@@ -338,4 +363,5 @@ onUnmounted(() => window.clearInterval(ticker))
 .claim-explain { margin:13px 0; padding:9px 10px; border-radius:10px; background:var(--danger-tint); color:var(--danger); font-size:11px; font-weight:800; line-height:1.7; }
 .claim-order { width:100%; margin-top:14px; }
 .customer-phone-locked{letter-spacing:1px;color:var(--ink-faint);font-size:12px}
+.merchant-location-row{display:none}.merchant-pickup-location{display:grid;grid-template-columns:38px minmax(0,1fr);gap:9px;padding:10px;border:1.5px solid color-mix(in srgb,var(--success) 45%,var(--border));border-radius:12px;background:linear-gradient(135deg,color-mix(in srgb,var(--success-tint) 76%,var(--surface)),var(--surface));color:inherit;text-decoration:none;box-shadow:0 3px 9px rgba(11,110,104,.06)}.merchant-pickup-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--success);color:#fff}.merchant-pickup-copy{display:grid;min-width:0;gap:2px}.merchant-pickup-copy small{color:var(--ink-faint);font-size:9px;font-weight:850}.merchant-pickup-copy b{overflow:hidden;color:var(--ink);font-size:11.5px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.merchant-pickup-copy em{overflow:hidden;color:var(--ink-soft);font-size:9.5px;font-style:normal;font-weight:700;line-height:1.45;text-overflow:ellipsis;white-space:nowrap}.merchant-pickup-open{display:flex;grid-column:1/-1;align-items:center;justify-content:center;gap:6px;min-height:35px;border-radius:9px;background:var(--primary);color:#fff;font-size:10.5px;font-weight:900;box-shadow:0 3px 8px rgba(11,110,104,.16)}.merchant-pickup-open svg{flex:none}
 </style>

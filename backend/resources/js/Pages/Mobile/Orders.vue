@@ -21,11 +21,17 @@ const page = usePage()
 const locale = computed(() => page.props.locale || 'ar')
 const currentRole = computed(() => page.props.auth?.user?.role || '')
 const isGeneralCourier = computed(() => currentRole.value === 'courier')
+// The courier home is intentionally a compact summary. These query flags
+// let its recent-delivery links skip the status overview and, when requested,
+// open the selected order after the scoped order list has loaded.
+const homeOrderQuery = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search)
+const showCourierOrderList = homeOrderQuery.get('list') === '1'
+const homeOrderId = Number(homeOrderQuery.get('open') || 0)
 
 const query = ref(props.q)
 const active = ref(props.filter)
 const merchantOverview = ref(!props.isCourier && props.filter === 'all' && !props.q)
-const courierOverview = ref(props.isCourier && props.filter === 'all' && !props.q)
+const courierOverview = ref(props.isCourier && props.filter === 'all' && !props.q && !showCourierOrderList)
 const selected = ref(null)
 const showForm = ref(false)
 const editing = ref(null)
@@ -69,6 +75,18 @@ const courierStatusCards = computed(() => [
     { key: 'delivered', label: t('Delivered'), tone: 'delivered', count: props.counts.delivered ?? 0 },
     { key: 'returned', label: t('Returned'), tone: 'returned', count: props.counts.returned ?? 0 },
 ])
+
+// Inertia keeps the current page props visible until the filtered response is
+// received.  Without this small client-side guard, selecting (for example)
+// "Pending" briefly rendered the previous unfiltered list before the server
+// replaced it.  Filtering the in-memory collection with the requested status
+// makes the transition immediate while the server remains the source of truth
+// for the final list.
+const visibleOrders = computed(() => {
+    if (active.value === 'all') return props.orders
+
+    return props.orders.filter((order) => order.status === active.value)
+})
 
 function statusIcon(key) {
     const icons = {
@@ -131,6 +149,16 @@ function openOrder(o) {
     selected.value = o
 }
 
+// The backend is authoritative: whenever it rejects a courier operation
+// because the last server location is missing or stale, bring the installed
+// app back to the explicit consent/update sheet rather than leaving the user
+// with an unexplained validation error.
+function reopenLocationGateIfRequired(errors) {
+    if (!errors?.location) return
+
+    window.dispatchEvent(new CustomEvent('almunjaz:location-required'))
+}
+
 function setStatus(order, status) {
     if (busy.value) return
     busy.value = order.id
@@ -143,6 +171,7 @@ function setStatus(order, status) {
                 selected.value = { ...selected.value, status }
                 busy.value = null
             },
+            onError: reopenLocationGateIfRequired,
             onFinish: () => (busy.value = null),
         }
     )
@@ -180,6 +209,7 @@ function submitReturn(order, feeMode) {
                 }
                 returnFlow.value = null
             },
+            onError: reopenLocationGateIfRequired,
             onFinish: () => (busy.value = null),
         }
     )
@@ -202,6 +232,7 @@ function confirmReturnToMerchant(order) {
                     return_fee_charged_at: Number(selected.value?.return_fee_applied || 0) > 0 ? new Date().toISOString() : null,
                 }
             },
+            onError: reopenLocationGateIfRequired,
             onFinish: () => (busy.value = null),
         }
     )
@@ -272,10 +303,40 @@ function republishOrder(order) {
     router.post(route('app.orders.republish', order.id), {}, {
         preserveScroll: true,
         onSuccess: () => {
-            selected.value = {
-                ...selected.value,
-                pickup_deadline_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-            }
+            // The redirect returns the authoritative server-side availability
+            // window. Closing the sheet prevents the old in-memory order from
+            // showing a made-up 30-minute timer when the dashboard uses a
+            // different configured window.
+            selected.value = null
+        },
+        onFinish: () => (busy.value = null),
+    })
+}
+
+function canDeletePendingOrder(order) {
+    return !props.isCourier && Boolean(order?.can_delete_by_merchant)
+}
+
+function shouldShowMerchantSupport(order) {
+    // Anything the merchant cannot safely withdraw—an accepted, terminal,
+    // assigned, or financially linked order—goes to an order-specific
+    // support chat that administration can handle from the dashboard.
+    return !props.isCourier && !canDeletePendingOrder(order)
+}
+
+function deletePendingOrder(order) {
+    if (!canDeletePendingOrder(order) || busy.value) return
+
+    if (!window.confirm(`${t('Delete Order')}?`)) return
+
+    busy.value = order.id
+    router.delete(route('app.orders.destroy', order.id), {
+        preserveScroll: true,
+        onSuccess: () => {
+            // The server refresh removes the soft-deleted order from the
+            // merchant list. Close the sheet so stale details cannot remain
+            // on screen after a successful withdrawal.
+            selected.value = null
         },
         onFinish: () => (busy.value = null),
     })
@@ -368,6 +429,11 @@ function pickupText(order) {
 
 onMounted(() => {
     ticker = window.setInterval(() => { now.value = Date.now() }, 1000)
+
+    if (props.isCourier && homeOrderId > 0) {
+        const order = props.orders.find((row) => Number(row.id) === homeOrderId)
+        if (order) openOrder(order)
+    }
 })
 
 onUnmounted(() => window.clearInterval(ticker))
@@ -415,8 +481,8 @@ onUnmounted(() => window.clearInterval(ticker))
             <input v-model="query" :placeholder="t('Search')" @keyup.enter="doSearch" />
         </div>
 
-        <div v-if="orders.length" class="mobile-order-stack">
-            <article v-for="o in orders" :key="o.id" class="mobile-order-card" @click="openOrder(o)">
+        <div v-if="visibleOrders.length" class="mobile-order-stack">
+            <article v-for="o in visibleOrders" :key="o.id" class="mobile-order-card" @click="openOrder(o)">
                 <header class="mobile-order-head">
                     <div class="order-ic">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -425,7 +491,7 @@ onUnmounted(() => window.clearInterval(ticker))
                     </div>
                     <div class="order-mid">
                         <b>{{ customerName(o) }}</b>
-                        <span class="mono">{{ o.track_no }} · {{ customerAddress(o) }}</span>
+                        <span>{{ customerAddress(o) }}</span>
                     </div>
                     <StatusBadge :status="o.status" />
                 </header>
@@ -442,7 +508,6 @@ onUnmounted(() => window.clearInterval(ticker))
                         </span>
                     </span>
                 </div>
-                <p v-if="o.notes" class="mobile-order-note"><b>{{ t('Order Note') }}:</b> {{ o.notes }}</p>
                 <p v-if="o.vehicle_note" class="mobile-order-note mobile-order-vehicle-note"><b>{{ t('Vehicle Note') }}:</b> {{ o.vehicle_note }}</p>
                 <footer v-if="o.status === 'approved' && pickupText(o)" class="mobile-order-timer"><i></i> {{ t('Time to reach the merchant') }}: <b class="mono">{{ pickupText(o) }}</b></footer>
             </article>
@@ -485,6 +550,10 @@ onUnmounted(() => window.clearInterval(ticker))
                     <b>{{ customerAddress(selected) }}</b>
                 </div>
                 <div class="detail-row">
+                    <span class="text-muted">{{ t('Order Type') }}</span>
+                    <b class="delivery-vehicle-pill">{{ orderTypeLabel(selected) }}</b>
+                </div>
+                <div class="detail-row">
                     <span class="text-muted">{{ t('Delivery Vehicle') }}</span>
                     <b class="delivery-vehicle-pill"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8"/></svg>{{ vehicleLabel(selected) }}</b>
                 </div>
@@ -494,6 +563,10 @@ onUnmounted(() => window.clearInterval(ticker))
                     <span class="text-muted">{{ t('Price') }}</span>
                     <b class="mono">{{ fmt(selected.price) }} {{ t('IQD') }}</b>
                 </div>
+                <div class="detail-row">
+                    <span class="text-muted">{{ t('Delivery Price') }}</span>
+                    <b class="mono">{{ fmt(selected.fee) }} {{ t('IQD') }}</b>
+                </div>
                 </section>
 
                 <a v-if="whatsappUrl(selected.phone)" class="customer-whatsapp" :href="whatsappUrl(selected.phone)" target="_blank" rel="noopener">{{ t('Customer WhatsApp') }}</a>
@@ -501,6 +574,20 @@ onUnmounted(() => window.clearInterval(ticker))
                     <span class="merchant-card-label">{{ t('Merchant') }}</span>
                     <div class="merchant-card-profile"><span class="merchant-avatar">{{ selected.merchant.name?.slice(0, 1) }}</span><span><b>{{ selected.merchant.shop_name || selected.merchant.name }} <i v-if="selected.merchant.verified" class="merchant-verified" :title="t('Verified')">✓</i></b><small v-if="selected.merchant.address" class="merchant-info-row"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 10c0 5.2-8 11-8 11S4 15.2 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{{ selected.merchant.address }}</small><small v-if="selected.merchant.phone" class="merchant-info-row mono"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7A2 2 0 0 1 22 16.9Z"/></svg>{{ selected.merchant.phone }}</small></span></div>
                     <a v-if="hasPickupLocation(selected)" class="merchant-location-row" :href="pickupNavigationHref(selected)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 10c0 5.2-8 11-8 11S4 15.2 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{{ t('Merchant location') }} · {{ pickupLocationLabel(selected, t('Merchant pickup location')) }}</a>
+                    <a
+                        v-if="hasPickupLocation(selected)"
+                        class="merchant-pickup-location"
+                        :href="pickupNavigationHref(selected)"
+                        :aria-label="`${t('Open navigation apps')}: ${pickupLocationLabel(selected, t('Merchant pickup location'))}`"
+                    >
+                        <span class="merchant-pickup-icon" aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 5.2-8 11-8 11S4 15.2 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg></span>
+                        <span class="merchant-pickup-copy">
+                            <small>{{ t('Merchant pickup location') }}</small>
+                            <b>{{ pickupLocationLabel(selected, t('Merchant pickup location')) }}</b>
+                            <em>{{ t('The merchant saved this pickup point with the order.') }}</em>
+                        </span>
+                        <span class="merchant-pickup-open"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 14-7-4 14-3-6-7-1Z"/><path d="m12 13 3-3"/></svg>{{ t('Open navigation apps') }}</span>
+                    </a>
                     <div class="merchant-card-actions"><a v-if="whatsappUrl(selected.merchant.phone)" :href="whatsappUrl(selected.merchant.phone)" target="_blank" rel="noopener">{{ t('WhatsApp') }}</a><button type="button" @click="openOrderChat(selected)">{{ t('Chat') }}</button></div>
                 </section>
                 <section v-else-if="!isCourier && selected.assigned_courier" class="courier-merchant-card merchant-courier-card">
@@ -566,11 +653,11 @@ onUnmounted(() => window.clearInterval(ticker))
                     </button>
                 </div>
 
-                <button v-if="!isCourier && ['approved', 'courier'].includes(selected.status)" class="order-complaint" type="button" @click="openComplaint(selected)">
+                <button v-if="shouldShowMerchantSupport(selected)" class="order-complaint" type="button" @click="openComplaint(selected)">
                     {{ t('Contact Support') }}
                 </button>
 
-                <button v-else-if="['approved', 'courier'].includes(selected.status)" class="order-complaint" type="button" @click="openSupport">
+                <button v-else-if="isCourier && ['approved', 'courier'].includes(selected.status)" class="order-complaint" type="button" @click="openSupport">
                     {{ t('Contact Support to Cancel') }}
                 </button>
 
@@ -581,6 +668,10 @@ onUnmounted(() => window.clearInterval(ticker))
 
                 <button v-if="!isCourier && selected.status === 'pending' && !selected.courier_id" class="order-recreate" type="button" :disabled="busy === selected.id" @click="republishOrder(selected)">
                     <span v-if="busy === selected.id" class="loader"></span><span v-else>{{ t('Republish Order') }}</span>
+                </button>
+
+                <button v-if="canDeletePendingOrder(selected)" class="order-delete" type="button" :disabled="busy === selected.id" @click="deletePendingOrder(selected)">
+                    <span v-if="busy === selected.id" class="loader"></span><span v-else>{{ t('Delete Order') }}</span>
                 </button>
 
                 <button v-if="!isCourier && selected.status === 'pending'" class="btn btn-ghost" style="width: 100%; margin-top: 10px" @click="openEdit">{{ t('Edit') }}</button>
@@ -606,9 +697,11 @@ onUnmounted(() => window.clearInterval(ticker))
 .order-chat{border-color:color-mix(in srgb,var(--primary) 28%,transparent);background:var(--primary-tint);color:var(--primary-strong)}
 .customer-phone-locked{letter-spacing:1px;color:var(--ink-faint);font-size:12px}
 .order-recreate{display:flex;align-items:center;justify-content:center;width:100%;min-height:39px;margin-top:10px;border:1px solid color-mix(in srgb,var(--primary) 28%,transparent);border-radius:10px;background:var(--primary-tint);color:var(--primary-strong);font:900 11px var(--font);cursor:pointer}.order-recreate:disabled{opacity:.6;cursor:wait}
+.order-delete{display:flex;align-items:center;justify-content:center;width:100%;min-height:39px;margin-top:10px;border:1px solid color-mix(in srgb,var(--danger) 48%,var(--border));border-radius:10px;background:transparent;color:var(--danger);font:900 11px var(--font);cursor:pointer}.order-delete:disabled{opacity:.6;cursor:wait}
 .return-flow{display:grid;gap:10px;margin-top:15px;padding:13px;border:1px solid color-mix(in srgb,var(--danger) 30%,var(--border));border-radius:14px;background:color-mix(in srgb,var(--danger-tint) 48%,var(--surface))}.return-flow h4{margin:0;color:var(--ink);font-size:13px;font-weight:900}.return-flow p{margin:0;color:var(--ink-soft);font-size:10.5px;font-weight:700;line-height:1.65}.return-flow-button{width:100%;min-height:39px}.return-flow-cancel{border:0;background:transparent;color:var(--ink-soft);font:800 11px var(--font);cursor:pointer}.return-fee-field{display:flex;align-items:center;gap:8px;border:1px solid color-mix(in srgb,var(--danger) 26%,var(--border));border-radius:10px;background:var(--surface);padding:0 10px}.return-fee-field input{width:100%;min-height:39px;border:0;outline:0;background:transparent;color:var(--ink);font:900 14px var(--font)}.return-fee-field span{color:var(--ink-faint);font-size:10px;font-weight:800}.return-fee-presets{display:flex;flex-wrap:wrap;gap:6px}.return-fee-presets button{border:0;border-radius:8px;background:var(--surface-2);color:var(--ink-soft);font:800 10px var(--font);padding:6px 9px;cursor:pointer}.return-fee-summary{padding:8px 10px;border-radius:9px;background:var(--surface);color:var(--danger);font-size:11px}.return-confirmation{border-color:color-mix(in srgb,var(--accent) 32%,var(--border));background:color-mix(in srgb,var(--accent-tint) 50%,var(--surface))}.return-confirmation .return-fee-summary{color:var(--accent)}
 .courier-orders-overview .merchant-status-grid{gap:10px}
 .merchant-status-card.all .merchant-status-icon{background:var(--primary-tint);color:var(--primary-strong)}.merchant-status-card.all strong{color:var(--primary-strong)}.mobile-order-note{border:1px solid color-mix(in srgb,var(--danger) 18%,transparent);background:color-mix(in srgb,var(--danger-tint) 70%,var(--surface))}.mobile-order-note b{color:var(--danger)}
 .mobile-order-vehicle-note{border-color:color-mix(in srgb,var(--primary) 22%,transparent);background:color-mix(in srgb,var(--primary-tint) 68%,var(--surface))}.mobile-order-vehicle-note b{color:var(--primary-strong)}
 .mobile-operational-section{margin:15px 0}.mobile-operational-section h4{margin:0 0 9px;color:var(--ink);font-size:12px;font-weight:900}.mobile-branch-route{display:grid;gap:5px;margin-top:9px;padding:11px 12px;border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border));border-radius:12px;background:color-mix(in srgb,var(--primary-tint) 62%,var(--surface));color:var(--primary-strong)}.mobile-route-label{font-size:10px;font-weight:900;color:var(--ink-soft)}.mobile-branch-route>b{font-size:12px}.mobile-branch-route small{color:var(--ink-soft);font-size:10px;font-weight:700}.mobile-order-timeline{display:grid;gap:0}.mobile-timeline-event{display:grid;grid-template-columns:28px 1fr;gap:9px;min-height:57px}.mobile-timeline-rail{position:relative;display:flex;justify-content:center}.mobile-timeline-rail::after{position:absolute;top:24px;bottom:-3px;width:1px;background:var(--border);content:""}.mobile-timeline-event:last-child .mobile-timeline-rail::after{display:none}.mobile-timeline-marker{position:relative;z-index:1;display:grid;place-items:center;width:23px;height:23px;border:1px solid var(--border);border-radius:50%;background:var(--surface);color:var(--ink-soft);font-size:11px;font-weight:900}.mobile-timeline-marker.is-created{border-color:color-mix(in srgb,var(--primary) 40%,var(--border));background:var(--primary-tint);color:var(--primary-strong)}.mobile-timeline-marker.is-status{border-color:color-mix(in srgb,var(--success) 44%,var(--border));background:var(--success-tint);color:var(--success)}.mobile-timeline-marker.is-movement{border-color:color-mix(in srgb,var(--accent) 42%,var(--border));background:var(--accent-tint);color:var(--accent)}.mobile-timeline-copy{display:grid;gap:2px;padding:1px 0 14px}.mobile-timeline-copy>b{font-size:11px;color:var(--ink)}.mobile-timeline-copy p{margin:0;color:var(--ink-soft);font-size:10px;line-height:1.55}.mobile-timeline-copy time{color:var(--ink-faint);font-size:9px}
+.merchant-location-row{display:none}.merchant-pickup-location{display:grid;grid-template-columns:38px minmax(0,1fr);gap:9px;padding:10px;border:1.5px solid color-mix(in srgb,var(--success) 45%,var(--border));border-radius:12px;background:linear-gradient(135deg,color-mix(in srgb,var(--success-tint) 76%,var(--surface)),var(--surface));color:inherit;text-decoration:none;box-shadow:0 3px 9px rgba(11,110,104,.06)}.merchant-pickup-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--success);color:#fff}.merchant-pickup-copy{display:grid;min-width:0;gap:2px}.merchant-pickup-copy small{color:var(--ink-faint);font-size:9px;font-weight:850}.merchant-pickup-copy b{overflow:hidden;color:var(--ink);font-size:11.5px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.merchant-pickup-copy em{overflow:hidden;color:var(--ink-soft);font-size:9.5px;font-style:normal;font-weight:700;line-height:1.45;text-overflow:ellipsis;white-space:nowrap}.merchant-pickup-open{display:flex;grid-column:1/-1;align-items:center;justify-content:center;gap:6px;min-height:35px;border-radius:9px;background:var(--primary);color:#fff;font-size:10.5px;font-weight:900;box-shadow:0 3px 8px rgba(11,110,104,.16)}.merchant-pickup-open svg{flex:none}
 </style>

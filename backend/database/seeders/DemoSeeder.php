@@ -32,6 +32,7 @@ class DemoSeeder extends Seeder
                 'password' => '123456',
                 'role' => 'admin',
                 'status' => 'active',
+                'is_super_admin' => true,
             ]
         );
 

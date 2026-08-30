@@ -35,6 +35,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/chats', [ChatController::class, 'store']);
         Route::get('/notifications', [NotificationController::class, 'index']);
         Route::patch('/notifications/{notification}/read', [NotificationController::class, 'markRead']);
+        Route::delete('/notifications/{notification}', [NotificationController::class, 'destroy']);
 
         // The order API needs a tenant boundary for merchant writes. Courier
         // reads are intentionally resolved without the scope after an

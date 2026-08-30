@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { router } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
@@ -11,12 +11,16 @@ const props = defineProps({
     counts: { type: Object, required: true },
     filter: { type: String, default: 'all' },
     q: { type: String, default: '' },
+    courierId: { type: [String, Number], default: '' },
     couriers: { type: Array, default: () => [] },
+    courierFilters: { type: Array, default: () => [] },
     branches: { type: Array, default: () => [] },
+    canUpdateOrders: { type: Boolean, default: false },
 })
 
 const query = ref(props.q)
 const active = ref(props.filter)
+const courierFilter = ref(normalizeCourierId(props.courierId))
 const assignFor = ref(null)
 const assignCourier = ref('')
 const assignmentRole = ref('courier')
@@ -59,11 +63,24 @@ const eligibleBranches = computed(() => {
 
 const filters = computed(() => {
     const list = [{ key: 'all', label: t('All') }]
-    for (const status of ['pending', 'approved', 'courier', 'delivered', 'returned', 'cancelled', 'damaged', 'rejected', 'late']) {
+    // Keep the dashboard focused on the live delivery flow.  Cancellation,
+    // damage, and rejection remain valid historical/order states, but are not
+    // promoted as top-level dashboard filters.
+    for (const status of ['pending', 'approved', 'courier', 'delivered', 'returned', 'late']) {
         list.push({ key: status, label: tStatus(status) })
     }
+    list.push({ key: 'deleted', label: t('Deleted') })
     return list
 })
+
+const sortedCouriers = computed(() => [...(props.courierFilters.length ? props.courierFilters : props.couriers)]
+    .sort((first, second) => String(first.name || '').localeCompare(String(second.name || ''), document.documentElement.lang || 'ar')))
+
+const hasActiveQuery = computed(() => (
+    active.value !== 'all'
+    || Boolean(String(query.value || '').trim())
+    || Boolean(courierFilter.value)
+))
 
 const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned', 'cancelled', 'damaged', 'rejected']
 
@@ -78,6 +95,7 @@ function tStatus(status) {
         damaged: 'Damaged',
         rejected: 'Rejected',
         late: 'Late',
+        deleted: 'Deleted',
     }
 
     return t(labels[status] || status)
@@ -127,12 +145,54 @@ function pickupMapUrl(order) {
     return `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=16/${latitude}/${longitude}`
 }
 
-function apply() {
-    router.get(route('admin.orders'), { filter: active.value, q: query.value }, { preserveState: true, replace: true })
+function normalizeCourierId(value) {
+    const id = String(value ?? '').trim()
+    return /^\d+$/.test(id) ? id : ''
 }
 
+function orderQuery(page = null) {
+    const params = { filter: active.value }
+    const search = String(query.value || '').trim()
+    const courierId = normalizeCourierId(courierFilter.value)
+
+    if (search) params.q = search
+    if (courierId) params.courier_id = courierId
+    if (page) params.page = page
+
+    return params
+}
+
+function apply() {
+    router.get(route('admin.orders'), orderQuery(), { preserveState: true, replace: true })
+}
+
+function clearFilters() {
+    active.value = 'all'
+    query.value = ''
+    courierFilter.value = ''
+    apply()
+}
+
+function goToPage(page) {
+    if (!page) return
+
+    router.get(route('admin.orders'), orderQuery(page), { preserveState: true, replace: true })
+}
+
+watch(() => props.filter, (value) => {
+    active.value = value || 'all'
+})
+
+watch(() => props.q, (value) => {
+    query.value = value || ''
+})
+
+watch(() => props.courierId, (value) => {
+    courierFilter.value = normalizeCourierId(value)
+})
+
 function setStatus(order, status) {
-    if (busyId.value) return
+    if (!props.canUpdateOrders || busyId.value) return
 
     // Normal lifecycle moves do not need an explanation.  A correction (for
     // example, changing a delivered order back to pending) is deliberately
@@ -171,7 +231,7 @@ function isPickupOverdue(order) {
 }
 
 function reofferOverduePickup(order) {
-    if (busyId.value || !isPickupOverdue(order)) return
+    if (!props.canUpdateOrders || busyId.value || !isPickupOverdue(order)) return
 
     const message = `${t('The courier has not reached the merchant by the agreed deadline. Re-offering returns the reserved budget and opens the order to eligible couriers.')}\n\n${t('Continue?')}`
     if (!window.confirm(message)) return
@@ -192,13 +252,14 @@ function reofferOverduePickup(order) {
 }
 
 function openAssign(order) {
+    if (!props.canUpdateOrders) return
     assignFor.value = order
     assignmentRole.value = order.status === 'pending' && !order.courier_id ? 'courier' : 'pickup_courier'
     assignCourier.value = ''
 }
 
 function doAssign() {
-    if (!assignCourier.value || !assignFor.value) return
+    if (!props.canUpdateOrders || !assignCourier.value || !assignFor.value) return
 
     busyId.value = assignFor.value.id
     router.post(
@@ -213,13 +274,14 @@ function doAssign() {
 }
 
 function openBranches(order) {
+    if (!props.canUpdateOrders) return
     branchFor.value = order
     originBranch.value = order.origin_branch_id || ''
     destinationBranch.value = order.destination_branch_id || ''
 }
 
 function saveBranches() {
-    if (!branchFor.value || (!originBranch.value && !destinationBranch.value)) return
+    if (!props.canUpdateOrders || !branchFor.value || (!originBranch.value && !destinationBranch.value)) return
 
     busyId.value = branchFor.value.id
     router.post(route('admin.orders.branches', branchFor.value.id), {
@@ -319,6 +381,24 @@ function isTerminalStatus(status) {
     return ['delivered', 'returned', 'cancelled', 'damaged', 'rejected'].includes(status)
 }
 
+function isDeleted(order) {
+    return Boolean(order?.deleted_at)
+}
+
+function restoreOrder(order) {
+    if (!props.canUpdateOrders || !isDeleted(order) || busyId.value) return
+    if (!window.confirm(`${t('Restore Order')}?`)) return
+
+    busyId.value = order.id
+    router.post(route('admin.orders.restore', order.id), {}, {
+        preserveScroll: true,
+        onSuccess: () => {
+            if (detailsFor.value?.id === order.id) detailsFor.value = null
+        },
+        onFinish: () => (busyId.value = null),
+    })
+}
+
 function provinceName(province) {
     if (!province) return t('Not specified')
     const lang = document.documentElement.lang || 'ar'
@@ -338,10 +418,32 @@ function provinceName(province) {
             >
                 {{ filterOption.label }} <span class="cnt">{{ counts[filterOption.key] ?? 0 }}</span>
             </button>
-            <div class="search">
-                <input v-model="query" :placeholder="t('Search')" @keyup.enter="apply" />
-            </div>
         </div>
+
+        <form class="orders-query-bar" @submit.prevent="apply">
+            <label class="orders-search-field">
+                <span aria-hidden="true">⌕</span>
+                <input
+                    v-model="query"
+                    type="search"
+                    :placeholder="t('Search orders')"
+                    :aria-label="t('Search orders')"
+                />
+            </label>
+
+            <label class="orders-courier-filter">
+                <span>{{ t('Courier') }}</span>
+                <select v-model="courierFilter" :aria-label="t('Select courier')" @change="apply">
+                    <option value="">{{ t('All Couriers') }}</option>
+                    <option v-for="courier in sortedCouriers" :key="courier.id" :value="String(courier.id)">
+                        {{ courier.name }}{{ courier.phone ? ` — ${courier.phone}` : '' }}
+                    </option>
+                </select>
+            </label>
+
+            <button class="fbtn orders-search-submit" type="submit">{{ t('Search') }}</button>
+            <button v-if="hasActiveQuery" class="fbtn orders-clear-filters" type="button" @click="clearFilters">{{ t('Clear filters') }}</button>
+        </form>
 
         <div class="panel">
             <div class="panel-body" style="padding: 0">
@@ -401,22 +503,28 @@ function provinceName(province) {
                                     <span v-else class="text-muted">{{ t('Unassigned') }}</span>
                                     <small v-if="(order.courier || order.delivery_courier || order.pickup_courier)?.phone" class="mono">{{ (order.courier || order.delivery_courier || order.pickup_courier).phone }}</small>
                                 </td>
-                                <td><StatusBadge :status="order.status" /></td>
+                                <td><StatusBadge :status="isDeleted(order) ? 'deleted' : order.status" /></td>
                                 <td class="admin-order-actions-cell" @click.stop>
                                     <div class="admin-order-actions">
                                         <button class="fbtn mini" type="button" @click="openDetails(order)">{{ t('View Details') }}</button>
-                                        <select
-                                            class="fbtn mini"
-                                            :value="order.status"
-                                            :disabled="busyId === order.id"
-                                            style="appearance: auto"
-                                            @change="setStatus(order, $event.target.value)"
-                                        >
-                                            <option v-for="status in statusOptions" :key="status" :value="status">{{ tStatus(status) }}</option>
-                                        </select>
-                                        <button v-if="!isTerminalStatus(order.status)" class="fbtn mini" type="button" @click="openAssign(order)">{{ t('Assign') }}</button>
-                                        <button v-if="isPickupOverdue(order)" class="fbtn mini pickup-overdue-action" type="button" :disabled="busyId === order.id" @click="reofferOverduePickup(order)">{{ t('Re-offer overdue order') }}</button>
-                                        <button class="fbtn mini" type="button" @click="openBranches(order)">{{ t('Branches') }}</button>
+                                        <template v-if="isDeleted(order)">
+                                            <button v-if="canUpdateOrders" class="fbtn mini restore-order-action" type="button" :disabled="busyId === order.id" @click="restoreOrder(order)">{{ t('Restore Order') }}</button>
+                                        </template>
+                                        <template v-else>
+                                            <select
+                                                v-if="canUpdateOrders"
+                                                class="fbtn mini"
+                                                :value="order.status"
+                                                :disabled="busyId === order.id"
+                                                style="appearance: auto"
+                                                @change="setStatus(order, $event.target.value)"
+                                            >
+                                                <option v-for="status in statusOptions" :key="status" :value="status">{{ tStatus(status) }}</option>
+                                            </select>
+                                            <button v-if="canUpdateOrders && !isTerminalStatus(order.status)" class="fbtn mini" type="button" @click="openAssign(order)">{{ t('Assign') }}</button>
+                                            <button v-if="canUpdateOrders && isPickupOverdue(order)" class="fbtn mini pickup-overdue-action" type="button" :disabled="busyId === order.id" @click="reofferOverduePickup(order)">{{ t('Re-offer overdue order') }}</button>
+                                            <button v-if="canUpdateOrders" class="fbtn mini" type="button" @click="openBranches(order)">{{ t('Branches') }}</button>
+                                        </template>
                                     </div>
                                 </td>
                             </tr>
@@ -428,9 +536,9 @@ function provinceName(province) {
         </div>
 
         <div v-if="orders.last_page > 1" class="filter-bar">
-            <button class="fbtn" :disabled="!orders.prev_page_url" @click="router.get(orders.prev_page_url, {}, { preserveState: true })">←</button>
+            <button class="fbtn" :disabled="!orders.prev_page_url" @click="goToPage(orders.current_page - 1)">←</button>
             <span class="fbtn" style="cursor: default">{{ orders.current_page }} / {{ orders.last_page }}</span>
-            <button class="fbtn" :disabled="!orders.next_page_url" @click="router.get(orders.next_page_url, {}, { preserveState: true })">→</button>
+            <button class="fbtn" :disabled="!orders.next_page_url" @click="goToPage(orders.current_page + 1)">→</button>
         </div>
 
         <SheetModal :open="!!detailsFor" :title="t('Order Details')" :subtitle="detailsFor?.track_no" :wide="true" @close="detailsFor = null">
@@ -441,7 +549,7 @@ function provinceName(province) {
                         <b class="mono">{{ detailsFor.track_no }}</b>
                         <span>{{ formatDateTime(detailsFor.created_at) }}</span>
                     </div>
-                    <StatusBadge :status="detailsFor.status" />
+                    <StatusBadge :status="isDeleted(detailsFor) ? 'deleted' : detailsFor.status" />
                 </div>
 
                 <div class="order-detail-summary">
@@ -491,12 +599,12 @@ function provinceName(province) {
                         <div><span>{{ t('Order Type') }}</span><b>{{ detailsFor.order_type || t('Not specified') }}</b></div>
                         <div><span>{{ t('Vehicle') }}</span><b>{{ detailsFor.delivery_vehicle || t('Not specified') }}</b></div>
                         <div><span>{{ t('Source') }}</span><b>{{ sourceLabel(detailsFor.source) }}</b></div>
-                        <div><span>{{ t('Status') }}</span><b>{{ tStatus(detailsFor.status) }}</b></div>
+                        <div><span>{{ t('Status') }}</span><b>{{ isDeleted(detailsFor) ? t('Deleted') : tStatus(detailsFor.status) }}</b></div>
                         <div><span>{{ t('Created at') }}</span><b>{{ formatDateTime(detailsFor.created_at) }}</b></div>
                         <div><span>{{ t('Last updated') }}</span><b>{{ formatDateTime(detailsFor.updated_at) }}</b></div>
                         <div v-if="detailsFor.pickup_deadline_at" class="order-detail-grid-wide"><span>{{ t('Pickup deadline') }}</span><b>{{ formatDateTime(detailsFor.pickup_deadline_at) }}</b></div>
                     </div>
-                    <div v-if="isPickupOverdue(detailsFor)" class="pickup-overdue-notice">
+                    <div v-if="canUpdateOrders && isPickupOverdue(detailsFor)" class="pickup-overdue-notice">
                         <div>
                             <b>{{ t('Pickup deadline has passed') }}</b>
                             <span>{{ t('The courier has not reached the merchant by the agreed deadline. Re-offering returns the reserved budget and opens the order to eligible couriers.') }}</span>
@@ -527,10 +635,12 @@ function provinceName(province) {
                     <p v-if="detailsFor.notes" class="order-detail-note">{{ detailsFor.notes }}</p>
                     <p v-if="detailsFor.vehicle_note" class="order-detail-note"><b>{{ t('Vehicle Note') }}:</b> {{ detailsFor.vehicle_note }}</p>
                 </section>
+
+                <button v-if="canUpdateOrders && isDeleted(detailsFor)" class="btn restore-order-action order-detail-restore" type="button" :disabled="busyId === detailsFor.id" @click="restoreOrder(detailsFor)">{{ t('Restore Order') }}</button>
             </div>
         </SheetModal>
 
-        <SheetModal :open="!!assignFor" :title="t('Assign Courier')" :subtitle="assignFor?.track_no" @close="assignFor = null">
+        <SheetModal v-if="canUpdateOrders" :open="!!assignFor" :title="t('Assign Courier')" :subtitle="assignFor?.track_no" @close="assignFor = null">
             <div class="field">
                 <label>{{ t('Assignment Role') }}</label>
                 <select v-model="assignmentRole" @change="assignCourier = ''">
@@ -552,7 +662,7 @@ function provinceName(province) {
             </button>
         </SheetModal>
 
-        <SheetModal :open="!!branchFor" :title="t('Branch Route')" :subtitle="branchFor?.track_no" @close="branchFor = null">
+        <SheetModal v-if="canUpdateOrders" :open="!!branchFor" :title="t('Branch Route')" :subtitle="branchFor?.track_no" @close="branchFor = null">
             <p class="text-muted" style="margin: 0 0 14px; font-size: 11px; line-height: 1.8">{{ t('Choose the branch receiving the order and the branch responsible for delivery. Administration network branches and this merchant’s own branches are shown.') }}</p>
             <div class="field">
                 <label>{{ t('Origin / pickup branch') }}</label>
@@ -575,6 +685,18 @@ function provinceName(province) {
 </template>
 
 <style scoped>
+.orders-query-bar { display: flex; align-items: end; gap: 9px; margin: 0 0 14px; }
+.orders-search-field, .orders-courier-filter { display: grid; gap: 5px; min-width: 0; }
+.orders-search-field { flex: 1 1 300px; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; min-height: 39px; padding-inline: 11px; border: 1px solid var(--border); border-radius: 10px; color: var(--ink-faint); background: var(--surface); }
+.orders-search-field input, .orders-courier-filter select { width: 100%; min-width: 0; box-sizing: border-box; border: 0; outline: 0; color: var(--ink); background: transparent; font: 700 11px var(--font); }
+.orders-search-field input { min-height: 37px; }
+.orders-search-field:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-tint); }
+.orders-courier-filter { flex: 0 1 270px; }
+.orders-courier-filter > span { color: var(--ink-faint); font-size: 9px; font-weight: 850; }
+.orders-courier-filter select { min-height: 39px; padding: 0 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.orders-courier-filter select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-tint); }
+.orders-search-submit, .orders-clear-filters { min-height: 39px; white-space: nowrap; }
+.orders-search-submit { color: #062033; border-color: transparent; background: var(--primary); }
 .admin-orders-table-wrap { width: 100%; overflow: auto; overscroll-behavior-inline: contain; }
 .admin-orders-table { min-width: 1480px; }
 .admin-order-row { cursor: pointer; outline: none; }
@@ -588,6 +710,8 @@ function provinceName(province) {
 .admin-order-actions-cell { min-width: 230px; }
 .admin-order-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .pickup-overdue-action { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); color: #9a5a00; background: var(--warning-tint); }
+.restore-order-action { border-color: color-mix(in srgb, var(--success) 55%, var(--border)); color: var(--success); background: var(--success-tint); }
+.order-detail-restore { width: 100%; min-height: 44px; }
 
 .order-detail-sheet { display: grid; gap: 16px; padding-bottom: 4px; }
 .order-detail-hero { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 15px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); }
@@ -627,6 +751,9 @@ function provinceName(province) {
 .assign-help { margin: 6px 0 0; color: var(--ink-faint); font-size: 10px; font-weight: 700; line-height: 1.55; }
 
 @media (max-width: 620px) {
+    .orders-query-bar { align-items: stretch; flex-direction: column; }
+    .orders-search-field, .orders-courier-filter { flex-basis: auto; }
+    .orders-search-submit, .orders-clear-filters { width: 100%; }
     .order-detail-summary, .order-detail-grid { grid-template-columns: 1fr; }
     .order-detail-grid-wide { grid-column: auto; }
     .order-detail-hero { align-items: flex-start; flex-direction: column; }
