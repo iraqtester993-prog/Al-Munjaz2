@@ -5,6 +5,19 @@
 
     RewriteEngine On
 
+    # Vite puts a content hash in every file below build/assets.  When the
+    # domain points directly at this public directory (or exposes that folder
+    # through a verified symlink), the web server can serve those files
+    # without booting PHP and safely retain them across releases.
+    RewriteRule ^build/assets/ - [E=ALMUNJAZ_IMMUTABLE_BUILD:1]
+    RewriteRule ^assets/ - [E=ALMUNJAZ_PUBLIC_ASSET:1]
+
+    <IfModule mod_headers.c>
+        Header always set Cache-Control "public, max-age=31536000, immutable" env=ALMUNJAZ_IMMUTABLE_BUILD
+        Header always set X-Content-Type-Options "nosniff" env=ALMUNJAZ_IMMUTABLE_BUILD
+        Header always set Cache-Control "public, max-age=3600" env=ALMUNJAZ_PUBLIC_ASSET
+    </IfModule>
+
     # Keep one canonical origin for each installed PWA. The reverse proxy
     # forwards HTTPS as X-Forwarded-Proto, so both checks are required.
     RewriteCond %{HTTP_HOST} ^www\.mobile\.our-qiq\.com$ [NC]

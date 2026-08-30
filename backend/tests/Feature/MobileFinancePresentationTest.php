@@ -34,8 +34,10 @@ class MobileFinancePresentationTest extends TestCase
             ->whereNotNull('province_id')
             ->firstOrFail();
 
-        $this->actingAs($merchant)
-            ->get('/app/reports?status=delivered&province_id='.$order->province_id.'&from='.$order->date->toDateString().'&to='.$order->date->toDateString())
+        $response = $this->actingAs($merchant)
+            ->get('/app/reports?status=delivered&detail_status=delivered&province_id='.$order->province_id.'&from='.$order->date->toDateString().'&to='.$order->date->toDateString());
+
+        $response
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Mobile/Reports')
@@ -47,8 +49,60 @@ class MobileFinancePresentationTest extends TestCase
                 ->has('statusOptions')
                 ->has('provinceOptions')
                 ->has('provinceDistribution')
+                ->where('detailStatus', 'delivered')
                 ->has('orders', 1)
                 ->where('orders.0.id', $order->id));
+    }
+
+    public function test_merchant_report_overview_uses_aggregates_and_details_are_cursor_paginated(): void
+    {
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+        $provinceId = Order::withoutGlobalScopes()
+            ->where('tenant_id', $merchant->tenant_id)
+            ->whereNotNull('province_id')
+            ->value('province_id');
+        $expectedDelivered = Order::withoutGlobalScopes()
+            ->where('tenant_id', $merchant->tenant_id)
+            ->where('status', 'delivered')
+            ->count() + 30;
+
+        foreach (range(1, 30) as $number) {
+            Order::withoutGlobalScopes()->create([
+                'tenant_id' => $merchant->tenant_id,
+                'track_no' => 'RPT-PERF-'.str_pad((string) $number, 3, '0', STR_PAD_LEFT),
+                'source' => 'merchant',
+                'customer_name_ar' => 'عميل تقرير '.$number,
+                'customer_name_en' => 'Report customer '.$number,
+                'phone' => '077000'.str_pad((string) $number, 4, '0', STR_PAD_LEFT),
+                'address_ar' => 'عنوان التقرير '.$number,
+                'address_en' => 'Report address '.$number,
+                'price' => 1000 + $number,
+                'status' => 'delivered',
+                'province_id' => $provinceId,
+                'date' => today(),
+                'created_by' => $merchant->id,
+            ]);
+        }
+
+        $this->actingAs($merchant)
+            ->get('/app/reports')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Mobile/Reports')
+                ->where('detailStatus', null)
+                ->has('orders', 0)
+                ->where('orderPagination.has_more', false)
+                ->where('summary.delivered_count', $expectedDelivered));
+
+        $this->actingAs($merchant)
+            ->get('/app/reports?detail_status=delivered')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Mobile/Reports')
+                ->where('detailStatus', 'delivered')
+                ->has('orders', 25)
+                ->where('orderPagination.has_more', true)
+                ->has('orderPagination.next_cursor'));
     }
 
     public function test_courier_can_add_declared_cash_budget_immediately_with_a_ledger_audit(): void

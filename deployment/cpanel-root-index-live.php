@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 // Deployment entrypoint for the active shared release. This file belongs in
 // both public_html/mobile and public_html/admin when cPanel cannot point the
-// two subdomains directly at Laravel's public directory.
-$publicRoot = realpath('/home/ourqiq/releases/almunjaz-8de339e/backend/public');
+// two subdomains directly at Laravel's public directory.  Point the
+// `/home/ourqiq/releases/current` symlink at the fully uploaded release;
+// this keeps PHP, the Vite manifest, and the `build` symlink on one version
+// without editing this document-root file for every deployment.
+$publicRoot = realpath('/home/ourqiq/releases/current/backend/public');
 
 if ($publicRoot === false || ! is_file($publicRoot.DIRECTORY_SEPARATOR.'index.php')) {
     http_response_code(500);

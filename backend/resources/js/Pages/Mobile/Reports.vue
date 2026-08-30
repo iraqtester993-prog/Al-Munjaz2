@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AppShell from '../../Components/AppShell.vue'
@@ -12,15 +12,19 @@ const props = defineProps({
     statusOptions: { type: Array, default: () => [] },
     provinceOptions: { type: Array, default: () => [] },
     provinceDistribution: { type: Array, default: () => [] },
+    detailStatus: { type: String, default: null },
+    orderPagination: { type: Object, default: () => ({ has_more: false, next_cursor: null }) },
     orders: { type: Array, default: () => [] },
 })
 
 const page = usePage()
-const activeStatus = ref(null)
 const filtersOpen = ref(false)
 const copied = ref(false)
+const loadingMore = ref(false)
+const detailOrders = ref([])
 const locale = computed(() => page.props.locale || 'ar')
 const archivedStatuses = ['delivered', 'returned']
+const activeStatus = computed(() => props.detailStatus || null)
 const filterForm = ref({
     period: props.period,
     from: props.filters.from || '',
@@ -50,28 +54,29 @@ const statusCards = computed(() => archivedStatuses
     }))
 )
 
-const archivedOrders = computed(() => props.orders.filter((order) => archivedStatuses.includes(order.status)))
-const archivedTotal = computed(() => archivedOrders.value.reduce((sum, order) => sum + Number(order.price || 0), 0))
-const deliveredArchive = computed(() => archivedOrders.value.filter((order) => order.status === 'delivered'))
-const returnedArchive = computed(() => archivedOrders.value.filter((order) => order.status === 'returned'))
-const detailOrders = computed(() => archivedOrders.value.filter((order) => order.status === activeStatus.value))
-const detailTotal = computed(() => detailOrders.value.reduce((sum, order) => sum + Number(order.price || 0), 0))
+const archivedTotal = computed(() => Number(props.summary.orders_value || 0))
+const archivedCount = computed(() => Number(props.summary.orders_count || 0))
+const detailTotal = computed(() => Number(props.summary.status_values?.[activeStatus.value] || 0))
+const detailCount = computed(() => Number(props.summary.status_counts?.[activeStatus.value] || 0))
 const activeMeta = computed(() => activeStatus.value ? statusMeta.value[activeStatus.value] : null)
-const archiveProvinceDistribution = computed(() => {
-    const rows = new Map()
+const archiveProvinceDistribution = computed(() => props.provinceDistribution || [])
+const topProvinceOrders = computed(() => Math.max(...archiveProvinceDistribution.value.map((row) => Number(row.orders || 0)), 1))
 
-    for (const order of archivedOrders.value) {
-        const province = order.province || {}
-        const key = String(province.id || order.province_id || 'not-set')
-        const row = rows.get(key) || { ...province, id: province.id || order.province_id || 'not-set', orders: 0, amount: 0 }
-        row.orders += 1
-        row.amount += Number(order.price || 0)
-        rows.set(key, row)
+// Only the selected card returns row data from the server. The overview is
+// entirely aggregate data, while this local list lets the “load more” action
+// append one small cursor page without re-requesting the entire archive.
+watch(() => props.orders, (orders) => {
+    const next = Array.isArray(orders) ? orders : []
+
+    if (loadingMore.value) {
+        const known = new Set(detailOrders.value.map((order) => order.id))
+        detailOrders.value = [...detailOrders.value, ...next.filter((order) => !known.has(order.id))]
+        loadingMore.value = false
+        return
     }
 
-    return [...rows.values()].sort((a, b) => Number(b.orders) - Number(a.orders))
-})
-const topProvinceOrders = computed(() => Math.max(...archiveProvinceDistribution.value.map((row) => Number(row.orders || 0)), 1))
+    detailOrders.value = next
+}, { immediate: true })
 
 function customerName(order) {
     const preferred = locale.value === 'en' ? 'en' : locale.value === 'ku' ? 'ku' : 'ar'
@@ -105,7 +110,6 @@ function reportQuery(period = filterForm.value.period) {
 }
 
 function visitReport(period = filterForm.value.period) {
-    activeStatus.value = null
     router.get(route('app.reports'), reportQuery(period), { preserveScroll: true, replace: true })
 }
 
@@ -127,17 +131,40 @@ function clearFilters() {
 }
 
 function selectStatus(status) {
-    activeStatus.value = status
+    router.get(route('app.reports'), {
+        ...reportQuery(),
+        detail_status: status,
+    }, { preserveScroll: true, replace: true })
+}
+
+function closeDetails() {
+    visitReport()
+}
+
+function loadMore() {
+    if (loadingMore.value || !activeStatus.value || !props.orderPagination?.next_cursor) return
+
+    loadingMore.value = true
+    router.get(route('app.reports'), {
+        ...reportQuery(),
+        detail_status: activeStatus.value,
+        detail_cursor: props.orderPagination.next_cursor,
+    }, {
+        preserveScroll: true,
+        preserveState: true,
+        replace: true,
+        onError: () => { loadingMore.value = false },
+    })
 }
 
 async function copyReport() {
     const range = filterForm.value.period === 'today' ? t('Orders Today') : t('All Orders')
     const text = [
         `${t('Al-Munjaz Al-Saree')} — ${range}`,
-        `${t('Total Orders')}: ${archivedOrders.value.length}`,
+        `${t('Total Orders')}: ${archivedCount.value}`,
         `${t('Total Amount')}: ${fmt(archivedTotal.value)} ${t('IQD')}`,
-        `${t('Delivered')}: ${deliveredArchive.value.length} — ${fmt(deliveredArchive.value.reduce((sum, order) => sum + Number(order.price || 0), 0))} ${t('IQD')}`,
-        `${t('Returned')}: ${returnedArchive.value.length} — ${fmt(returnedArchive.value.reduce((sum, order) => sum + Number(order.price || 0), 0))} ${t('IQD')}`,
+        `${t('Delivered')}: ${Number(props.summary.delivered_count || 0)} — ${fmt(props.summary.delivered_value || 0)} ${t('IQD')}`,
+        `${t('Returned')}: ${Number(props.summary.returned_count || 0)} — ${fmt(props.summary.returned_value || 0)} ${t('IQD')}`,
     ].join('\n')
 
     try {
@@ -197,7 +224,7 @@ async function copyReport() {
                 </div>
                 <div class="report-total-count">
                     <span>{{ t('Total Orders') }}</span>
-                    <strong class="mono">{{ archivedOrders.length }}</strong>
+                    <strong class="mono">{{ archivedCount }}</strong>
                 </div>
             </section>
 
@@ -220,31 +247,36 @@ async function copyReport() {
                 </article>
             </section>
 
-            <div v-if="!archivedOrders.length" class="empty-hint">{{ t('No orders found') }}</div>
+            <div v-if="!archivedCount" class="empty-hint">{{ t('No orders found') }}</div>
         </template>
 
         <template v-else>
             <div class="report-detail-head">
-                <button class="report-back" type="button" @click="activeStatus = null">
+                <button class="report-back" type="button" @click="closeDetails">
                     <svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
                 </button>
                 <span class="report-detail-icon" :style="{ color: activeMeta.color, background: activeMeta.tint }">{{ activeMeta.icon }}</span>
                 <b>{{ activeMeta.title }}</b>
-                <span class="report-detail-total"><strong class="mono" :style="{ color: activeMeta.color }">{{ fmt(detailTotal) }} {{ t('IQD') }}</strong><small>{{ detailOrders.length }} {{ t('orders') }}</small></span>
+                <span class="report-detail-total"><strong class="mono" :style="{ color: activeMeta.color }">{{ fmt(detailTotal) }} {{ t('IQD') }}</strong><small>{{ detailCount }} {{ t('orders') }}</small></span>
             </div>
 
-            <div v-if="detailOrders.length" class="list-card report-order-list">
-                <article v-for="order in detailOrders" :key="order.id" class="report-order-row">
-                    <span class="report-order-icon" :style="{ color: activeMeta.color, background: activeMeta.tint }">{{ activeMeta.icon }}</span>
-                    <span class="report-order-mid"><b>{{ customerName(order) }}</b><small>{{ provinceName(order.province) }} · <span class="mono">{{ order.track_no }}</span> · {{ formatDate(order.date) }}</small></span>
-                    <span class="report-order-end"><b class="mono">{{ fmt(order.price) }} {{ t('IQD') }}</b><StatusBadge :status="order.status" /></span>
-                </article>
-            </div>
+            <template v-if="detailOrders.length">
+                <div class="list-card report-order-list">
+                    <article v-for="order in detailOrders" :key="order.id" class="report-order-row">
+                        <span class="report-order-icon" :style="{ color: activeMeta.color, background: activeMeta.tint }">{{ activeMeta.icon }}</span>
+                        <span class="report-order-mid"><b>{{ customerName(order) }}</b><small>{{ provinceName(order.province) }} · <span class="mono">{{ order.track_no }}</span> · {{ formatDate(order.date) }}</small></span>
+                        <span class="report-order-end"><b class="mono">{{ fmt(order.price) }} {{ t('IQD') }}</b><StatusBadge :status="order.status" /></span>
+                    </article>
+                </div>
+                <button v-if="orderPagination.has_more" class="load-more" type="button" :disabled="loadingMore" @click="loadMore">
+                    {{ loadingMore ? t('Loading...') : t('Load more') }}
+                </button>
+            </template>
             <div v-else class="empty-hint">{{ t('No data for this filter') }}</div>
         </template>
     </AppShell>
 </template>
 
 <style scoped>
-.report-tabs{display:grid;grid-template-columns:1fr 1fr auto auto;gap:7px;margin-bottom:14px}.report-tabs button{display:flex;align-items:center;justify-content:center;gap:4px;min-height:42px;border:1.5px solid var(--border);border-radius:12px;background:var(--surface);color:var(--ink);font:inherit;font-size:10.5px;font-weight:800}.report-tabs button.active{border-color:var(--primary);background:var(--primary);color:#fff}.report-tabs .utility-tab,.report-tabs .copy-report{padding:0 10px}.report-tabs svg,.report-chevron,.report-back svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.report-filters{margin:-4px 0 14px;padding:13px}.filter-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.filter-heading b{font-size:12px;font-weight:900}.filter-heading button{border:0;color:var(--danger);font:800 10px var(--font)}.filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.filter-field{display:grid;gap:5px;margin-bottom:10px;color:var(--ink-soft);font-size:10px;font-weight:800}.filter-field input,.filter-field select{width:100%;min-height:38px;padding:8px 9px;border:1px solid var(--border);border-radius:10px;outline:none;background:var(--surface-2);color:var(--ink);font:inherit;font-size:11px;font-weight:750}.filter-field input:focus,.filter-field select:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-tint)}.apply-filters{width:100%;min-height:40px;border:0;border-radius:10px;background:var(--primary);color:#fff;font:850 11.5px var(--font)}.report-total{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:17px;padding:15px 16px;border-radius:15px;background:var(--primary);color:#fff}.report-total span{display:block;font-size:10.5px;font-weight:700;opacity:.8}.report-total strong{display:block;margin-top:3px;font-size:22px;font-weight:900;line-height:1}.report-total strong small{font-family:var(--font);font-size:11px;opacity:.78}.report-total-count{text-align:end}.status-summary{margin-bottom:17px}.section-title{margin:0 0 10px}.section-title>span{color:var(--ink-faint);font-size:9.5px;font-weight:700}.report-status{width:100%;display:flex;align-items:center;gap:12px;margin-bottom:9px;padding:13px 14px;border:1px solid var(--border);border-radius:14px;background:var(--surface);font:inherit;text-align:right}.report-status-icon,.report-detail-icon,.report-order-icon{display:grid;place-items:center;flex:none;border-radius:12px;font-weight:900}.report-status-icon{width:41px;height:41px}.report-status-copy{flex:1;min-width:0}.report-status-copy b,.report-status-copy small{display:block}.report-status-copy b{font-size:12.5px;font-weight:900}.report-status-copy small{margin-top:3px;color:var(--ink-faint);font-size:10px;font-weight:700}.report-status-value{font-size:13px;font-weight:900;text-align:end}.report-status-value small{display:block;margin-top:2px;color:var(--ink-faint);font-family:var(--font);font-size:9px;font-weight:700}.report-chevron{color:var(--ink-faint);flex:none}.province-report{margin-bottom:14px}.province-heading{padding:14px;border-bottom:1px solid var(--border)}.province-heading b,.province-heading span{display:block}.province-heading b{font-size:12.5px;font-weight:900}.province-heading span{margin-top:2px;color:var(--ink-faint);font-size:9.5px;font-weight:700}.province-row{display:grid;grid-template-columns:minmax(72px,.8fr) minmax(70px,1fr) auto;align-items:center;gap:9px;padding:11px 14px;border-bottom:1px solid var(--border)}.province-row:last-child{border-bottom:0}.province-copy{min-width:0}.province-copy b,.province-copy span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.province-copy b{font-size:10.5px;font-weight:850}.province-copy span{margin-top:2px;color:var(--ink-faint);font-size:9px;font-weight:700}.province-bar{height:6px;overflow:hidden;border-radius:99px;background:var(--surface-2)}.province-bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--primary),var(--accent))}.province-row>strong{font-size:10px;font-weight:900}.report-detail-head{display:flex;align-items:center;gap:9px;margin-bottom:14px}.report-back{display:grid;place-items:center;width:36px;height:36px;border:0;border-radius:10px;background:var(--surface-2);color:var(--ink)}.report-detail-icon{width:32px;height:32px;border-radius:10px}.report-detail-head>b{flex:1;font-size:14px;font-weight:900}.report-detail-total{text-align:end}.report-detail-total strong,.report-detail-total small{display:block}.report-detail-total strong{font-size:13px;font-weight:900}.report-detail-total small{margin-top:2px;color:var(--ink-faint);font-size:9.5px;font-weight:700}.report-order-row{display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--border)}.report-order-row:last-child{border-bottom:0}.report-order-icon{width:37px;height:37px;border-radius:11px}.report-order-mid{flex:1;min-width:0}.report-order-mid b,.report-order-mid small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.report-order-mid b{font-size:12px;font-weight:900}.report-order-mid small{margin-top:2px;color:var(--ink-faint);font-size:9px;font-weight:700}.report-order-end{text-align:end}.report-order-end>b{display:block;font-size:10.5px;font-weight:900}.report-order-end :deep(.badge){margin-top:4px}@media(max-width:380px){.report-tabs{grid-template-columns:1fr 1fr auto}.report-tabs .copy-report{grid-column:span 3}.province-row{grid-template-columns:minmax(65px,.8fr) minmax(45px,1fr) auto;gap:7px;padding-inline:10px}}
+.report-tabs{display:grid;grid-template-columns:1fr 1fr auto auto;gap:7px;margin-bottom:14px}.report-tabs button{display:flex;align-items:center;justify-content:center;gap:4px;min-height:42px;border:1.5px solid var(--border);border-radius:12px;background:var(--surface);color:var(--ink);font:inherit;font-size:10.5px;font-weight:800}.report-tabs button.active{border-color:var(--primary);background:var(--primary);color:#fff}.report-tabs .utility-tab,.report-tabs .copy-report{padding:0 10px}.report-tabs svg,.report-chevron,.report-back svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.report-filters{margin:-4px 0 14px;padding:13px}.filter-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.filter-heading b{font-size:12px;font-weight:900}.filter-heading button{border:0;color:var(--danger);font:800 10px var(--font)}.filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.filter-field{display:grid;gap:5px;margin-bottom:10px;color:var(--ink-soft);font-size:10px;font-weight:800}.filter-field input,.filter-field select{width:100%;min-height:38px;padding:8px 9px;border:1px solid var(--border);border-radius:10px;outline:none;background:var(--surface-2);color:var(--ink);font:inherit;font-size:11px;font-weight:750}.filter-field input:focus,.filter-field select:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-tint)}.apply-filters{width:100%;min-height:40px;border:0;border-radius:10px;background:var(--primary);color:#fff;font:850 11.5px var(--font)}.report-total{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:17px;padding:15px 16px;border-radius:15px;background:var(--primary);color:#fff}.report-total span{display:block;font-size:10.5px;font-weight:700;opacity:.8}.report-total strong{display:block;margin-top:3px;font-size:22px;font-weight:900;line-height:1}.report-total strong small{font-family:var(--font);font-size:11px;opacity:.78}.report-total-count{text-align:end}.status-summary{margin-bottom:17px}.section-title{margin:0 0 10px}.section-title>span{color:var(--ink-faint);font-size:9.5px;font-weight:700}.report-status{width:100%;display:flex;align-items:center;gap:12px;margin-bottom:9px;padding:13px 14px;border:1px solid var(--border);border-radius:14px;background:var(--surface);font:inherit;text-align:right}.report-status-icon,.report-detail-icon,.report-order-icon{display:grid;place-items:center;flex:none;border-radius:12px;font-weight:900}.report-status-icon{width:41px;height:41px}.report-status-copy{flex:1;min-width:0}.report-status-copy b,.report-status-copy small{display:block}.report-status-copy b{font-size:12.5px;font-weight:900}.report-status-copy small{margin-top:3px;color:var(--ink-faint);font-size:10px;font-weight:700}.report-status-value{font-size:13px;font-weight:900;text-align:end}.report-status-value small{display:block;margin-top:2px;color:var(--ink-faint);font-family:var(--font);font-size:9px;font-weight:700}.report-chevron{color:var(--ink-faint);flex:none}.province-report{margin-bottom:14px}.province-heading{padding:14px;border-bottom:1px solid var(--border)}.province-heading b,.province-heading span{display:block}.province-heading b{font-size:12.5px;font-weight:900}.province-heading span{margin-top:2px;color:var(--ink-faint);font-size:9.5px;font-weight:700}.province-row{display:grid;grid-template-columns:minmax(72px,.8fr) minmax(70px,1fr) auto;align-items:center;gap:9px;padding:11px 14px;border-bottom:1px solid var(--border)}.province-row:last-child{border-bottom:0}.province-copy{min-width:0}.province-copy b,.province-copy span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.province-copy b{font-size:10.5px;font-weight:850}.province-copy span{margin-top:2px;color:var(--ink-faint);font-size:9px;font-weight:700}.province-bar{height:6px;overflow:hidden;border-radius:99px;background:var(--surface-2)}.province-bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--primary),var(--accent))}.province-row>strong{font-size:10px;font-weight:900}.report-detail-head{display:flex;align-items:center;gap:9px;margin-bottom:14px}.report-back{display:grid;place-items:center;width:36px;height:36px;border:0;border-radius:10px;background:var(--surface-2);color:var(--ink)}.report-detail-icon{width:32px;height:32px;border-radius:10px}.report-detail-head>b{flex:1;font-size:14px;font-weight:900}.report-detail-total{text-align:end}.report-detail-total strong,.report-detail-total small{display:block}.report-detail-total strong{font-size:13px;font-weight:900}.report-detail-total small{margin-top:2px;color:var(--ink-faint);font-size:9.5px;font-weight:700}.report-order-row{display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--border)}.report-order-row:last-child{border-bottom:0}.report-order-icon{width:37px;height:37px;border-radius:11px}.report-order-mid{flex:1;min-width:0}.report-order-mid b,.report-order-mid small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.report-order-mid b{font-size:12px;font-weight:900}.report-order-mid small{margin-top:2px;color:var(--ink-faint);font-size:9px;font-weight:700}.report-order-end{text-align:end}.report-order-end>b{display:block;font-size:10.5px;font-weight:900}.report-order-end :deep(.badge){margin-top:4px}.load-more{display:block;width:100%;min-height:42px;margin-top:10px;border:1px solid var(--primary);border-radius:11px;background:var(--surface);color:var(--primary);font:850 11.5px var(--font)}.load-more:disabled{opacity:.65}@media(max-width:380px){.report-tabs{grid-template-columns:1fr 1fr auto}.report-tabs .copy-report{grid-column:span 3}.province-row{grid-template-columns:minmax(65px,.8fr) minmax(45px,1fr) auto;gap:7px;padding-inline:10px}}
 </style>

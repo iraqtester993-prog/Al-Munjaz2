@@ -124,7 +124,24 @@ class HandleInertiaRequests extends Middleware
                         ->count(),
                 ];
             },
-            'translations' => app()->bound('translations') ? app('translations') : [],
+            // A locale dictionary contains more than a thousand strings. It
+            // is required for a document visit (and directly after changing
+            // language), but Inertia keeps the Vue runtime alive for normal
+            // navigation. Sending it with every Inertia response made every
+            // tab change and refresh unnecessarily large.
+            //
+            // `null` is intentional here: the client keeps its current
+            // dictionary when this shared prop is absent. Locale-changing
+            // actions set the one-request session flag below so the next
+            // Inertia response still receives the new language immediately.
+            'translations' => function () use ($request): ?array {
+                $shouldShare = ! $request->header('X-Inertia')
+                    || (bool) $request->session()->pull('inertia.translations.refresh', false);
+
+                return $shouldShare && app()->bound('translations')
+                    ? app('translations')
+                    : null;
+            },
             'branding' => [
                 'name' => $storedBranding['name'],
                 'tagline' => $storedBranding['tagline'],

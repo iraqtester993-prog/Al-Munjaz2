@@ -22,6 +22,7 @@ class AdminPreferencesController extends Controller
 
         $request->user()->update(['locale' => $data['locale']]);
         $request->session()->put('locale', $data['locale']);
+        $request->session()->flash('inertia.translations.refresh', true);
 
         return back();
     }

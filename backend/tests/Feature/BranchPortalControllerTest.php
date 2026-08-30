@@ -70,7 +70,10 @@ class BranchPortalControllerTest extends TestCase
             ->assertJsonPath('props.branches.0.access_role', BranchMembership::OWNER)
             ->assertJsonCount(1, 'props.recentOrders')
             ->assertJsonPath('props.recentOrders.0.track_no', 'ORD-VISIBLE')
-            ->assertJsonPath('props.summary.branches', 1);
+            ->assertJsonPath('props.summary.branches', 1)
+            ->assertJsonMissingPath('props.orders')
+            ->assertJsonMissingPath('props.merchants')
+            ->assertJsonMissingPath('props.couriers');
     }
 
     public function test_branch_manager_can_use_only_explicit_manager_memberships(): void
@@ -133,20 +136,34 @@ class BranchPortalControllerTest extends TestCase
             ->withHeader('X-Inertia', 'true')
             ->get('/__tests/branch-portal')
             ->assertOk()
+            ->assertJsonMissingPath('props.orders')
+            ->assertJsonMissingPath('props.merchants')
+            ->assertJsonMissingPath('props.couriers')
+            ->assertJsonPath('props.summary.merchants', 1)
+            ->assertJsonPath('props.summary.couriers', 1)
+            ->assertJsonPath('props.summary.onlineCouriers', 1);
+
+        $this->actingAs($owner)
+            ->withHeaders([
+                'X-Inertia' => 'true',
+                'X-Inertia-Partial-Component' => 'Admin/BranchPortal',
+                'X-Inertia-Partial-Data' => 'orders,orderCouriers,merchants,couriers',
+            ])
+            ->get('/__tests/branch-portal')
+            ->assertOk()
             ->assertJsonCount(1, 'props.orders')
             ->assertJsonPath('props.orders.0.track_no', 'ORD-CROSS-SCOPED')
             ->assertJsonCount(1, 'props.orders.0.branches')
             ->assertJsonPath('props.orders.0.branches.0.id', $visible->id)
             ->assertJsonPath('props.orders.0.merchant.id', $visibleMerchant->id)
             ->assertJsonPath('props.orders.0.courier', null)
+            ->assertJsonCount(1, 'props.orderCouriers')
+            ->assertJsonPath('props.orderCouriers.0.id', $visibleCourier->id)
             ->assertJsonCount(1, 'props.merchants')
             ->assertJsonPath('props.merchants.0.id', $visibleMerchant->id)
             ->assertJsonPath('props.merchants.0.branch.id', $visible->id)
             ->assertJsonCount(1, 'props.couriers')
-            ->assertJsonPath('props.couriers.0.id', $visibleCourier->id)
-            ->assertJsonPath('props.summary.merchants', 1)
-            ->assertJsonPath('props.summary.couriers', 1)
-            ->assertJsonPath('props.summary.onlineCouriers', 1);
+            ->assertJsonPath('props.couriers.0.id', $visibleCourier->id);
     }
 
     public function test_branch_portal_exposes_only_fresh_last_known_locations_for_its_own_couriers(): void
@@ -183,17 +200,21 @@ class BranchPortalControllerTest extends TestCase
         TenantContext::set($otherTenant);
 
         $this->actingAs($owner)
-            ->withHeader('X-Inertia', 'true')
+            ->withHeaders([
+                'X-Inertia' => 'true',
+                'X-Inertia-Partial-Component' => 'Admin/BranchPortal',
+                'X-Inertia-Partial-Data' => 'courierLocations',
+            ])
             ->get('/__tests/branch-portal')
             ->assertOk()
-            ->assertJsonCount(2, 'props.couriers')
-            ->assertJsonPath('props.couriers.0.id', $freshCourier->id)
-            ->assertJsonPath('props.couriers.0.location.latitude', 33.3152412)
-            ->assertJsonPath('props.couriers.0.location.longitude', 44.3660731)
-            ->assertJsonPath('props.couriers.0.location.accuracy_meters', 18)
-            ->assertJsonPath('props.couriers.0.location.address_label', 'بغداد — الكرادة — شارع 62')
-            ->assertJsonPath('props.couriers.1.id', $staleCourier->id)
-            ->assertJsonPath('props.couriers.1.location', null)
+            ->assertJsonCount(2, 'props.courierLocations')
+            ->assertJsonPath('props.courierLocations.0.id', $freshCourier->id)
+            ->assertJsonPath('props.courierLocations.0.location.latitude', 33.3152412)
+            ->assertJsonPath('props.courierLocations.0.location.longitude', 44.3660731)
+            ->assertJsonPath('props.courierLocations.0.location.accuracy_meters', 18)
+            ->assertJsonPath('props.courierLocations.0.location.address_label', 'بغداد — الكرادة — شارع 62')
+            ->assertJsonPath('props.courierLocations.1.id', $staleCourier->id)
+            ->assertJsonPath('props.courierLocations.1.location', null)
             ->assertJsonMissing(['id' => $hiddenCourier->id]);
     }
 

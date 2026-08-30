@@ -50,9 +50,6 @@ class BranchPortalController extends Controller
         $metrics = $this->branchMetrics($branchIds);
         $peopleMetrics = $this->branchPeopleMetrics($branchIds);
         $recentOrders = $this->recentOrders($branchIds);
-        $orders = $this->orders($branchIds);
-        $merchants = $this->merchants($branchIds, $branchLookup);
-        $couriers = $this->couriers($branchIds, $branchLookup);
 
         $branchPayload = $branches->map(function (Branch $branch) use ($metrics, $peopleMetrics): array {
             $metric = $metrics->get($branch->id);
@@ -100,13 +97,17 @@ class BranchPortalController extends Controller
         return Inertia::render('Admin/BranchPortal', [
             'branches' => $branchPayload,
             'recentOrders' => $recentOrders,
-            // These three lists intentionally originate from the same
-            // membership-derived branch ids above.  They are not filtered by
-            // a request parameter and therefore cannot be widened by editing
-            // a URL or an Inertia payload in the browser.
-            'orders' => $orders,
-            'merchants' => $merchants,
-            'couriers' => $couriers,
+            // Operational lists can contain hundreds of records and their
+            // related documents. Keep the first portal response focused on
+            // the overview, then resolve each list only when its tab asks for
+            // it through an Inertia partial reload. Every callback closes over
+            // the same membership-derived branch ids, so a browser request
+            // cannot widen its operational boundary.
+            'orders' => Inertia::optional(fn () => $this->orders($branchIds)),
+            'orderCouriers' => Inertia::optional(fn () => $this->orderCouriers($branchIds)),
+            'merchants' => Inertia::optional(fn () => $this->merchants($branchIds, $branchLookup)),
+            'couriers' => Inertia::optional(fn () => $this->couriers($branchIds, $branchLookup)),
+            'courierLocations' => Inertia::optional(fn () => $this->courierLocations($branchIds)),
             'summary' => [
                 'branches' => $branchPayload->count(),
                 'activeBranches' => $branchPayload->where('is_active', true)->count(),
@@ -538,34 +539,28 @@ class BranchPortalController extends Controller
             return collect();
         }
 
-        $merchantCounts = User::query()
+        $courierRolePlaceholders = implode(', ', array_fill(0, count(User::COURIER_ROLES), '?'));
+        $counts = User::query()
             ->whereIn('branch_id', $branchIds)
-            ->where('role', 'merchant')
-            ->selectRaw('branch_id, COUNT(*) as total')
+            ->select('branch_id')
+            ->selectRaw('SUM(CASE WHEN role = ? THEN 1 ELSE 0 END) as merchants', ['merchant'])
+            ->selectRaw(
+                "SUM(CASE WHEN role IN ({$courierRolePlaceholders}) THEN 1 ELSE 0 END) as couriers",
+                User::COURIER_ROLES,
+            )
+            ->selectRaw(
+                "SUM(CASE WHEN role IN ({$courierRolePlaceholders}) AND status = ? AND is_online = ? THEN 1 ELSE 0 END) as online_couriers",
+                [...User::COURIER_ROLES, 'active', true],
+            )
             ->groupBy('branch_id')
-            ->pluck('total', 'branch_id');
-
-        $courierCounts = User::query()
-            ->whereIn('branch_id', $branchIds)
-            ->whereIn('role', User::COURIER_ROLES)
-            ->selectRaw('branch_id, COUNT(*) as total')
-            ->groupBy('branch_id')
-            ->pluck('total', 'branch_id');
-
-        $onlineCourierCounts = User::query()
-            ->whereIn('branch_id', $branchIds)
-            ->whereIn('role', User::COURIER_ROLES)
-            ->where('status', 'active')
-            ->where('is_online', true)
-            ->selectRaw('branch_id, COUNT(*) as total')
-            ->groupBy('branch_id')
-            ->pluck('total', 'branch_id');
+            ->get()
+            ->keyBy(fn (User $user) => (int) $user->branch_id);
 
         return collect($branchIds)->mapWithKeys(fn (int $branchId) => [
             $branchId => [
-                'merchants' => (int) ($merchantCounts->get($branchId) ?? 0),
-                'couriers' => (int) ($courierCounts->get($branchId) ?? 0),
-                'online_couriers' => (int) ($onlineCourierCounts->get($branchId) ?? 0),
+                'merchants' => (int) ($counts->get($branchId)?->merchants ?? 0),
+                'couriers' => (int) ($counts->get($branchId)?->couriers ?? 0),
+                'online_couriers' => (int) ($counts->get($branchId)?->online_couriers ?? 0),
             ],
         ]);
     }
@@ -588,7 +583,10 @@ class BranchPortalController extends Controller
             ])
             ->latest('id')
             ->limit(30)
-            ->get()
+            ->get([
+                'id', 'track_no', 'customer_name_ar', 'customer_name_en', 'status', 'workflow_stage', 'price', 'date',
+                'origin_branch_id', 'destination_branch_id', 'branch_id',
+            ])
             ->map(function (Order $order) use ($branchIds): array {
                 $visibleBranches = collect([
                     $order->originBranch,
@@ -644,7 +642,12 @@ class BranchPortalController extends Controller
             ])
             ->latest('id')
             ->limit(100)
-            ->get()
+            ->get([
+                'id', 'track_no', 'status', 'customer_name_ar', 'customer_name_en', 'phone', 'address_ar', 'address_en',
+                'notes', 'vehicle_note', 'price', 'fee', 'pickup_deadline_at', 'created_at', 'updated_at',
+                'origin_branch_id', 'destination_branch_id', 'branch_id', 'merchant_id', 'courier_id',
+                'pickup_courier_id', 'delivery_courier_id',
+            ])
             ->map(function (Order $order) use ($branchIds): array {
                 $visibleBranches = $this->visibleBranchesForOrder($order, $branchIds);
                 $courier = $order->courier ?: $order->pickupCourier ?: $order->deliveryCourier;
@@ -669,6 +672,37 @@ class BranchPortalController extends Controller
                     'courier' => $this->visibleRelatedUser($courier, $branchIds, true),
                 ];
             })
+            ->values();
+    }
+
+    /**
+     * The order assignment form only needs a small, active courier directory.
+     * Keep it separate from the courier-management tab, which includes
+     * documents and location metadata for review.
+     *
+     * @param array<int, int> $branchIds
+     * @return Collection<int, array{id:int,branch_id:int,name:string,role:string,status:string}>
+     */
+    private function orderCouriers(array $branchIds): Collection
+    {
+        if ($branchIds === []) {
+            return collect();
+        }
+
+        return User::query()
+            ->whereIn('branch_id', $branchIds)
+            ->whereIn('role', User::DIRECT_ORDER_COURIER_ROLES)
+            ->where('status', 'active')
+            ->orderBy('name')
+            ->limit(200)
+            ->get(['id', 'branch_id', 'name', 'role', 'status'])
+            ->map(fn (User $courier) => [
+                'id' => $courier->id,
+                'branch_id' => (int) $courier->branch_id,
+                'name' => $courier->name,
+                'role' => $courier->role,
+                'status' => $courier->status,
+            ])
             ->values();
     }
 
@@ -720,6 +754,41 @@ class BranchPortalController extends Controller
                 'status', 'is_online', 'last_active_at', 'current_latitude', 'current_longitude', 'location_accuracy_meters', 'location_updated_at', 'created_at',
             ])
             ->map(fn (User $courier) => $this->courierPayload($courier, $branchLookup))
+            ->values();
+    }
+
+    /**
+     * The map needs neither identity documents nor the full courier profile.
+     * This compact payload is fetched only when the locations tab is opened.
+     *
+     * @param array<int, int> $branchIds
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function courierLocations(array $branchIds): Collection
+    {
+        if ($branchIds === []) {
+            return collect();
+        }
+
+        return User::query()
+            ->whereIn('branch_id', $branchIds)
+            ->whereIn('role', User::COURIER_ROLES)
+            ->orderBy('name')
+            ->limit(200)
+            ->get([
+                'id', 'branch_id', 'name', 'phone', 'role', 'status', 'is_online', 'address',
+                'current_latitude', 'current_longitude', 'location_accuracy_meters', 'location_updated_at',
+            ])
+            ->map(fn (User $courier) => [
+                'id' => $courier->id,
+                'branch_id' => (int) $courier->branch_id,
+                'name' => $courier->name,
+                'phone' => $courier->phone,
+                'role' => $courier->role,
+                'status' => $courier->status,
+                'is_online' => (bool) $courier->is_online,
+                'location' => $this->freshCourierLocationPayload($courier),
+            ])
             ->values();
     }
 

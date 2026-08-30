@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Services\OrderOperationalAssignmentService;
 use App\Services\OrderPickupRecoveryService;
 use App\Services\OrderWorkflowService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -26,6 +27,17 @@ class AdminOrderController extends Controller
         $rules = [
             'filter' => ['nullable', Rule::in(array_merge(['all', 'deleted'], Order::FILTERABLE_STATUSES))],
             'q' => ['nullable', 'string', 'max:120'],
+            // The list is deliberately small.  These two JSON modes load a
+            // single order's operational history or a management directory
+            // only after an operator explicitly opens the relevant control.
+            'detail' => ['nullable', 'integer', 'min:1'],
+            'directory' => ['nullable', Rule::in(['courier_filters', 'assignment'])],
+            'assignment_for' => [
+                Rule::requiredIf(fn () => $request->input('directory') === 'assignment'),
+                'nullable',
+                'integer',
+                'min:1',
+            ],
         ];
 
         // Courier filtering is backed by the assignment directory below.
@@ -33,9 +45,9 @@ class AdminOrderController extends Controller
         // query parameter as an alternate way to inspect that directory.
         if ($canUpdateOrders) {
             $rules['courier_id'] = [
-            // This is deliberately limited to direct-order roles. A branch
-            // transporter can never be used as a hidden filter to inspect
-            // unrelated order data through the operations dashboard.
+                // This is deliberately limited to direct-order roles. A branch
+                // transporter can never be used as a hidden filter to inspect
+                // unrelated order data through the operations dashboard.
                 'nullable',
                 'integer',
                 Rule::exists('users', 'id')->where(fn ($users) => $users
@@ -45,6 +57,24 @@ class AdminOrderController extends Controller
         }
 
         $request->validate($rules);
+
+        if ($request->filled('detail')) {
+            abort_unless($request->expectsJson(), 406);
+
+            return response()->json([
+                'order' => $this->detailPayloadFor($request->integer('detail')),
+            ]);
+        }
+
+        if ($request->filled('directory')) {
+            abort_unless($request->expectsJson(), 406);
+            abort_unless($canUpdateOrders, 403);
+
+            return response()->json($this->directoryPayload(
+                $request->string('directory')->toString(),
+                $request->integer('assignment_for'),
+            ));
+        }
 
         // The operations dashboard serves the whole platform, including
         // merchant-owned orders and the shared branch network.
@@ -57,23 +87,22 @@ class AdminOrderController extends Controller
         $query = $showDeleted
             ? (clone $allOrders)->onlyTrashed()
             : clone $allOrders;
-        $query = $query->with([
-            'courier:id,name,phone,vehicle',
-            'pickupCourier:id,name,phone,vehicle',
-            'deliveryCourier:id,name,phone,vehicle',
-            'merchant:id,name,phone,shop_name,address',
-            'tenant:id,name',
-            'province:id,name_ar,name_en,name_ku',
-            'originBranch:id,name_ar,name_en,name_ku,city',
-            'destinationBranch:id,name_ar,name_en,name_ku,city',
-            'statusLogs' => fn ($logs) => $logs
-                ->with('user:id,name,role')
-                ->latest('created_at'),
-            'movements' => fn ($movements) => $movements
-                ->withoutGlobalScope(TenantScope::class)
-                ->with('actor:id,name,role')
-                ->latest('occurred_at'),
-        ]);
+        // Table rows contain just the data required to draw the table and
+        // operate its controls. A full status/audit timeline for 25 orders
+        // made the first dashboard response grow with every historic event.
+        // It is now fetched only by the detail request above.
+        $query = $query
+            ->select($this->summaryColumns())
+            ->with([
+                'courier:id,name,phone,vehicle',
+                'pickupCourier:id,name,phone,vehicle',
+                'deliveryCourier:id,name,phone,vehicle',
+                'merchant:id,name,phone,shop_name,address',
+                'tenant:id,name',
+                'province:id,name_ar,name_en,name_ku',
+                'originBranch:id,name_ar,name_en,name_ku,city',
+                'destinationBranch:id,name_ar,name_en,name_ku,city',
+            ]);
 
         if ($filter !== 'all' && ! $showDeleted) {
             $query->operationalStatus($filter);
@@ -116,17 +145,144 @@ class AdminOrderController extends Controller
         }
 
         $orders = $query->latest('id')->paginate(25)->withQueryString();
-        $orderCollection = $orders->getCollection();
+        $orders->through(fn (Order $order) => $this->summaryPayload($order));
+
+        $counts = $this->countsFor($allOrders);
+
+        return Inertia::render('Admin/Orders', [
+            'orders' => $orders,
+            'counts' => $counts,
+            'filter' => $request->input('filter', 'all'),
+            'q' => $q,
+            'courierId' => $courierId ?: null,
+            'canUpdateOrders' => $canUpdateOrders,
+        ]);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function summaryColumns(): array
+    {
+        return [
+            'id',
+            'track_no',
+            'source',
+            'status',
+            'workflow_stage',
+            'tenant_id',
+            'merchant_id',
+            'courier_id',
+            'pickup_courier_id',
+            'delivery_courier_id',
+            'province_id',
+            'origin_branch_id',
+            'destination_branch_id',
+            'customer_name_ar',
+            'customer_name_en',
+            'phone',
+            'address_ar',
+            'price',
+            'fee',
+            'date',
+            'pickup_deadline_at',
+            'deleted_at',
+        ];
+    }
+
+    /**
+     * Keep the initial table payload intentionally shallow. Full financial,
+     * contact, route history and audit data are returned by detailPayloadFor.
+     */
+    private function summaryPayload(Order $order): array
+    {
+        return [
+            'id' => $order->id,
+            'track_no' => $order->track_no,
+            'source' => $order->source,
+            'status' => $order->status,
+            'workflow_stage' => $order->workflow_stage,
+            'tenant_id' => $order->tenant_id,
+            'customer' => [
+                'name' => $order->customer_name_ar,
+                'name_en' => $order->customer_name_en,
+                'phone' => $order->phone,
+                'address' => $order->address_ar,
+            ],
+            'customer_name_ar' => $order->customer_name_ar,
+            'phone' => $order->phone,
+            'address_ar' => $order->address_ar,
+            'price' => (int) $order->price,
+            'fee' => $order->fee === null ? null : (int) $order->fee,
+            'financial' => [
+                'order_value' => (int) $order->price,
+                'delivery_fee' => $order->fee === null ? null : (int) $order->fee,
+            ],
+            'date' => $order->date?->toDateString(),
+            'deleted_at' => $this->iso($order->deleted_at),
+            'pickup_deadline_at' => $this->iso($order->pickup_deadline_at),
+            'province_id' => $order->province_id,
+            'province' => $order->province ? [
+                'id' => $order->province->id,
+                'name_ar' => $order->province->name_ar,
+                'name_en' => $order->province->name_en,
+                'name_ku' => $order->province->name_ku,
+            ] : null,
+            'tenant' => $order->tenant?->name,
+            'merchant' => $order->merchant ? [
+                'id' => $order->merchant->id,
+                'name' => $order->merchant->name,
+                'shop_name' => $order->merchant->shop_name,
+            ] : ($order->tenant ? [
+                'id' => null,
+                'name' => $order->tenant->name,
+                'shop_name' => null,
+            ] : null),
+            'origin_branch_id' => $order->origin_branch_id,
+            'destination_branch_id' => $order->destination_branch_id,
+            'origin_branch' => $this->branchPayload($order->originBranch),
+            'destination_branch' => $this->branchPayload($order->destinationBranch),
+            'courier_id' => $order->courier_id,
+            'pickup_courier_id' => $order->pickup_courier_id,
+            'delivery_courier_id' => $order->delivery_courier_id,
+            'courier' => $this->personPayload($order->courier),
+            'pickup_courier' => $this->personPayload($order->pickupCourier),
+            'delivery_courier' => $this->personPayload($order->deliveryCourier),
+        ];
+    }
+
+    /**
+     * A detail request is still served by the same protected dashboard route,
+     * so a view-only operator gets no broader access than the table itself.
+     */
+    private function detailPayloadFor(int $orderId): array
+    {
+        $order = Order::withoutGlobalScope(TenantScope::class)
+            ->withTrashed()
+            ->with([
+                'courier:id,name,phone,vehicle',
+                'pickupCourier:id,name,phone,vehicle',
+                'deliveryCourier:id,name,phone,vehicle',
+                'merchant:id,name,phone,shop_name,address',
+                'tenant:id,name',
+                'province:id,name_ar,name_en,name_ku',
+                'originBranch:id,name_ar,name_en,name_ku,city',
+                'destinationBranch:id,name_ar,name_en,name_ku,city',
+                'statusLogs' => fn ($logs) => $logs
+                    ->with('user:id,name,role')
+                    ->latest('created_at'),
+                'movements' => fn ($movements) => $movements
+                    ->withoutGlobalScope(TenantScope::class)
+                    ->with('actor:id,name,role')
+                    ->latest('occurred_at'),
+            ])
+            ->findOrFail($orderId);
+
         // Movements retain the branch that was selected at that point in the
-        // route. Resolve them without a tenant scope so an administrator can
-        // accurately inspect a shared-network route as well as a merchant's
-        // own branch history. The order itself has already passed the normal
-        // dashboard authorization and tenant visibility query above.
-        $movementBranchIds = $orderCollection
-            ->flatMap(fn (Order $order) => $order->movements->flatMap(fn (OrderMovement $movement) => [
-                $movement->from_branch_id,
-                $movement->to_branch_id,
-            ]))
+        // route. Resolve those historical branches only for this one detail
+        // sheet, rather than for every row of the table.
+        $movementBranchIds = $order->movements
+            ->flatMap(fn (OrderMovement $movement) => [$movement->from_branch_id, $movement->to_branch_id])
             ->filter()
             ->unique()
             ->values();
@@ -139,28 +295,70 @@ class AdminOrderController extends Controller
                 ->get(['id', 'name_ar', 'name_en', 'name_ku', 'city'])
                 ->keyBy('id');
 
-        $orders->through(fn (Order $order) => $this->orderPayload($order, $movementBranches));
+        return $this->orderPayload($order, $movementBranches);
+    }
 
-        $counts = ['all' => (clone $allOrders)->count()];
+    /**
+     * @param  Builder<Order>  $allOrders
+     * @return array<string, int>
+     */
+    private function countsFor($allOrders): array
+    {
+        $statusColumns = collect(Order::STATUSES)
+            ->map(fn (string $status) => "COUNT(CASE WHEN status = ? THEN 1 END) AS `{$status}`")
+            ->implode(', ');
+
+        $summary = (clone $allOrders)
+            ->selectRaw("COUNT(*) AS all_count, {$statusColumns}", Order::STATUSES)
+            ->first();
+
+        $counts = ['all' => (int) ($summary->all_count ?? 0)];
         foreach (Order::STATUSES as $status) {
-            $counts[$status] = (clone $allOrders)->where('status', $status)->count();
+            $counts[$status] = (int) ($summary->{$status} ?? 0);
         }
+
+        // "late" is a calculated operational condition, not a status column,
+        // and deleted records are intentionally kept in a separate review tab.
         $counts['late'] = (clone $allOrders)->operationalStatus('late')->count();
         $counts['deleted'] = (clone $allOrders)->onlyTrashed()->count();
 
-        $assignmentProps = [];
+        return $counts;
+    }
 
-        if ($canUpdateOrders) {
-            $visibleTenantIds = $orderCollection
-                ->pluck('tenant_id')
-                ->filter()
-                ->map(fn ($tenantId) => (int) $tenantId)
-                ->unique()
-                ->values();
+    /**
+     * Load management directories only when an administrator uses a filter or
+     * opens an assignment dialog. They can be very large on a live platform.
+     *
+     * @return array<string, mixed>
+     */
+    private function directoryPayload(string $directory, int $assignmentFor): array
+    {
+        if ($directory === 'courier_filters') {
+            return [
+                'courierFilters' => User::query()
+                    ->whereIn('role', User::DIRECT_ORDER_COURIER_ROLES)
+                    ->orderBy('name')
+                    ->get(['id', 'name', 'phone', 'role', 'status'])
+                    ->map(fn (User $courier) => [
+                        'id' => $courier->id,
+                        'name' => $courier->name,
+                        'phone' => $courier->phone,
+                        'role' => $courier->role,
+                        'status' => $courier->status,
+                    ])->values(),
+            ];
+        }
 
-            $assignmentProps['couriers'] = User::query()
+        $order = Order::withoutGlobalScope(TenantScope::class)
+            ->select(['id', 'tenant_id', 'province_id'])
+            ->findOrFail($assignmentFor);
+
+        $couriers = collect();
+        if ($order->province_id) {
+            $couriers = User::query()
                 ->whereIn('role', User::DIRECT_ORDER_COURIER_ROLES)
                 ->where('status', 'active')
+                ->whereHas('provinces', fn ($provinces) => $provinces->whereKey($order->province_id))
                 ->with('provinces:id,name_ar')
                 ->get(['id', 'name', 'phone', 'role'])
                 ->map(fn (User $courier) => [
@@ -172,63 +370,29 @@ class AdminOrderController extends Controller
                     'provinces' => $courier->provinces->map(fn ($province) => [
                         'id' => $province->id,
                         'name_ar' => $province->name_ar,
-                    ])->all(),
-                ]);
-
-            // Keep the assignment list above active-only, but give the order
-            // search UI a complete non-deleted operational history. A suspended
-            // courier can no longer be assigned new work, yet administrators
-            // still need to find the orders previously assigned to that account.
-            $assignmentProps['courierFilters'] = User::query()
-                ->whereIn('role', User::DIRECT_ORDER_COURIER_ROLES)
-                ->orderBy('name')
-                ->get(['id', 'name', 'phone', 'role', 'status'])
-                ->map(fn (User $courier) => [
-                    'id' => $courier->id,
-                    'name' => $courier->name,
-                    'phone' => $courier->phone,
-                    'role' => $courier->role,
-                    'status' => $courier->status,
-                ]);
-
-            // Do not expose every merchant's private branch in every assignment
-            // dialog. The global operations network is shared; tenant-owned
-            // branches are returned only for merchants represented on this page.
-            $branchQuery = Branch::withoutGlobalScope(TenantScope::class)
-                ->where('is_active', true);
-
-            if ($visibleTenantIds->isEmpty()) {
-                $branchQuery->where('is_platform_managed', true);
-            } else {
-                $branchQuery->where(function ($branches) use ($visibleTenantIds): void {
-                    $branches
-                        ->where('is_platform_managed', true)
-                        ->orWhereIn('tenant_id', $visibleTenantIds->all());
-                });
-            }
-
-            $assignmentProps['branches'] = $branchQuery
-                ->orderBy('name_ar')
-                ->get(['id', 'tenant_id', 'code', 'name_ar', 'city', 'is_platform_managed'])
-                ->map(fn (Branch $branch) => [
-                    'id' => $branch->id,
-                    'tenant_id' => $branch->tenant_id,
-                    'code' => $branch->code,
-                    'name' => $branch->name_ar,
-                    'city' => $branch->city,
-                    'is_platform_managed' => $branch->is_platform_managed,
-                ]);
+                    ])->values(),
+                ])->values();
         }
 
-        return Inertia::render('Admin/Orders', [
-            'orders' => $orders,
-            'counts' => $counts,
-            'filter' => $request->input('filter', 'all'),
-            'q' => $q,
-            'courierId' => $courierId ?: null,
-            'canUpdateOrders' => $canUpdateOrders,
-            ...$assignmentProps,
-        ]);
+        $branches = Branch::withoutGlobalScope(TenantScope::class)
+            ->where('is_active', true)
+            ->where(function ($branchQuery) use ($order): void {
+                $branchQuery
+                    ->where('is_platform_managed', true)
+                    ->orWhere('tenant_id', $order->tenant_id);
+            })
+            ->orderBy('name_ar')
+            ->get(['id', 'tenant_id', 'code', 'name_ar', 'city', 'is_platform_managed'])
+            ->map(fn (Branch $branch) => [
+                'id' => $branch->id,
+                'tenant_id' => $branch->tenant_id,
+                'code' => $branch->code,
+                'name' => $branch->name_ar,
+                'city' => $branch->city,
+                'is_platform_managed' => $branch->is_platform_managed,
+            ])->values();
+
+        return compact('couriers', 'branches');
     }
 
     public function status(Request $request, Order $order)

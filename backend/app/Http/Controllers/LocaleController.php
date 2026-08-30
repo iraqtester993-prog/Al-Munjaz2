@@ -16,6 +16,7 @@ class LocaleController extends Controller
         $data = $request->validate(['locale' => ['required', 'in:ar,en,ku']]);
 
         $request->session()->put('locale', $data['locale']);
+        $request->session()->flash('inertia.translations.refresh', true);
 
         return back();
     }

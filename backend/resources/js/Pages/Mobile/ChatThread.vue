@@ -22,8 +22,16 @@ const msgs = ref([...props.messages])
 const threadEl = ref(null)
 const composerEl = ref(null)
 const lastMessageId = ref(Math.max(0, ...msgs.value.map((message) => Number(message?.id) || 0)))
+const CHAT_ACTIVE_INTERVAL = 2_500
+const CHAT_VISIBLE_INTERVAL = 4_000
+const CHAT_RETRY_MAX_INTERVAL = 30_000
+const CHAT_ACTIVITY_WINDOW = 30_000
 let pollTimer = null
 let refreshing = false
+let disposed = false
+let resumeAfterRefresh = false
+let failureCount = 0
+let recentActivityUntil = 0
 
 async function send() {
     const value = text.value.trim()
@@ -33,6 +41,7 @@ async function send() {
         const { data } = await axios.post(route('app.chats.send', props.chat.id), { text: value })
         mergeMessages([data])
         text.value = ''
+        markConversationActive()
     } catch (e) {
         // keep message for retry
     } finally {
@@ -56,8 +65,63 @@ function mergeMessages(messages, { replace = false } = {}) {
     scrollDown()
 }
 
+function isForeground() {
+    return document.visibilityState === 'visible'
+        && (typeof document.hasFocus !== 'function' || document.hasFocus())
+}
+
+function clearPollTimer() {
+    if (!pollTimer) return
+    window.clearTimeout(pollTimer)
+    pollTimer = null
+}
+
+function nextPollDelay() {
+    if (failureCount > 0) {
+        return Math.min(CHAT_VISIBLE_INTERVAL * (2 ** Math.min(failureCount, 3)), CHAT_RETRY_MAX_INTERVAL)
+    }
+
+    return document.activeElement === composerEl.value || Date.now() < recentActivityUntil
+        ? CHAT_ACTIVE_INTERVAL
+        : CHAT_VISIBLE_INTERVAL
+}
+
+function schedulePoll(delay = nextPollDelay()) {
+    clearPollTimer()
+    if (disposed || !isForeground()) return
+
+    pollTimer = window.setTimeout(() => {
+        pollTimer = null
+        refreshMessages()
+    }, delay)
+}
+
+function markConversationActive() {
+    recentActivityUntil = Date.now() + CHAT_ACTIVITY_WINDOW
+    if (!refreshing && isForeground()) schedulePoll(CHAT_ACTIVE_INTERVAL)
+}
+
+function requestRefresh() {
+    if (disposed || !isForeground()) {
+        clearPollTimer()
+        return
+    }
+
+    if (refreshing) {
+        resumeAfterRefresh = true
+        return
+    }
+
+    refreshMessages()
+}
+
 async function refreshMessages() {
-    if (refreshing || document.hidden) return
+    if (disposed || !isForeground()) return
+    if (refreshing) {
+        resumeAfterRefresh = true
+        return
+    }
+
     refreshing = true
     try {
         const { data } = await axios.get(route('app.chats.messages', props.chat.id), {
@@ -65,10 +129,18 @@ async function refreshMessages() {
         })
         mergeMessages(data.messages)
         lastMessageId.value = Math.max(lastMessageId.value, Number(data.last_id || 0))
+        failureCount = 0
+        if (data.messages?.length) markConversationActive()
     } catch (_) {
         // A temporary network failure must never clear the on-screen thread.
+        failureCount = Math.min(failureCount + 1, 4)
     } finally {
         refreshing = false
+        if (disposed || !isForeground()) return
+
+        const shouldResumeImmediately = resumeAfterRefresh
+        resumeAfterRefresh = false
+        schedulePoll(shouldResumeImmediately ? 0 : nextPollDelay())
     }
 }
 
@@ -92,20 +164,46 @@ function replaceMessages(messages) {
 }
 
 watch(() => props.messages, (messages) => mergeMessages(messages), { deep: true })
-watch(() => props.chat?.id, () => replaceMessages(props.messages))
+watch(() => props.chat?.id, () => {
+    replaceMessages(props.messages)
+    requestRefresh()
+})
+
+function handleVisibilityChange() {
+    if (!isForeground()) {
+        clearPollTimer()
+        return
+    }
+
+    requestRefresh()
+}
+
+function handleWindowBlur() {
+    clearPollTimer()
+}
+
+function handleWindowFocus() {
+    requestRefresh()
+}
 
 onMounted(() => {
+    disposed = false
     scrollDown()
-    // Shared hosting cannot keep a Reverb worker alive reliably. Incremental
-    // 2-second polling gives an open conversation near-instant feedback while
-    // downloading only messages newer than the last known ID.
-    pollTimer = window.setInterval(refreshMessages, 2000)
-    document.addEventListener('visibilitychange', refreshMessages)
+    // An open conversation remains prompt, while hidden/background app
+    // sessions do not keep waking the shared server every few seconds.
+    markConversationActive()
+    requestRefresh()
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('blur', handleWindowBlur)
+    window.addEventListener('focus', handleWindowFocus)
 })
 
 onBeforeUnmount(() => {
-    if (pollTimer) window.clearInterval(pollTimer)
-    document.removeEventListener('visibilitychange', refreshMessages)
+    disposed = true
+    clearPollTimer()
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    window.removeEventListener('blur', handleWindowBlur)
+    window.removeEventListener('focus', handleWindowFocus)
 })
 </script>
 
@@ -141,7 +239,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="chat-input-bar">
-            <input ref="composerEl" v-model="text" :placeholder="t('Type a message')" @keydown="onEnter" />
+            <input ref="composerEl" v-model="text" :placeholder="t('Type a message')" @focus="markConversationActive" @keydown="onEnter" />
             <button type="button" class="send-btn" :disabled="sending || !text.trim()" @pointerdown.prevent @click="send">
                 <span v-if="sending" class="loader"></span>
                 <svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :style="{ transform: locale() === 'ar' ? 'scaleX(-1)' : '' }">

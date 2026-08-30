@@ -12,21 +12,36 @@ use App\Models\User;
 use App\Services\CourierOrderAccess;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Inertia\Inertia;
 
 class ChatController extends Controller
 {
+    /**
+     * Conversations can grow indefinitely, but neither the mobile PWA nor
+     * the dashboard needs to transfer an entire history to render a thread.
+     * Keep the first paint responsive and let the existing incremental poll
+     * catch up in predictable, indexed pages when a client reconnects after
+     * a long time away.
+     */
+    private const CHAT_LIST_LIMIT = 150;
+
+    private const INITIAL_MESSAGE_LIMIT = 100;
+
+    private const INCREMENTAL_MESSAGE_LIMIT = 100;
+
     public function index(Request $request)
     {
         $user = $request->user();
 
-        $chats = $this->chatsFor($user)
+        $chats = $this->withViewerUnreadCount($this->chatsFor($user), $user)
             ->with([
                 'user:id,name,role,shop_name',
                 'counterparty:id,name,role,shop_name',
                 'order:id,track_no,courier_id,merchant_id,pickup_courier_id,delivery_courier_id',
             ])
             ->orderByDesc('last_at')
+            ->limit(self::CHAT_LIST_LIMIT)
             ->get()
             ->map(fn (Chat $chat) => $this->mobileChatPayload($chat, $user, true));
 
@@ -36,9 +51,8 @@ class ChatController extends Controller
     public function show(Request $request, Chat $chat)
     {
         $this->ensureParticipant($request, $chat);
-        $this->markRead($chat, $request->user());
-
         $messages = $this->messagesFor($chat, $request->user());
+        $this->markRead($chat, $request->user());
 
         $chat->loadMissing([
             'user:id,name,role,shop_name',
@@ -69,7 +83,6 @@ class ChatController extends Controller
             'last_message' => $request->input('text'),
             'last_at' => now(),
         ]);
-        $this->markRead($chat, $request->user());
         $this->notifyMessageRecipients($chat, $request->user());
 
         return response()->json($this->messagePayload(
@@ -86,12 +99,12 @@ class ChatController extends Controller
     public function messages(Request $request, Chat $chat)
     {
         $this->ensureParticipant($request, $chat);
-        $this->markRead($chat, $request->user());
 
         $data = $request->validate([
             'after_id' => ['nullable', 'integer', 'min:0'],
         ]);
         $messages = $this->messagesFor($chat, $request->user(), $data['after_id'] ?? null);
+        $this->markReadFromMessages($chat, $request->user(), $messages);
 
         return response()->json([
             'messages' => $messages,
@@ -99,7 +112,9 @@ class ChatController extends Controller
             // might have arrived between the incremental query and this JSON
             // response. Advancing past an unseen ID would silently skip it.
             'last_id' => (int) (data_get($messages->last(), 'id') ?? ($data['after_id'] ?? 0)),
-            'unread' => $this->unreadFor($chat, $request->user()),
+            // This endpoint marks every incoming message in the returned
+            // page as read, so no extra COUNT query is needed on each poll.
+            'unread' => 0,
         ], 200, ['Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0']);
     }
 
@@ -254,9 +269,8 @@ class ChatController extends Controller
     public function adminShow(Request $request, Chat $chat)
     {
         $this->ensureAdminChat($chat);
-        $this->markRead($chat, $request->user());
-
         $messages = $this->messagesFor($chat, $request->user());
+        $this->markRead($chat, $request->user());
 
         $chat->loadMissing([
             'user:id,name,phone,role,shop_name',
@@ -289,7 +303,6 @@ class ChatController extends Controller
             'last_message' => $request->input('text'),
             'last_at' => now(),
         ]);
-        $this->markRead($chat, $request->user());
         $this->notifyMessageRecipients($chat, $request->user());
 
         return response()->json($this->messagePayload(
@@ -301,17 +314,17 @@ class ChatController extends Controller
     public function adminMessages(Request $request, Chat $chat)
     {
         $this->ensureAdminChat($chat);
-        $this->markRead($chat, $request->user());
 
         $data = $request->validate([
             'after_id' => ['nullable', 'integer', 'min:0'],
         ]);
         $messages = $this->messagesFor($chat, $request->user(), $data['after_id'] ?? null);
+        $this->markReadFromMessages($chat, $request->user(), $messages);
 
         return response()->json([
             'messages' => $messages,
             'last_id' => (int) (data_get($messages->last(), 'id') ?? ($data['after_id'] ?? 0)),
-            'unread' => $this->unreadFor($chat, $request->user()),
+            'unread' => 0,
         ], 200, ['Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0']);
     }
 
@@ -328,6 +341,11 @@ class ChatController extends Controller
     private function adminSupportChats(): Builder
     {
         return Chat::withoutGlobalScope(TenantScope::class)->adminSupportInbox();
+    }
+
+    private function adminMerchantCourierChats(): Builder
+    {
+        return Chat::withoutGlobalScope(TenantScope::class)->adminMerchantCourierInbox();
     }
 
     private function ensureAdminChat(Chat $chat): void
@@ -349,14 +367,23 @@ class ChatController extends Controller
      */
     private function adminInboxProps(User $viewer): array
     {
-        $allChats = $this->adminChats()
+        $supportChats = $this->withViewerUnreadCount($this->adminSupportChats(), $viewer)
             ->with($this->adminChatRelations())
             ->orderByDesc('last_at')
+            ->limit(self::CHAT_LIST_LIMIT)
             ->get()
             ->map(fn (Chat $chat) => $this->adminChatPayload($chat, $viewer));
 
-        $supportChats = $allChats->where('channel', 'support')->values();
-        $merchantCourierChats = $allChats->where('channel', 'merchant_courier')->values();
+        // Fetch each inbox independently. A burst of support messages must
+        // not hide operational order conversations (or the reverse), while
+        // the fixed recent window prevents the dashboard boot from loading
+        // years of chat rows and their message-count queries.
+        $merchantCourierChats = $this->withViewerUnreadCount($this->adminMerchantCourierChats(), $viewer)
+            ->with($this->adminChatRelations())
+            ->orderByDesc('last_at')
+            ->limit(self::CHAT_LIST_LIMIT)
+            ->get()
+            ->map(fn (Chat $chat) => $this->adminChatPayload($chat, $viewer));
 
         return [
             // Kept for the pre-tab dashboard client.
@@ -402,11 +429,37 @@ class ChatController extends Controller
     private function markRead(Chat $chat, $user): void
     {
         $key = $this->readColumnFor($chat, $user);
-        $chat->forceFill([$key => now(), 'unread' => $user->isAdmin() ? 0 : $chat->unread])->save();
+        $readAt = $chat->{$key};
+
+        // A thread that is already caught up should be entirely read-only.
+        // Polling used to UPDATE this row every few seconds even when no one
+        // had written anything, which becomes a costly write hotspot on a
+        // shared host.
+        $hasUnread = $chat->messages()
+            ->where('sender_id', '!=', $user->id)
+            ->when($readAt, fn (Builder $messages) => $messages->where('created_at', '>', $readAt))
+            ->exists();
+
+        if (! $hasUnread) {
+            return;
+        }
+
+        $attributes = [$key => now()];
+        if ($user->isAdmin()) {
+            $attributes['unread'] = 0;
+        }
+
+        $chat->forceFill($attributes)->save();
     }
 
     private function unreadFor(Chat $chat, $user): int
     {
+        // List queries attach this aggregate once for every row, avoiding an
+        // N+1 message COUNT while the inbox is being rendered.
+        if (array_key_exists('viewer_unread', $chat->getAttributes())) {
+            return (int) $chat->getAttribute('viewer_unread');
+        }
+
         $readAt = $chat->{$this->readColumnFor($chat, $user)};
 
         return $chat->messages()
@@ -415,15 +468,108 @@ class ChatController extends Controller
             ->count();
     }
 
+    private function markReadFromMessages(Chat $chat, User $user, $messages): void
+    {
+        $key = $this->readColumnFor($chat, $user);
+        $readAt = $chat->{$key};
+
+        $latestIncomingAt = collect($messages)
+            ->filter(fn (array $message) => (int) ($message['sender_id'] ?? 0) !== (int) $user->id)
+            ->map(fn (array $message) => $message['created_at'] ?? null)
+            ->filter()
+            ->map(fn (string $createdAt) => Carbon::parse($createdAt)->getTimestamp())
+            ->max();
+
+        if (! $latestIncomingAt || ($readAt && $latestIncomingAt <= $readAt->getTimestamp())) {
+            return;
+        }
+
+        $attributes = [$key => now()];
+        if ($user->isAdmin()) {
+            $attributes['unread'] = 0;
+        }
+
+        $chat->forceFill($attributes)->save();
+    }
+
     private function messagesFor(Chat $chat, User $user, ?int $afterId = null)
     {
-        return $chat->messages()
+        $messages = $chat->messages()
             ->with('sender:id,name,role')
-            ->when($afterId !== null && $afterId > 0, fn (Builder $messages) => $messages->where('id', '>', $afterId))
-            ->orderBy('id')
+            ->when($afterId !== null && $afterId > 0, fn (Builder $query) => $query->where('id', '>', $afterId));
+
+        if ($afterId !== null && $afterId > 0) {
+            return $messages
+                ->orderBy('id')
+                ->limit(self::INCREMENTAL_MESSAGE_LIMIT)
+                ->get()
+                ->map(fn (ChatMessage $message) => $this->messagePayload($message, $user))
+                ->values();
+        }
+
+        // Fetch the newest slice efficiently (DESC + LIMIT), then restore
+        // chronological display order for the existing Vue conversation UI.
+        return $messages
+            ->orderByDesc('id')
+            ->limit(self::INITIAL_MESSAGE_LIMIT)
             ->get()
+            ->sortBy('id')
             ->map(fn (ChatMessage $message) => $this->messagePayload($message, $user))
             ->values();
+    }
+
+    /**
+     * Add the current viewer's unread total as one correlated aggregate per
+     * chat row. It is intentionally calculated using the same cursor rule
+     * as readColumnFor(), including the second side of direct order chats.
+     */
+    private function withViewerUnreadCount(Builder $chats, User $viewer): Builder
+    {
+        $chatTable = (new Chat)->getTable();
+        $messageTable = (new ChatMessage)->getTable();
+
+        return $chats->withCount([
+            'messages as viewer_unread' => function (Builder $messages) use ($viewer, $chatTable, $messageTable): void {
+                $messages->where("{$messageTable}.sender_id", '!=', $viewer->id)
+                    ->where(function (Builder $unread) use ($viewer, $chatTable, $messageTable): void {
+                        if ($viewer->isAdmin()) {
+                            $this->applyUnreadReadCursor($unread, "{$chatTable}.admin_read_at", "{$messageTable}.created_at");
+
+                            return;
+                        }
+
+                        $unread
+                            ->where(function (Builder $counterparty) use ($viewer, $chatTable, $messageTable): void {
+                                $counterparty
+                                    ->where("{$chatTable}.counterparty_type", 'order_chat')
+                                    ->where("{$chatTable}.counterparty_id", $viewer->id);
+
+                                $this->applyUnreadReadCursor($counterparty, "{$chatTable}.counterparty_read_at", "{$messageTable}.created_at");
+                            })
+                            ->orWhere(function (Builder $primary) use ($viewer, $chatTable, $messageTable): void {
+                                $primary
+                                    ->where(function (Builder $notCounterparty) use ($viewer, $chatTable): void {
+                                        $notCounterparty
+                                            ->where("{$chatTable}.counterparty_type", '!=', 'order_chat')
+                                            ->orWhereNull("{$chatTable}.counterparty_type")
+                                            ->orWhere("{$chatTable}.counterparty_id", '!=', $viewer->id)
+                                            ->orWhereNull("{$chatTable}.counterparty_id");
+                                    });
+
+                                $this->applyUnreadReadCursor($primary, "{$chatTable}.user_read_at", "{$messageTable}.created_at");
+                            });
+                    });
+            },
+        ]);
+    }
+
+    private function applyUnreadReadCursor(Builder $query, string $readColumn, string $messageCreatedAt): void
+    {
+        $query->where(function (Builder $cursor) use ($readColumn, $messageCreatedAt): void {
+            $cursor
+                ->whereNull($readColumn)
+                ->orWhereColumn($messageCreatedAt, '>', $readColumn);
+        });
     }
 
     /** @return array<string, mixed> */
@@ -437,6 +583,7 @@ class ChatController extends Controller
             'from_me' => $message->sender_id === $viewer->id,
             'text' => $message->text,
             'time' => $message->created_at->format('H:i'),
+            'created_at' => $message->created_at?->toISOString(),
         ];
     }
 

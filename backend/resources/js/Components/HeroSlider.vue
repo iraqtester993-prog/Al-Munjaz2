@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { usePage } from '@inertiajs/vue3'
 
 const props = defineProps({
@@ -8,12 +8,31 @@ const props = defineProps({
 
 const wrap = ref(null)
 const active = ref(0)
+const activatedImages = ref(new Set())
 const page = usePage()
 let autoplay
+
+function activateImage(index) {
+    if (!props.slides[index]?.image_url || activatedImages.value.has(index)) return
+
+    // A CSS background downloads as soon as it is rendered. Only add the URL
+    // for the slide a user is viewing, so a long slider does not eagerly fetch
+    // every remote image during the first page paint.
+    const next = new Set(activatedImages.value)
+    next.add(index)
+    activatedImages.value = next
+}
+
+function activateSlide(index) {
+    const safeIndex = Math.max(0, Math.min(index, props.slides.length - 1))
+    active.value = safeIndex
+    activateImage(safeIndex)
+}
 
 function scrollTo(i) {
     const el = wrap.value
     if (!el) return
+    activateSlide(i)
     const direction = document.documentElement.dir === 'rtl' ? -1 : 1
     el.scrollTo({ left: direction * i * el.clientWidth, behavior: 'smooth' })
 }
@@ -21,7 +40,22 @@ function scrollTo(i) {
 function onScroll() {
     const el = wrap.value
     if (!el || el.clientWidth === 0) return
-    active.value = Math.round(Math.abs(el.scrollLeft) / el.clientWidth)
+    activateSlide(Math.round(Math.abs(el.scrollLeft) / el.clientWidth))
+}
+
+function backgroundStyle(slide, index) {
+    const fallback = slide.accent
+        ? 'linear-gradient(135deg, var(--accent), #B4661A)'
+        : 'linear-gradient(135deg, var(--primary-strong), var(--primary))'
+    const image = slide.image_url && activatedImages.value.has(index)
+
+    return {
+        backgroundImage: image
+            ? `linear-gradient(270deg, rgba(7, 35, 32, .78), rgba(7, 35, 32, .22)), url(${slide.image_url})`
+            : fallback,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+    }
 }
 
 function text(slide) {
@@ -35,6 +69,7 @@ function text(slide) {
 }
 
 onMounted(() => {
+    activateSlide(0)
     if (props.slides.length < 2) return
     autoplay = window.setInterval(() => {
         const next = (active.value + 1) % props.slides.length
@@ -43,6 +78,14 @@ onMounted(() => {
 })
 
 onUnmounted(() => window.clearInterval(autoplay))
+
+watch(
+    () => props.slides.map((slide) => slide.image_url || '').join('|'),
+    () => {
+        activatedImages.value = new Set()
+        activateSlide(Math.min(active.value, Math.max(props.slides.length - 1, 0)))
+    },
+)
 </script>
 
 <template>
@@ -52,7 +95,7 @@ onUnmounted(() => window.clearInterval(autoplay))
                 v-for="(s, i) in slides"
                 :key="i"
                 class="hero-slide"
-                :style="{ backgroundImage: s.image_url ? `linear-gradient(270deg, rgba(7, 35, 32, .78), rgba(7, 35, 32, .22)), url(${s.image_url})` : (s.accent ? 'linear-gradient(135deg, var(--accent), #B4661A)' : 'linear-gradient(135deg, var(--primary-strong), var(--primary))'), backgroundSize: 'cover', backgroundPosition: 'center' }"
+                :style="backgroundStyle(s, i)"
             >
                 <div class="hero-slide-text">
                     <h4>{{ text(s).title }}</h4>

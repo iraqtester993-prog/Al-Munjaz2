@@ -28,12 +28,22 @@ const branchFor = ref(null)
 const originBranch = ref('')
 const destinationBranch = ref('')
 const detailsFor = ref(null)
+const detailsLoading = ref(false)
+const detailsError = ref('')
 const busyId = ref(null)
+const courierDirectory = ref([...(props.courierFilters || [])])
+const assignmentCouriers = ref([...(props.couriers || [])])
+const assignmentBranches = ref([...(props.branches || [])])
+const courierDirectoryLoading = ref(false)
+const assignmentDirectoryLoading = ref(false)
+const assignmentDirectoryError = ref('')
+let detailRequestId = 0
+let assignmentRequestId = 0
 
 const eligibleCouriers = computed(() => {
     if (!assignFor.value?.province_id) return []
 
-    return props.couriers.filter((courier) =>
+    return assignmentCouriers.value.filter((courier) =>
         (courier.assignment_roles || []).includes(assignmentRole.value)
         && (courier.provinces || []).some((province) => Number(province.id) === Number(assignFor.value.province_id))
     )
@@ -55,7 +65,7 @@ const assignmentModes = computed(() => {
 const eligibleBranches = computed(() => {
     if (!branchFor.value) return []
 
-    return props.branches.filter((branch) =>
+    return assignmentBranches.value.filter((branch) =>
         Boolean(branch.is_platform_managed)
         || Number(branch.tenant_id) === Number(branchFor.value.tenant_id)
     )
@@ -73,7 +83,7 @@ const filters = computed(() => {
     return list
 })
 
-const sortedCouriers = computed(() => [...(props.courierFilters.length ? props.courierFilters : props.couriers)]
+const sortedCouriers = computed(() => [...courierDirectory.value]
     .sort((first, second) => String(first.name || '').localeCompare(String(second.name || ''), document.documentElement.lang || 'ar')))
 
 const hasActiveQuery = computed(() => (
@@ -191,6 +201,76 @@ watch(() => props.courierId, (value) => {
     courierFilter.value = normalizeCourierId(value)
 })
 
+watch(() => props.courierFilters, (value) => {
+    if (Array.isArray(value) && value.length) courierDirectory.value = [...value]
+})
+
+watch(() => props.couriers, (value) => {
+    if (Array.isArray(value) && value.length) assignmentCouriers.value = [...value]
+})
+
+watch(() => props.branches, (value) => {
+    if (Array.isArray(value) && value.length) assignmentBranches.value = [...value]
+})
+
+function ordersRequestUrl(parameters = {}) {
+    const url = new URL(route('admin.orders'), window.location.origin)
+
+    Object.entries(parameters).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== '') url.searchParams.set(key, String(value))
+    })
+
+    return url.toString()
+}
+
+async function readOrdersJson(parameters = {}) {
+    const response = await fetch(ordersRequestUrl(parameters), {
+        credentials: 'same-origin',
+        headers: {
+            Accept: 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+    })
+
+    if (!response.ok) throw new Error(`Order request failed with ${response.status}`)
+
+    return response.json()
+}
+
+async function loadCourierDirectory() {
+    if (!props.canUpdateOrders || courierDirectoryLoading.value || courierDirectory.value.length) return
+
+    courierDirectoryLoading.value = true
+    try {
+        const payload = await readOrdersJson({ directory: 'courier_filters' })
+        courierDirectory.value = Array.isArray(payload.courierFilters) ? payload.courierFilters : []
+    } finally {
+        courierDirectoryLoading.value = false
+    }
+}
+
+async function loadAssignmentDirectory(order) {
+    if (!props.canUpdateOrders || !order?.id) return
+
+    const requestId = ++assignmentRequestId
+    assignmentDirectoryLoading.value = true
+    assignmentDirectoryError.value = ''
+    assignmentCouriers.value = []
+    assignmentBranches.value = []
+
+    try {
+        const payload = await readOrdersJson({ directory: 'assignment', assignment_for: order.id })
+        if (requestId !== assignmentRequestId) return
+
+        assignmentCouriers.value = Array.isArray(payload.couriers) ? payload.couriers : []
+        assignmentBranches.value = Array.isArray(payload.branches) ? payload.branches : []
+    } catch {
+        if (requestId === assignmentRequestId) assignmentDirectoryError.value = t('Unable to load assignment options. Please retry.')
+    } finally {
+        if (requestId === assignmentRequestId) assignmentDirectoryLoading.value = false
+    }
+}
+
 function setStatus(order, status) {
     if (!props.canUpdateOrders || busyId.value) return
 
@@ -251,11 +331,12 @@ function reofferOverduePickup(order) {
     })
 }
 
-function openAssign(order) {
+async function openAssign(order) {
     if (!props.canUpdateOrders) return
     assignFor.value = order
     assignmentRole.value = order.status === 'pending' && !order.courier_id ? 'courier' : 'pickup_courier'
     assignCourier.value = ''
+    await loadAssignmentDirectory(order)
 }
 
 function doAssign() {
@@ -273,11 +354,12 @@ function doAssign() {
     )
 }
 
-function openBranches(order) {
+async function openBranches(order) {
     if (!props.canUpdateOrders) return
     branchFor.value = order
     originBranch.value = order.origin_branch_id || ''
     destinationBranch.value = order.destination_branch_id || ''
+    await loadAssignmentDirectory(order)
 }
 
 function saveBranches() {
@@ -294,8 +376,32 @@ function saveBranches() {
     })
 }
 
-function openDetails(order) {
+async function openDetails(order) {
+    const requestId = ++detailRequestId
     detailsFor.value = order
+    detailsLoading.value = true
+    detailsError.value = ''
+
+    try {
+        const payload = await readOrdersJson({ detail: order.id })
+        if (requestId !== detailRequestId || !detailsFor.value || Number(detailsFor.value.id) !== Number(order.id)) return
+
+        detailsFor.value = payload.order || null
+        if (!detailsFor.value) detailsError.value = t('Unable to load order details. Please retry.')
+    } catch {
+        if (requestId === detailRequestId && detailsFor.value && Number(detailsFor.value.id) === Number(order.id)) {
+            detailsError.value = t('Unable to load order details. Please retry.')
+        }
+    } finally {
+        if (requestId === detailRequestId) detailsLoading.value = false
+    }
+}
+
+function closeDetails() {
+    detailRequestId += 1
+    detailsFor.value = null
+    detailsLoading.value = false
+    detailsError.value = ''
 }
 
 function money(value) {
@@ -433,8 +539,9 @@ function provinceName(province) {
 
             <label class="orders-courier-filter">
                 <span>{{ t('Courier') }}</span>
-                <select v-model="courierFilter" :aria-label="t('Select courier')" @change="apply">
+                <select v-model="courierFilter" :aria-label="t('Select courier')" @focus="loadCourierDirectory" @change="apply">
                     <option value="">{{ t('All Couriers') }}</option>
+                    <option v-if="courierDirectoryLoading" value="" disabled>{{ t('Loading...') }}</option>
                     <option v-for="courier in sortedCouriers" :key="courier.id" :value="String(courier.id)">
                         {{ courier.name }}{{ courier.phone ? ` — ${courier.phone}` : '' }}
                     </option>
@@ -541,8 +648,17 @@ function provinceName(province) {
             <button class="fbtn" :disabled="!orders.next_page_url" @click="goToPage(orders.current_page + 1)">→</button>
         </div>
 
-        <SheetModal :open="!!detailsFor" :title="t('Order Details')" :subtitle="detailsFor?.track_no" :wide="true" @close="detailsFor = null">
-            <div v-if="detailsFor" class="order-detail-sheet">
+        <SheetModal :open="!!detailsFor" :title="t('Order Details')" :subtitle="detailsFor?.track_no" :wide="true" @close="closeDetails">
+            <section v-if="detailsLoading" class="order-detail-loading">
+                <span class="loader"></span>
+                <b>{{ t('Loading...') }}</b>
+            </section>
+            <section v-else-if="detailsError" class="order-detail-loading">
+                <b>{{ detailsError }}</b>
+                <button class="fbtn" type="button" @click="openDetails(detailsFor)">{{ t('Retry') }}</button>
+                <button class="fbtn" type="button" @click="closeDetails">{{ t('Close') }}</button>
+            </section>
+            <div v-else-if="detailsFor" class="order-detail-sheet">
                 <div class="order-detail-hero">
                     <div>
                         <span class="order-detail-kicker">{{ t('Order') }}</span>
@@ -650,14 +766,16 @@ function provinceName(province) {
             </div>
             <div class="field">
                 <label>{{ courierRoleLabel(assignmentRole) }}</label>
-                <select v-model="assignCourier">
+                <select v-model="assignCourier" :disabled="assignmentDirectoryLoading">
                     <option value="" disabled>{{ t('Select courier') }}</option>
+                    <option v-if="assignmentDirectoryLoading" value="" disabled>{{ t('Loading...') }}</option>
                     <option v-for="courier in eligibleCouriers" :key="courier.id" :value="courier.id">{{ courier.name }} — {{ courierRoleLabel(courier.role) }} — {{ courier.phone }}</option>
                 </select>
                 <p v-if="!assignFor?.province_id" class="field-error">{{ t('Cannot assign before the order governorate is set.') }}</p>
-                <p v-else-if="!eligibleCouriers.length" class="field-error">{{ t('No active courier is available for this order governorate.') }}</p>
+                <p v-else-if="assignmentDirectoryError" class="field-error">{{ assignmentDirectoryError }}</p>
+                <p v-else-if="!assignmentDirectoryLoading && !eligibleCouriers.length" class="field-error">{{ t('No active courier is available for this order governorate.') }}</p>
             </div>
-            <button class="btn btn-primary" style="width: 100%" :disabled="!assignCourier || busyId" @click="doAssign">
+            <button class="btn btn-primary" style="width: 100%" :disabled="!assignCourier || busyId || assignmentDirectoryLoading" @click="doAssign">
                 {{ t('Confirm') }}
             </button>
         </SheetModal>
@@ -666,20 +784,21 @@ function provinceName(province) {
             <p class="text-muted" style="margin: 0 0 14px; font-size: 11px; line-height: 1.8">{{ t('Choose the branch receiving the order and the branch responsible for delivery. Administration network branches and this merchant’s own branches are shown.') }}</p>
             <div class="field">
                 <label>{{ t('Origin / pickup branch') }}</label>
-                <select v-model="originBranch">
+                <select v-model="originBranch" :disabled="assignmentDirectoryLoading">
                     <option value="">{{ t('Not specified') }}</option>
                     <option v-for="branch in eligibleBranches" :key="branch.id" :value="branch.id">{{ branch.name }} — {{ branch.city }}</option>
                 </select>
             </div>
             <div class="field">
                 <label>{{ t('Destination / delivery branch') }}</label>
-                <select v-model="destinationBranch">
+                <select v-model="destinationBranch" :disabled="assignmentDirectoryLoading">
                     <option value="">{{ t('Not specified') }}</option>
                     <option v-for="branch in eligibleBranches" :key="branch.id" :value="branch.id">{{ branch.name }} — {{ branch.city }}</option>
                 </select>
             </div>
-            <p v-if="!eligibleBranches.length" class="field-error">{{ t('No active administration or merchant branches exist for this order yet.') }}</p>
-            <button class="btn btn-primary" style="width: 100%" :disabled="(!originBranch && !destinationBranch) || busyId" @click="saveBranches">{{ t('Save Branch Route') }}</button>
+            <p v-if="assignmentDirectoryError" class="field-error">{{ assignmentDirectoryError }}</p>
+            <p v-else-if="!assignmentDirectoryLoading && !eligibleBranches.length" class="field-error">{{ t('No active administration or merchant branches exist for this order yet.') }}</p>
+            <button class="btn btn-primary" style="width: 100%" :disabled="(!originBranch && !destinationBranch) || busyId || assignmentDirectoryLoading" @click="saveBranches">{{ t('Save Branch Route') }}</button>
         </SheetModal>
     </AdminShell>
 </template>
@@ -714,6 +833,9 @@ function provinceName(province) {
 .order-detail-restore { width: 100%; min-height: 44px; }
 
 .order-detail-sheet { display: grid; gap: 16px; padding-bottom: 4px; }
+.order-detail-loading { display: grid; justify-items: center; gap: 13px; min-height: 190px; padding: 34px 18px; color: var(--ink-soft); text-align: center; }
+.loader { display: inline-block; width: 18px; height: 18px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: orders-spin .7s linear infinite; }
+@keyframes orders-spin { to { transform: rotate(360deg); } }
 .order-detail-hero { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 15px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); }
 .order-detail-hero > div { min-width: 0; display: grid; gap: 3px; }
 .order-detail-kicker, .order-detail-hero > div > span:last-child { color: var(--ink-faint); font-size: 10.5px; font-weight: 800; }

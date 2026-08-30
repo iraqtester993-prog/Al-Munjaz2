@@ -1,23 +1,28 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { router, useForm, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import Flash from '../../Components/Flash.vue'
-import CourierLocationsMap from '../../Components/CourierLocationsMap.vue'
 import SheetModal from '../../Components/SheetModal.vue'
+
+const CourierLocationsMap = defineAsyncComponent(() => import('../../Components/CourierLocationsMap.vue'))
 
 const props = defineProps({
     branches: { type: Array, default: () => [] },
     recentOrders: { type: Array, default: () => [] },
     orders: { type: Array, default: () => [] },
+    orderCouriers: { type: Array, default: () => [] },
     merchants: { type: Array, default: () => [] },
     couriers: { type: Array, default: () => [] },
+    courierLocations: { type: Array, default: () => [] },
     summary: { type: Object, default: () => ({}) },
 })
 
 const page = usePage()
 const selectedBranchKey = ref('all')
 const activeView = ref('overview')
+const loadedViews = ref({ orders: false, merchants: false, couriers: false, locations: false })
+const loadingViews = ref({ orders: false, merchants: false, couriers: false, locations: false })
 const theme = ref('light')
 const locale = ref('ar')
 const showAllLocationsMap = ref(false)
@@ -107,6 +112,7 @@ const copy = {
         noContact: 'لا توجد بيانات اتصال مسجلة',
         selectBranch: 'اختر فرعاً لعرض تفاصيله',
         noData: 'لا توجد بيانات بعد',
+        loading: 'جارٍ التحميل…',
         currency: 'د.ع',
         role: 'الدور',
         manage: 'إدارة',
@@ -211,6 +217,7 @@ const copy = {
         noContact: 'No contact information is on record',
         selectBranch: 'Choose a branch to see its details',
         noData: 'No data yet',
+        loading: 'Loading…',
         currency: 'IQD',
         role: 'Role',
         manage: 'Manage',
@@ -315,6 +322,7 @@ const copy = {
         noContact: 'هیچ زانیارییەکی پەیوەندی تۆمار نەکراوە',
         selectBranch: 'لقێک هەڵبژێرە بۆ بینینی وردەکارییەکان',
         noData: 'هێشتا داتا نییە',
+        loading: 'بارکردن…',
         currency: 'د.ع',
         role: 'ڕۆڵ',
         manage: 'بەڕێوەبردن',
@@ -377,17 +385,9 @@ const selectedOrderCouriers = computed(() => {
     if (!selectedOrder.value) return []
     const branchIds = new Set((selectedOrder.value.branch_ids || []).map((id) => Number(id)))
 
-    return props.couriers.filter((courier) => courier.status === 'active'
+    return props.orderCouriers.filter((courier) => courier.status === 'active'
         && (branchIds.size === 0 || branchIds.has(Number(courier.branch_id))))
 })
-
-const tabs = computed(() => [
-    { key: 'overview', label: text('overview'), count: null },
-    { key: 'orders', label: text('orders'), count: visibleOrders.value.length },
-    { key: 'merchants', label: text('merchants'), count: visibleMerchants.value.length },
-    { key: 'couriers', label: text('couriers'), count: visibleCouriers.value.length },
-    { key: 'locations', label: text('courierLocations'), count: mappedCourierCount.value },
-])
 
 const dashboardSummary = computed(() => {
     if (!selectedBranch.value) return props.summary || {}
@@ -404,6 +404,14 @@ const dashboardSummary = computed(() => {
         onlineCouriers: Number(selectedBranch.value.people?.online_couriers || 0),
     }
 })
+
+const tabs = computed(() => [
+    { key: 'overview', label: text('overview'), count: null },
+    { key: 'orders', label: text('orders'), count: dashboardSummary.value.orders || 0 },
+    { key: 'merchants', label: text('merchants'), count: dashboardSummary.value.merchants || 0 },
+    { key: 'couriers', label: text('couriers'), count: dashboardSummary.value.couriers || 0 },
+    { key: 'locations', label: text('courierLocations'), count: loadedViews.value.locations ? mappedCourierCount.value : null },
+])
 
 const metrics = computed(() => [
     { key: 'branches', label: text('branches'), value: dashboardSummary.value.branches || 0, icon: 'branch' },
@@ -436,7 +444,12 @@ const visibleCouriers = computed(() => {
     return props.couriers.filter((courier) => Number(courier.branch_id) === Number(selectedBranchKey.value))
 })
 
-const mappedCourierCount = computed(() => visibleCouriers.value.filter((courier) => {
+const visibleCourierLocations = computed(() => {
+    if (isAllBranches.value) return props.courierLocations
+    return props.courierLocations.filter((courier) => Number(courier.branch_id) === Number(selectedBranchKey.value))
+})
+
+const mappedCourierCount = computed(() => visibleCourierLocations.value.filter((courier) => {
     const latitude = Number(courier?.location?.latitude)
     const longitude = Number(courier?.location?.longitude)
 
@@ -447,6 +460,50 @@ const mappedCourierCount = computed(() => visibleCouriers.value.filter((courier)
         && longitude >= -180
         && longitude <= 180
 }).length)
+
+const lazyViewProps = {
+    orders: ['orders', 'orderCouriers'],
+    merchants: ['merchants'],
+    couriers: ['couriers'],
+    locations: ['courierLocations'],
+}
+
+function isViewLoading(view) {
+    return Boolean(loadingViews.value[view])
+}
+
+function loadView(view, { force = false, onSuccess } = {}) {
+    const requestedProps = lazyViewProps[view]
+
+    if (!requestedProps?.length || isViewLoading(view) || (loadedViews.value[view] && !force)) {
+        onSuccess?.()
+        return
+    }
+
+    loadingViews.value = { ...loadingViews.value, [view]: true }
+
+    router.reload({
+        only: requestedProps,
+        preserveScroll: true,
+        preserveState: true,
+        onSuccess: () => {
+            loadedViews.value = { ...loadedViews.value, [view]: true }
+            onSuccess?.()
+        },
+        onFinish: () => {
+            loadingViews.value = { ...loadingViews.value, [view]: false }
+        },
+    })
+}
+
+function openView(view) {
+    activeView.value = view
+    loadView(view)
+}
+
+function refreshView(view, onSuccess) {
+    loadView(view, { force: true, onSuccess })
+}
 
 function text(key) {
     return copy[locale.value]?.[key] || copy.ar[key] || key
@@ -583,27 +640,41 @@ function closeEditPerson(force = false) {
 
 function savePerson() {
     if (!editingPerson.value || accountForm.processing) return
+    const view = editingKind.value === 'merchant' ? 'merchants' : 'couriers'
+
     accountForm.put(route('admin.branch.users.update', editingPerson.value.id), {
         preserveScroll: true,
-        onSuccess: () => closeEditPerson(true),
+        onSuccess: () => {
+            closeEditPerson(true)
+            refreshView(view)
+        },
     })
 }
 
 function setPersonStatus(person, kind, status) {
     const permission = kind === 'merchant' ? canManageMerchants.value : canManageCouriers.value
     if (!permission || !confirm(`${text(status === 'active' ? 'activate' : 'suspend')}: ${person.name}?`)) return
-    router.post(route('admin.branch.users.status', person.id), { status }, { preserveScroll: true })
+    router.post(route('admin.branch.users.status', person.id), { status }, {
+        preserveScroll: true,
+        onSuccess: () => refreshView(kind === 'merchant' ? 'merchants' : 'couriers'),
+    })
 }
 
 function setMerchantVerification(person, verified) {
     if (!canManageMerchants.value || !confirm(`${text(verified ? 'grantVerification' : 'removeVerification')}: ${person.name}?`)) return
-    router.post(route('admin.branch.users.merchant-verification', person.id), { verified }, { preserveScroll: true })
+    router.post(route('admin.branch.users.merchant-verification', person.id), { verified }, {
+        preserveScroll: true,
+        onSuccess: () => refreshView('merchants'),
+    })
 }
 
 function reviewDocument(person, document, status, kind) {
     const permission = kind === 'merchant' ? canManageMerchants.value : canManageCouriers.value
     if (!permission || !confirm(`${text(status === 'approved' ? 'approve' : 'reject')}: ${documentLabel(document.type)}?`)) return
-    router.post(route('admin.branch.users.documents.review', [person.id, document.id]), { status }, { preserveScroll: true })
+    router.post(route('admin.branch.users.documents.review', [person.id, document.id]), { status }, {
+        preserveScroll: true,
+        onSuccess: () => refreshView(kind === 'merchant' ? 'merchants' : 'couriers'),
+    })
 }
 
 function openDocument(document) {
@@ -615,7 +686,10 @@ function deletePerson(person, kind) {
     if (!permission || !confirm(text('confirmDelete'))) return
     router.delete(route('admin.branch.users.destroy', person.id), {
         preserveScroll: true,
-        onSuccess: () => closePerson(),
+        onSuccess: () => {
+            closePerson()
+            refreshView(kind === 'merchant' ? 'merchants' : 'couriers')
+        },
     })
 }
 
@@ -635,12 +709,24 @@ function closeOrder() {
 
 function saveOrderStatus() {
     if (!selectedOrder.value || orderStatusForm.processing) return
-    orderStatusForm.post(route('admin.branch.orders.status', selectedOrder.value.id), { preserveScroll: true })
+    orderStatusForm.post(route('admin.branch.orders.status', selectedOrder.value.id), {
+        preserveScroll: true,
+        onSuccess: () => {
+            closeOrder()
+            refreshView('orders')
+        },
+    })
 }
 
 function assignOrderCourier() {
     if (!selectedOrder.value || !courierAssignmentForm.courier_id || courierAssignmentForm.processing) return
-    courierAssignmentForm.post(route('admin.branch.orders.courier', selectedOrder.value.id), { preserveScroll: true })
+    courierAssignmentForm.post(route('admin.branch.orders.courier', selectedOrder.value.id), {
+        preserveScroll: true,
+        onSuccess: () => {
+            closeOrder()
+            refreshView('orders')
+        },
+    })
 }
 
 function isPickupOverdue(order) {
@@ -653,7 +739,13 @@ function reofferOrder() {
     if (!selectedOrder.value || !isPickupOverdue(selectedOrder.value) || !confirm(text('reofferOverdue'))) return
     const note = window.prompt(text('administrativeNote'))
     if (note === null) return
-    router.post(route('admin.branch.orders.reoffer-overdue-pickup', selectedOrder.value.id), { note }, { preserveScroll: true })
+    router.post(route('admin.branch.orders.reoffer-overdue-pickup', selectedOrder.value.id), { note }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            closeOrder()
+            refreshView('orders')
+        },
+    })
 }
 
 function selectBranch(branch) {
@@ -794,7 +886,7 @@ onMounted(() => applyTheme(theme.value))
                     class="portal-tab"
                     :class="{ active: activeView === tab.key }"
                     type="button"
-                    @click="activeView = tab.key"
+                    @click="openView(tab.key)"
                 >
                     <span>{{ tab.label }}</span>
                     <b v-if="tab.count !== null" class="mono">{{ fmt(tab.count) }}</b>
@@ -852,7 +944,8 @@ onMounted(() => applyTheme(theme.value))
                     <span class="count-chip mono">{{ fmt(visibleOrders.length) }}</span>
                 </div>
 
-                <div v-if="visibleOrders.length" class="scoped-order-list">
+                <div v-if="isViewLoading('orders')" class="empty-state"><span class="portal-loading">◌</span><p>{{ text('loading') }}</p></div>
+                <div v-else-if="visibleOrders.length" class="scoped-order-list">
                     <article v-for="order in visibleOrders" :key="order.id" class="scoped-order-card">
                         <div class="scoped-order-head">
                             <div><b>{{ order.track_no || `#${order.id}` }}</b><span>{{ order.customer_name || text('noData') }}</span></div>
@@ -883,7 +976,8 @@ onMounted(() => applyTheme(theme.value))
                     <span class="count-chip mono">{{ fmt(visibleMerchants.length) }}</span>
                 </div>
 
-                <div v-if="visibleMerchants.length" class="people-grid">
+                <div v-if="isViewLoading('merchants')" class="empty-state"><span class="portal-loading">◌</span><p>{{ text('loading') }}</p></div>
+                <div v-else-if="visibleMerchants.length" class="people-grid">
                     <article v-for="merchant in visibleMerchants" :key="merchant.id" class="person-card">
                         <div class="person-head">
                             <span class="person-avatar merchant-avatar"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path :d="icon('shop')" /></svg></span>
@@ -911,7 +1005,8 @@ onMounted(() => applyTheme(theme.value))
                     <span class="count-chip mono">{{ fmt(visibleCouriers.length) }}</span>
                 </div>
 
-                <div v-if="visibleCouriers.length" class="people-grid">
+                <div v-if="isViewLoading('couriers')" class="empty-state"><span class="portal-loading">◌</span><p>{{ text('loading') }}</p></div>
+                <div v-else-if="visibleCouriers.length" class="people-grid">
                     <article v-for="courier in visibleCouriers" :key="courier.id" class="person-card">
                         <div class="person-head">
                             <span class="person-avatar courier-avatar"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path :d="icon('courier')" /></svg></span>
@@ -938,7 +1033,8 @@ onMounted(() => applyTheme(theme.value))
                     <span class="count-chip mono">{{ fmt(mappedCourierCount) }}</span>
                 </div>
 
-                <div class="location-overview-card">
+                <div v-if="isViewLoading('locations')" class="empty-state"><span class="portal-loading">◌</span><p>{{ text('loading') }}</p></div>
+                <div v-else class="location-overview-card">
                     <span class="location-overview-icon" aria-hidden="true">
                         <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-5.2 7-12A7 7 0 1 0 5 9c0 6.8 7 12 7 12Z" /><circle cx="12" cy="9" r="2.2" /><path d="M4 19h4M16 19h4" /></svg>
                     </span>
@@ -1065,7 +1161,7 @@ onMounted(() => applyTheme(theme.value))
 
         <CourierLocationsMap
             v-if="showAllLocationsMap"
-            :couriers="visibleCouriers"
+            :couriers="visibleCourierLocations"
             :locale="locale"
             :theme="theme"
             @close="showAllLocationsMap = false"
@@ -1080,6 +1176,8 @@ onMounted(() => applyTheme(theme.value))
 .portal-tab:hover{color:var(--primary-strong);background:var(--primary-tint)}
 .portal-tab.active{color:#fff;background:var(--primary);box-shadow:0 7px 17px rgba(8,123,115,.24)}
 .portal-tab b{min-width:18px;padding:2px 5px;border-radius:999px;color:inherit;background:color-mix(in srgb,currentColor 12%,transparent);font-size:10px;text-align:center}
+.portal-loading{display:inline-block;animation:portal-spin .85s linear infinite}
+@keyframes portal-spin{to{transform:rotate(360deg)}}
 .overview-content{display:grid;gap:0}
 .operational-panel{min-width:0;padding:20px;border:1px solid var(--border);border-radius:20px;background:var(--surface);box-shadow:var(--shadow)}
 .scoped-order-list{display:grid;gap:11px}

@@ -104,8 +104,16 @@ const msgs = ref([...(props.messages || [])])
 const threadEl = ref(null)
 const composerEl = ref(null)
 const lastMessageId = ref(Math.max(0, ...msgs.value.map((message) => Number(message?.id) || 0)))
+const CHAT_ACTIVE_INTERVAL = 2_500
+const CHAT_VISIBLE_INTERVAL = 4_000
+const CHAT_RETRY_MAX_INTERVAL = 30_000
+const CHAT_ACTIVITY_WINDOW = 30_000
 let pollTimer = null
 let refreshing = false
+let disposed = false
+let resumeAfterRefresh = false
+let failureCount = 0
+let recentActivityUntil = 0
 
 function mergeMessages(messages, { replace = false } = {}) {
     const byId = new Map(replace ? [] : msgs.value.map((message) => [message.id, message]))
@@ -196,6 +204,7 @@ async function send() {
         const { data } = await axios.post(route('admin.chat.send', activeChat.value.id), { text: value })
         mergeMessages([data])
         text.value = ''
+        markConversationActive()
     } catch (_) {
         sendError.value = l('unable')
     } finally {
@@ -206,8 +215,63 @@ async function send() {
     }
 }
 
+function isForeground() {
+    return document.visibilityState === 'visible'
+        && (typeof document.hasFocus !== 'function' || document.hasFocus())
+}
+
+function clearPollTimer() {
+    if (!pollTimer) return
+    window.clearTimeout(pollTimer)
+    pollTimer = null
+}
+
+function nextPollDelay() {
+    if (failureCount > 0) {
+        return Math.min(CHAT_VISIBLE_INTERVAL * (2 ** Math.min(failureCount, 3)), CHAT_RETRY_MAX_INTERVAL)
+    }
+
+    return document.activeElement === composerEl.value || Date.now() < recentActivityUntil
+        ? CHAT_ACTIVE_INTERVAL
+        : CHAT_VISIBLE_INTERVAL
+}
+
+function schedulePoll(delay = nextPollDelay()) {
+    clearPollTimer()
+    if (disposed || !activeChat.value || !isForeground()) return
+
+    pollTimer = window.setTimeout(() => {
+        pollTimer = null
+        refreshMessages()
+    }, delay)
+}
+
+function markConversationActive() {
+    recentActivityUntil = Date.now() + CHAT_ACTIVITY_WINDOW
+    if (!refreshing && activeChat.value && isForeground()) schedulePoll(CHAT_ACTIVE_INTERVAL)
+}
+
+function requestRefresh() {
+    if (disposed || !activeChat.value || !isForeground()) {
+        clearPollTimer()
+        return
+    }
+
+    if (refreshing) {
+        resumeAfterRefresh = true
+        return
+    }
+
+    refreshMessages()
+}
+
 async function refreshMessages() {
-    if (!activeChat.value || refreshing || document.hidden) return
+    if (disposed || !activeChat.value || !isForeground()) return
+    if (refreshing) {
+        resumeAfterRefresh = true
+        return
+    }
+
     refreshing = true
     try {
         const { data } = await axios.get(route('admin.chat.messages', activeChat.value.id), {
@@ -215,10 +279,18 @@ async function refreshMessages() {
         })
         mergeMessages(data.messages)
         lastMessageId.value = Math.max(lastMessageId.value, Number(data.last_id || 0))
+        failureCount = 0
+        if (data.messages?.length) markConversationActive()
     } catch (_) {
         // A momentary request failure must not make the open thread unusable.
+        failureCount = Math.min(failureCount + 1, 4)
     } finally {
         refreshing = false
+        if (disposed || !activeChat.value || !isForeground()) return
+
+        const shouldResumeImmediately = resumeAfterRefresh
+        resumeAfterRefresh = false
+        schedulePoll(shouldResumeImmediately ? 0 : nextPollDelay())
     }
 }
 
@@ -236,21 +308,49 @@ function onEnter(event) {
 }
 
 watch(() => props.messages, (messages) => mergeMessages(messages), { deep: true })
-watch(() => props.activeChat, (chat) => {
+watch(() => props.activeChat?.id, () => {
+    const chat = props.activeChat
     if (chat) selectedTab.value = channelOf(chat)
     replaceMessages(props.messages)
-    refreshMessages()
-}, { deep: true })
+    if (chat) requestRefresh()
+    else clearPollTimer()
+})
+
+function handleVisibilityChange() {
+    if (!isForeground()) {
+        clearPollTimer()
+        return
+    }
+
+    requestRefresh()
+}
+
+function handleWindowBlur() {
+    clearPollTimer()
+}
+
+function handleWindowFocus() {
+    requestRefresh()
+}
 
 onMounted(() => {
+    disposed = false
     scrollDown()
-    pollTimer = window.setInterval(refreshMessages, 2000)
-    document.addEventListener('visibilitychange', refreshMessages)
+    if (activeChat.value) {
+        markConversationActive()
+        requestRefresh()
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('blur', handleWindowBlur)
+    window.addEventListener('focus', handleWindowFocus)
 })
 
 onBeforeUnmount(() => {
-    if (pollTimer) window.clearInterval(pollTimer)
-    document.removeEventListener('visibilitychange', refreshMessages)
+    disposed = true
+    clearPollTimer()
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    window.removeEventListener('blur', handleWindowBlur)
+    window.removeEventListener('focus', handleWindowFocus)
 })
 </script>
 
@@ -293,7 +393,7 @@ onBeforeUnmount(() => {
                     <div v-for="message in msgs" :key="message.id" class="message-wrap" :class="{ own: message.from_me }"><span class="message-sender" :class="messageRole(message)">{{ senderLabel(message) }}</span><div class="bubble" :class="messageClass(message)">{{ message.text }}<span class="bubble-time">{{ message.time }}</span></div></div>
                     <div v-if="!msgs.length" class="empty-hint">{{ l('noMessages') }}</div>
                 </div>
-                <div v-if="canReply" class="chat-input-bar"><input ref="composerEl" v-model="text" :placeholder="l('typeMessage')" @keydown="onEnter" /><button type="button" class="send-btn" :disabled="sending || !text.trim()" @pointerdown.prevent @click="send"><span v-if="sending" class="loader"></span><svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z M22 2 11 13" /></svg></button></div>
+                <div v-if="canReply" class="chat-input-bar"><input ref="composerEl" v-model="text" :placeholder="l('typeMessage')" @focus="markConversationActive" @keydown="onEnter" /><button type="button" class="send-btn" :disabled="sending || !text.trim()" @pointerdown.prevent @click="send"><span v-if="sending" class="loader"></span><svg v-else width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z M22 2 11 13" /></svg></button></div>
                 <p v-if="sendError" class="chat-send-error">{{ sendError }}</p>
             </section>
             <section v-else class="chat-thread chat-empty">{{ l('select') }}</section>

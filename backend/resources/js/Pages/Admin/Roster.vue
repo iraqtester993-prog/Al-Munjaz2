@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
 import { router, useForm } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
@@ -10,14 +10,17 @@ const props = defineProps({
     filters: { type: Object, required: true },
     roleFilters: { type: Object, default: () => ({}) },
     selectedRole: { type: String, default: 'all' },
+    query: { type: Object, default: () => ({}) },
+    pagination: { type: Object, default: () => ({ currentPage: 1, lastPage: 1, total: 0, from: null, to: null }) },
 })
 
-const active = ref('all')
+const active = ref(props.query?.status || 'all')
 const activeRole = ref(props.selectedRole)
-const search = ref('')
+const search = ref(props.query?.search || '')
 const detailsRow = ref(null)
 const editingRow = ref(null)
 const actionError = ref('')
+let searchTimer = null
 const editForm = useForm({
     name: '',
     username: '',
@@ -35,29 +38,7 @@ const filterList = computed(() => [
     { key: 'suspended', label: t('Suspended') },
 ])
 
-const visibleRows = computed(() => {
-    const needle = search.value.trim().toLocaleLowerCase()
-
-    return props.rows.filter((row) => {
-        if (active.value !== 'all' && row.status !== active.value) return false
-        if (!needle) return true
-
-        const haystack = [
-            row.name,
-            row.user?.name,
-            row.user?.phone,
-            row.user?.username,
-            row.user?.identity_number,
-            row.user?.vehicle,
-            provinceNames(row),
-        ]
-            .filter(Boolean)
-            .join(' ')
-            .toLocaleLowerCase()
-
-        return haystack.includes(needle)
-    })
-})
+const visibleRows = computed(() => props.rows)
 
 function statusClass(status) {
     return {
@@ -197,8 +178,47 @@ function courierRoleLabel(role) {
 
 function changeCourierRole(role) {
     activeRole.value = role
-    router.get(route('admin.couriers'), { role }, { preserveScroll: true, preserveState: true, replace: true })
+    visitRoster({ role, page: 1 })
 }
+
+function changeStatusFilter(status) {
+    active.value = status
+    visitRoster({ status, page: 1 })
+}
+
+function scheduleSearch() {
+    if (searchTimer) clearTimeout(searchTimer)
+    searchTimer = setTimeout(() => visitRoster({ page: 1 }), 350)
+}
+
+function visitRoster(overrides = {}) {
+    if (searchTimer) {
+        clearTimeout(searchTimer)
+        searchTimer = null
+    }
+
+    const role = isCourier.value ? (overrides.role ?? activeRole.value) : undefined
+    const status = overrides.status ?? active.value
+    const page = overrides.page ?? props.pagination?.currentPage ?? 1
+    const params = {
+        search: search.value.trim() || undefined,
+        status: status !== 'all' ? status : undefined,
+        page: page > 1 ? page : undefined,
+    }
+
+    if (isCourier.value && role !== 'all') params.role = role
+
+    router.get(isCourier.value ? route('admin.couriers') : route('admin.merchants'), params, {
+        preserveScroll: true,
+        preserveState: true,
+        replace: true,
+        only: ['rows', 'filters', 'roleFilters', 'selectedRole', 'query', 'pagination'],
+    })
+}
+
+onBeforeUnmount(() => {
+    if (searchTimer) clearTimeout(searchTimer)
+})
 
 function provinceNames(row) {
     return (row.user?.provinces || [])
@@ -280,7 +300,18 @@ function vehicleLabel(value) {
             </div>
             <label class="roster-search">
                 <span>⌕</span>
-                <input v-model="search" type="search" :placeholder="t('Search by name, phone, username, or governorate')" :aria-label="t('Search Couriers')" />
+                <input v-model="search" type="search" :placeholder="t('Search by name, phone, username, or governorate')" :aria-label="t('Search Couriers')" @input="scheduleSearch" />
+            </label>
+        </section>
+        <section v-else class="roster-heading">
+            <div>
+                <p class="roster-eyebrow">{{ t('Platform Operations') }}</p>
+                <h2>{{ t('Merchants') }}</h2>
+                <p>{{ t('Manage merchant accounts, verification, and submitted documents from one place.') }}</p>
+            </div>
+            <label class="roster-search">
+                <span>⌕</span>
+                <input v-model="search" type="search" :placeholder="t('Search by name, phone, username, or governorate')" :aria-label="t('Search Merchants')" @input="scheduleSearch" />
             </label>
         </section>
         <div v-if="isCourier" class="filter-bar roster-role-filter">
@@ -295,7 +326,7 @@ function vehicleLabel(value) {
             </button>
         </div>
         <div class="filter-bar">
-            <button v-for="f in filterList" :key="f.key" class="fbtn" :class="{ active: active === f.key }" @click="active = f.key">
+            <button v-for="f in filterList" :key="f.key" class="fbtn" :class="{ active: active === f.key }" @click="changeStatusFilter(f.key)">
                 {{ f.label }} <span class="cnt">{{ filters[f.key] ?? 0 }}</span>
             </button>
         </div>
@@ -386,6 +417,12 @@ function vehicleLabel(value) {
             </div>
         </div>
         <div v-else class="panel"><div class="empty">{{ isCourier && search.trim() ? t('No couriers match your search.') : t('No users found') }}</div></div>
+
+        <nav v-if="pagination?.lastPage > 1" class="roster-pagination" :aria-label="t('Pagination')">
+            <button type="button" :disabled="pagination.currentPage <= 1" :aria-label="t('Previous')" @click="visitRoster({ page: pagination.currentPage - 1 })">‹</button>
+            <span class="mono">{{ pagination.from }}–{{ pagination.to }} / {{ pagination.total }}</span>
+            <button type="button" :disabled="pagination.currentPage >= pagination.lastPage" :aria-label="t('Next')" @click="visitRoster({ page: pagination.currentPage + 1 })">›</button>
+        </nav>
 
         <div v-if="detailsRow" class="dialog-backdrop" @click.self="closeDetails">
             <section class="account-dialog" role="dialog" aria-modal="true" :aria-label="t('Account Details')">
@@ -484,7 +521,7 @@ function vehicleLabel(value) {
 </template>
 
 <style scoped>
-.roster-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 16px; }.roster-eyebrow { margin: 0; color: var(--primary); font-size: 9px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }.roster-heading h2 { margin: 4px 0 0; color: var(--ink); font-size: 23px; font-weight: 950; }.roster-heading p:last-child { max-width:570px; margin: 5px 0 0; color: var(--ink-faint); font-size: 11px; font-weight: 700; line-height: 1.7; }.roster-search { display: flex; align-items: center; min-width: min(330px, 100%); min-height: 40px; gap: 7px; padding: 0 11px; border: 1px solid var(--border); border-radius: 11px; color: var(--primary-strong); background: var(--surface); }.roster-search span { font-size: 18px; line-height: 1; }.roster-search input { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--ink); background: transparent; font: 750 11px var(--font); }.user-card-header { cursor: pointer; }.user-card-header:focus-visible { outline: 3px solid var(--primary-tint); outline-offset: 4px; border-radius: 12px; }.courier-document-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface-2); }.courier-document-summary > div { display: grid; min-width: 0; gap: 2px; }.courier-document-summary span { color: var(--ink-faint); font-size: 9px; font-weight: 850; }.courier-document-summary b { overflow: hidden; font-size: 10px; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }.courier-document-summary b.approved { color: var(--success); }.courier-document-summary b.pending { color: var(--warning); }.courier-document-summary b.rejected { color: var(--danger); }.courier-document-summary small { color: var(--ink-faint); font-size: 8.5px; font-weight: 750; }.suspension-action { border: 0; color: var(--warning); background: var(--warning-tint); }.documents-review-hint { margin: -1px 0 7px; color: var(--ink-faint); font-size: 9.5px; font-weight: 700; line-height: 1.6; }
+.roster-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 16px; }.roster-eyebrow { margin: 0; color: var(--primary); font-size: 9px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }.roster-heading h2 { margin: 4px 0 0; color: var(--ink); font-size: 23px; font-weight: 950; }.roster-heading p:last-child { max-width:570px; margin: 5px 0 0; color: var(--ink-faint); font-size: 11px; font-weight: 700; line-height: 1.7; }.roster-search { display: flex; align-items: center; min-width: min(330px, 100%); min-height: 40px; gap: 7px; padding: 0 11px; border: 1px solid var(--border); border-radius: 11px; color: var(--primary-strong); background: var(--surface); }.roster-search span { font-size: 18px; line-height: 1; }.roster-search input { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--ink); background: transparent; font: 750 11px var(--font); }.roster-pagination { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 18px 0 2px; color: var(--ink-soft); font-size: 10px; font-weight: 800; }.roster-pagination button { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--border); border-radius: 9px; color: var(--primary-strong); background: var(--surface); font-size: 20px; line-height: 1; cursor: pointer; }.roster-pagination button:disabled { cursor: not-allowed; opacity: .45; }.user-card-header { cursor: pointer; }.user-card-header:focus-visible { outline: 3px solid var(--primary-tint); outline-offset: 4px; border-radius: 12px; }.courier-document-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface-2); }.courier-document-summary > div { display: grid; min-width: 0; gap: 2px; }.courier-document-summary span { color: var(--ink-faint); font-size: 9px; font-weight: 850; }.courier-document-summary b { overflow: hidden; font-size: 10px; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }.courier-document-summary b.approved { color: var(--success); }.courier-document-summary b.pending { color: var(--warning); }.courier-document-summary b.rejected { color: var(--danger); }.courier-document-summary small { color: var(--ink-faint); font-size: 8.5px; font-weight: 750; }.suspension-action { border: 0; color: var(--warning); background: var(--warning-tint); }.documents-review-hint { margin: -1px 0 7px; color: var(--ink-faint); font-size: 9.5px; font-weight: 700; line-height: 1.6; }
 .roster-role-filter { margin-bottom: 10px; }
 .courier-role-label { display: block; margin-top: 4px; color: var(--primary-strong); font-size: 9px; font-weight: 900; }
 .account-action { color: var(--primary-strong); background: var(--primary-tint); border: 0; }

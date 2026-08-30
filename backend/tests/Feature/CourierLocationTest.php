@@ -103,17 +103,16 @@ class CourierLocationTest extends TestCase
             'location_updated_at' => now(),
         ]);
 
+        // The overview intentionally stays lightweight. Current courier
+        // coordinates are loaded only by the dedicated locations screen,
+        // which prevents a potentially large map payload from delaying the
+        // dashboard's first render.
         $this->actingAs($admin)
             ->get('/dashboard')
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Admin/Dashboard')
-                ->has('courierLocations', 1)
-                ->where('courierLocations.0.id', $courier->id)
-                ->where('courierLocations.0.latitude', 33.3123456)
-                ->where('courierLocations.0.longitude', 44.3987654)
-                ->where('courierLocations.0.accuracy_meters', 12)
-                ->where('courierLocations.0.is_online', (bool) $courier->is_online));
+                ->missing('courierLocations'));
 
         Sanctum::actingAs($admin);
         $this->getJson('/api/v1/admin/couriers/locations')
@@ -361,6 +360,6 @@ class CourierLocationTest extends TestCase
             ->get('/dashboard')
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Admin/Dashboard')
-                ->has('courierLocations', 0));
+                ->missing('courierLocations'));
     }
 }

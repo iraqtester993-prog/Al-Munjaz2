@@ -123,7 +123,18 @@ class BranchProvisioningCredentialsTest extends TestCase
             ->assertJsonPath('component', 'Admin/BranchPortal')
             ->assertJsonCount(1, 'props.branches')
             ->assertJsonPath('props.branches.0.id', $branch->id)
-            ->assertJsonPath('props.branches.0.province.id', $basra->id)
+            ->assertJsonPath('props.branches.0.province.id', $basra->id);
+
+        // The branch overview no longer serialises a full operational list.
+        // Ask Inertia for that optional prop explicitly, exactly as the
+        // portal does once its Orders tab is opened.
+        $this->inertia()
+            ->withHeaders([
+                'X-Inertia-Partial-Component' => 'Admin/BranchPortal',
+                'X-Inertia-Partial-Data' => 'orders',
+            ])
+            ->get('/dashboard/branch')
+            ->assertOk()
             ->assertJsonPath('props.orders.0.track_no', 'CRED-VISIBLE')
             ->assertJsonMissing(['track_no' => 'CRED-HIDDEN']);
     }

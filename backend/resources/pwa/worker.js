@@ -10,8 +10,28 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))));
-  self.clients.claim();
+  event.waitUntil((async () => {
+    await Promise.all(
+      (await caches.keys())
+        .filter((key) => key !== CACHE_NAME)
+        .map((key) => caches.delete(key)),
+    );
+
+    // On Android/Chromium this starts the document request while the worker
+    // is waking up. It avoids adding worker-startup latency when an installed
+    // PWA opens a server-rendered Inertia page; unsupported browsers simply
+    // continue with the normal fetch path below.
+    if ('navigationPreload' in self.registration) {
+      try {
+        await self.registration.navigationPreload.enable();
+      } catch (_) {
+        // Keep activation successful if an older browser exposes the API but
+        // does not allow it for this worker context.
+      }
+    }
+
+    await self.clients.claim();
+  })());
 });
 
 // A Web Push event is delivered by the browser even when the PWA has no open
@@ -72,7 +92,13 @@ self.addEventListener('fetch', (event) => {
   // We instead present an explicit, app-branded offline state for a
   // navigation request.  The user can retry as soon as connectivity returns.
   if (event.request.mode === 'navigate') {
-    event.respondWith(fetch(event.request).catch(() => caches.match(OFFLINE_PAGE)));
+    event.respondWith((async () => {
+      try {
+        return (await event.preloadResponse) || await fetch(event.request);
+      } catch (_) {
+        return (await caches.match(OFFLINE_PAGE)) || Response.error();
+      }
+    })());
     return;
   }
 

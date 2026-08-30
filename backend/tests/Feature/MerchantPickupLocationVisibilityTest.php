@@ -75,14 +75,19 @@ class MerchantPickupLocationVisibilityTest extends TestCase
             ->assertJsonPath('data.pickup_longitude', 44.3660731)
             ->assertJsonPath('data.pickup_location_label', $label);
 
-        // The browser/PWA order payload follows the same contract as the
-        // token API, so the courier order card can show the exact location.
-        $pwa = $this->actingAs($courier)->get('/app/orders')->assertOk();
+        // The browser/PWA list exposes the authorised order, while its
+        // on-demand sheet carries the precise pickup tuple. That avoids
+        // sending private coordinates for every card on initial paint.
+        $pwa = $this->actingAs($courier)->get('/app/orders?list=1')->assertOk();
         $pwaOrder = collect($pwa->inertiaProps('orders'))->firstWhere('id', $order->id);
         $this->assertNotNull($pwaOrder);
-        $this->assertSame(33.3152412, data_get($pwaOrder, 'pickup_latitude'));
-        $this->assertSame(44.3660731, data_get($pwaOrder, 'pickup_longitude'));
-        $this->assertSame($label, data_get($pwaOrder, 'pickup_location_label'));
+
+        $this->actingAs($courier)
+            ->getJson("/app/orders?detail={$order->id}")
+            ->assertOk()
+            ->assertJsonPath('order.pickup_latitude', 33.3152412)
+            ->assertJsonPath('order.pickup_longitude', 44.3660731)
+            ->assertJsonPath('order.pickup_location_label', $label);
 
         $otherCourier = User::create([
             'tenant_id' => $courier->tenant_id,
@@ -108,7 +113,7 @@ class MerchantPickupLocationVisibilityTest extends TestCase
         $this->assertFalse(collect($unassignedList->json('data'))->contains('id', $order->id));
         $this->assertStringNotContainsString($label, $unassignedList->getContent());
 
-        $unassignedPwa = $this->actingAs($otherCourier)->get('/app/orders')->assertOk();
+        $unassignedPwa = $this->actingAs($otherCourier)->get('/app/orders?list=1')->assertOk();
         $this->assertFalse(collect($unassignedPwa->inertiaProps('orders'))->contains('id', $order->id));
         $this->assertStringNotContainsString($label, $unassignedPwa->getContent());
     }

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Cache;
 
 class Setting extends Model
 {
@@ -25,6 +26,8 @@ class Setting extends Model
 
     private const PUBLIC_CONTENT_LOCALES = ['ar', 'en', 'ku'];
 
+    private const CACHE_TTL_SECONDS = 3600;
+
     protected $fillable = [
         'key', 'value',
     ];
@@ -38,14 +41,36 @@ class Setting extends Model
 
     public static function get(string $key, mixed $default = null): mixed
     {
-        $setting = static::where('key', $key)->first();
+        /** @var array{exists: bool, value: mixed} $cached */
+        $cached = Cache::remember(
+            static::cacheKey($key),
+            self::CACHE_TTL_SECONDS,
+            function () use ($key): array {
+                $setting = static::query()->where('key', $key)->first(['id', 'value']);
 
-        return $setting?->value ?? $default;
+                return [
+                    'exists' => $setting !== null,
+                    'value' => $setting?->value,
+                ];
+            },
+        );
+
+        // Do not cache the caller's default. Different callers may provide a
+        // different fallback for the same missing or null setting.
+        return $cached['exists'] ? ($cached['value'] ?? $default) : $default;
     }
 
     public static function set(string $key, mixed $value): void
     {
         static::updateOrCreate(['key' => $key], ['value' => $value]);
+        Cache::forget(static::cacheKey($key));
+    }
+
+    private static function cacheKey(string $key): string
+    {
+        // Hashing avoids cache-driver key restrictions while retaining a
+        // stable, namespaced key for each setting.
+        return 'settings:value:'.hash('sha256', $key);
     }
 
     /**

@@ -17,6 +17,13 @@ use Inertia\Inertia;
 class AdminUserController extends Controller
 {
     /**
+     * Roster rows include account, document-review, wallet, and operational
+     * summaries. Keep that useful review payload bounded instead of loading
+     * every account (and every document) into one dashboard response.
+     */
+    private const ROSTER_PER_PAGE = 24;
+
+    /**
      * Every courier completes these five documents during registration.
      * Keeping the requirement here makes dashboard review use the same
      * standard as registration, including for older accounts created before
@@ -40,10 +47,26 @@ class AdminUserController extends Controller
 
     public function merchants(Request $request)
     {
+        $data = $request->validate([
+            'search' => ['nullable', 'string', 'max:120'],
+            'status' => ['nullable', Rule::in(['all', 'active', 'pending', 'suspended'])],
+        ]);
+        $search = trim((string) ($data['search'] ?? ''));
+        $status = $data['status'] ?? 'all';
+
         // Merchants are operational accounts, not merely tenant records.  A
         // tenant can legitimately have more than one merchant operator, so
         // the dashboard must list and manage the actual accounts directly.
-        $users = User::query()
+        $base = User::query()->where('role', 'merchant');
+        $filters = $this->statusFilters($base);
+
+        $query = clone $base;
+        $this->applyRosterSearch($query, $search);
+        if ($status !== 'all') {
+            $query->where('status', $status);
+        }
+
+        $paginator = $query
             ->with([
                 'tenant.plan',
                 'wallet',
@@ -51,16 +74,23 @@ class AdminUserController extends Controller
                 'merchantVerifiedBy:id,name',
                 'documents' => fn ($query) => $query->latest('id'),
             ])
-            ->where('role', 'merchant')
             ->orderBy('name')
-            ->get();
+            ->paginate(self::ROSTER_PER_PAGE)
+            ->withQueryString();
 
-        $rows = $users->map(fn (User $user) => $this->merchantRow($user));
+        $users = $paginator->getCollection();
+        $statsByUser = $this->merchantStatsByUser($users);
+        $rows = $users->map(fn (User $user) => $this->merchantRow($user, $statsByUser[$user->id]));
 
         return Inertia::render('Admin/Roster', [
             'role' => 'merchant',
             'rows' => $rows->values(),
-            'filters' => $this->statusFilters($rows),
+            'filters' => $filters,
+            'query' => [
+                'search' => $search,
+                'status' => $status,
+            ],
+            'pagination' => $this->paginationMeta($paginator),
         ]);
     }
 
@@ -68,10 +98,27 @@ class AdminUserController extends Controller
     {
         $data = $request->validate([
             'role' => ['nullable', Rule::in(array_merge(['all'], User::COURIER_ROLES))],
+            'search' => ['nullable', 'string', 'max:120'],
+            'status' => ['nullable', Rule::in(['all', 'active', 'pending', 'suspended'])],
         ]);
         $role = $data['role'] ?? 'all';
+        $search = trim((string) ($data['search'] ?? ''));
+        $status = $data['status'] ?? 'all';
 
-        $base = User::query()
+        $base = User::query()->whereIn('role', User::COURIER_ROLES);
+        $query = clone $base;
+
+        if ($role !== 'all') {
+            $query->where('role', $role);
+        }
+
+        $filters = $this->statusFilters($query);
+        $this->applyRosterSearch($query, $search);
+        if ($status !== 'all') {
+            $query->where('status', $status);
+        }
+
+        $paginator = $query
             ->with([
                 'tenant.plan',
                 'wallet',
@@ -79,25 +126,15 @@ class AdminUserController extends Controller
                 'provinces',
                 'documents' => fn ($query) => $query->latest('id'),
             ])
-            ->whereIn('role', User::COURIER_ROLES);
-        $query = clone $base;
-
-        if ($role !== 'all') {
-            $query->where('role', $role);
-        }
-
-        $users = $query
             ->orderBy('role')
             ->orderBy('name')
-            ->get();
+            ->paginate(self::ROSTER_PER_PAGE)
+            ->withQueryString();
 
+        $users = $paginator->getCollection();
         $statsByUser = $this->courierStatsByUser($users);
         $rows = $users->map(fn (User $user) => $this->courierRow($user, $statsByUser[$user->id]));
-        $filters = $this->statusFilters($rows);
-        $roleFilters = ['all' => (clone $base)->count()];
-        foreach (User::COURIER_ROLES as $courierRole) {
-            $roleFilters[$courierRole] = (clone $base)->where('role', $courierRole)->count();
-        }
+        $roleFilters = $this->courierRoleFilters($base);
 
         return Inertia::render('Admin/Roster', [
             'role' => 'courier',
@@ -105,20 +142,92 @@ class AdminUserController extends Controller
             'filters' => $filters,
             'roleFilters' => $roleFilters,
             'selectedRole' => $role,
+            'query' => [
+                'search' => $search,
+                'status' => $status,
+            ],
+            'pagination' => $this->paginationMeta($paginator),
         ]);
     }
 
     /**
-     * @param \Illuminate\Support\Collection<int, array<string, mixed>> $rows
      * @return array<string, int>
      */
-    private function statusFilters($rows): array
+    private function statusFilters($query): array
+    {
+        $counts = (clone $query)
+            ->selectRaw('status, COUNT(*) as total')
+            ->groupBy('status')
+            ->pluck('total', 'status');
+
+        return [
+            'all' => (int) $counts->sum(),
+            'active' => (int) ($counts['active'] ?? 0),
+            'pending' => (int) ($counts['pending'] ?? 0),
+            'suspended' => (int) ($counts['suspended'] ?? 0),
+        ];
+    }
+
+    /**
+     * Perform the four courier-role counters in one grouped query. The
+     * previous implementation ran one count query per button.
+     *
+     * @return array<string, int>
+     */
+    private function courierRoleFilters($query): array
+    {
+        $counts = (clone $query)
+            ->selectRaw('role, COUNT(*) as total')
+            ->groupBy('role')
+            ->pluck('total', 'role');
+
+        $filters = ['all' => (int) $counts->sum()];
+        foreach (User::COURIER_ROLES as $role) {
+            $filters[$role] = (int) ($counts[$role] ?? 0);
+        }
+
+        return $filters;
+    }
+
+    /**
+     * Search on the server so operators can find an account that is not on
+     * the current page. Identity numbers stay intentionally out of this
+     * query because that field is encrypted at rest.
+     */
+    private function applyRosterSearch($query, string $search): void
+    {
+        if ($search === '') {
+            return;
+        }
+
+        $like = '%'.$search.'%';
+        $query->where(function ($users) use ($like): void {
+            $users
+                ->where('name', 'like', $like)
+                ->orWhere('phone', 'like', $like)
+                ->orWhere('username', 'like', $like)
+                ->orWhere('email', 'like', $like)
+                ->orWhere('shop_name', 'like', $like)
+                ->orWhere('address', 'like', $like)
+                ->orWhereHas('provinces', function ($provinces) use ($like): void {
+                    $provinces
+                        ->where('name_ar', 'like', $like)
+                        ->orWhere('name_en', 'like', $like)
+                        ->orWhere('name_ku', 'like', $like);
+                });
+        });
+    }
+
+    /** @return array{currentPage:int,lastPage:int,perPage:int,from:int|null,to:int|null,total:int} */
+    private function paginationMeta($paginator): array
     {
         return [
-            'all' => $rows->count(),
-            'active' => $rows->where('status', 'active')->count(),
-            'pending' => $rows->where('status', 'pending')->count(),
-            'suspended' => $rows->where('status', 'suspended')->count(),
+            'currentPage' => $paginator->currentPage(),
+            'lastPage' => $paginator->lastPage(),
+            'perPage' => $paginator->perPage(),
+            'from' => $paginator->firstItem(),
+            'to' => $paginator->lastItem(),
+            'total' => $paginator->total(),
         ];
     }
 
@@ -178,24 +287,63 @@ class AdminUserController extends Controller
         return $stats;
     }
 
-    protected function merchantStats(User $merchant): array
+    /**
+     * Build merchant order totals for the rendered page in two grouped
+     * queries, not four queries per merchant. An order that contains the
+     * same merchant in both modern `merchant_id` and historic `created_by`
+     * fields is counted once, just like the old OR query.
+     *
+     * @param \Illuminate\Support\Collection<int, User> $users
+     * @return array<int, array{orders:int,delivered:int,returned:int,collected:int}>
+     */
+    private function merchantStatsByUser($users): array
     {
-        // New orders keep a direct merchant id.  The `created_by` fallback
-        // keeps historic records visible without making another merchant's
-        // data appear in this account review screen.
-        $orders = Order::withoutGlobalScope(TenantScope::class)
-            ->where(function ($query) use ($merchant): void {
-                $query
-                    ->where('merchant_id', $merchant->id)
-                    ->orWhere('created_by', $merchant->id);
-            });
-
-        return [
-            'orders' => (clone $orders)->count(),
-            'delivered' => (clone $orders)->where('status', 'delivered')->count(),
-            'returned' => (clone $orders)->where('status', 'returned')->count(),
-            'collected' => (clone $orders)->where('status', 'delivered')->sum('price'),
+        $empty = [
+            'orders' => 0,
+            'delivered' => 0,
+            'returned' => 0,
+            'collected' => 0,
         ];
+        $stats = $users->mapWithKeys(fn (User $user) => [$user->id => $empty])->all();
+        $ids = $users->pluck('id')->all();
+
+        if ($ids === []) {
+            return $stats;
+        }
+
+        foreach ([['merchant_id', false], ['created_by', true]] as [$column, $historicFallback]) {
+            $orders = Order::withoutGlobalScope(TenantScope::class)
+                ->whereIn($column, $ids);
+
+            if ($historicFallback) {
+                $orders->where(function ($query): void {
+                    $query
+                        ->whereNull('merchant_id')
+                        ->orWhereColumn('merchant_id', '!=', 'created_by');
+                });
+            }
+
+            $totals = $orders
+                ->selectRaw("{$column} as user_id")
+                ->selectRaw('COUNT(*) as orders')
+                ->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as delivered', ['delivered'])
+                ->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as returned', ['returned'])
+                ->selectRaw('COALESCE(SUM(CASE WHEN status = ? THEN price ELSE 0 END), 0) as collected', ['delivered'])
+                ->groupBy($column)
+                ->get();
+
+            foreach ($totals as $total) {
+                $id = (int) $total->user_id;
+                $stats[$id] = [
+                    'orders' => ($stats[$id]['orders'] ?? 0) + (int) $total->orders,
+                    'delivered' => ($stats[$id]['delivered'] ?? 0) + (int) $total->delivered,
+                    'returned' => ($stats[$id]['returned'] ?? 0) + (int) $total->returned,
+                    'collected' => ($stats[$id]['collected'] ?? 0) + (int) $total->collected,
+                ];
+            }
+        }
+
+        return $stats;
     }
 
     /**
@@ -435,7 +583,8 @@ class AdminUserController extends Controller
         ];
     }
 
-    private function merchantRow(User $user): array
+    /** @param array{orders:int,delivered:int,returned:int,collected:int} $stats */
+    private function merchantRow(User $user, array $stats): array
     {
         $documents = $this->documentsFor($user);
         $documentReview = $this->merchantDocumentReview($documents);
@@ -487,7 +636,7 @@ class AdminUserController extends Controller
                 'status' => $document->status,
                 'url' => route('admin.users.documents.show', [$user->id, $document->id]),
             ])->values(),
-            ...$this->merchantStats($user),
+            ...$stats,
         ];
     }
 

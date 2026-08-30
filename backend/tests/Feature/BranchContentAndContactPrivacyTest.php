@@ -135,7 +135,7 @@ class BranchContentAndContactPrivacyTest extends TestCase
             ->assertJsonPath('data.phone2', '07870008888')
             ->assertJsonPath('data.phone_revealed', true);
 
-        $pwaBeforePickup = $this->actingAs($courier)->get('/app/orders')->assertOk();
+        $pwaBeforePickup = $this->actingAs($courier)->get('/app/orders?list=1')->assertOk();
         $pwaOrderBeforePickup = collect($pwaBeforePickup->inertiaProps('orders'))->firstWhere('id', $order->id);
         $this->assertSame('07870009999', data_get($pwaOrderBeforePickup, 'phone'));
         $this->assertTrue((bool) data_get($pwaOrderBeforePickup, 'phone_revealed'));
@@ -148,7 +148,7 @@ class BranchContentAndContactPrivacyTest extends TestCase
             ->assertJsonPath('data.phone2', '07870008888')
             ->assertJsonPath('data.phone_revealed', true);
 
-        $pwaAfterPickup = $this->actingAs($courier)->get('/app/orders')->assertOk();
+        $pwaAfterPickup = $this->actingAs($courier)->get('/app/orders?list=1')->assertOk();
         $pwaOrderAfterPickup = collect($pwaAfterPickup->inertiaProps('orders'))->firstWhere('id', $order->id);
         $this->assertSame('07870009999', data_get($pwaOrderAfterPickup, 'phone'));
         $this->assertTrue((bool) data_get($pwaOrderAfterPickup, 'phone_revealed'));

@@ -75,6 +75,10 @@ class AuthController extends Controller
         Auth::login($user, true);
 
         $request->session()->regenerate();
+        // The login page may have used a different locale from the account.
+        // Refresh the compact Inertia translation payload on the first page
+        // after authentication, then return to normal lightweight navigation.
+        $request->session()->put('inertia.translations.refresh', true);
         // A mobile account belongs to the governorate selected at
         // registration. Login never asks the person to select it again.
         if ($user->branch_id) {
@@ -121,6 +125,7 @@ class AuthController extends Controller
 
         Auth::login($user, true);
         $request->session()->regenerate();
+        $request->session()->put('inertia.translations.refresh', true);
 
         // A restricted platform operator must start at an allowed module,
         // not at the aggregate /dashboard response. Do not honour an old
@@ -326,6 +331,7 @@ class AuthController extends Controller
         $request->session()->forget(self::OTP_SESSION_KEY);
         Auth::login($user, true);
         $request->session()->regenerate();
+        $request->session()->put('inertia.translations.refresh', true);
         if ($user->branch_id) {
             $request->session()->put('operating_branch_id', (int) $user->branch_id);
             $request->session()->put('operating_province_id', (int) $user->provinces()->value('provinces.id'));

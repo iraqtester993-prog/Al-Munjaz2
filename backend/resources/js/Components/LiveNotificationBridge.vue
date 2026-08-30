@@ -7,7 +7,17 @@ const page = usePage()
 const notifications = ref([])
 const latestId = ref(0)
 const initialized = ref(false)
-let pollTimer
+const NOTIFICATION_POLL_INTERVAL = 20_000
+const RECENT_NOTIFICATION_INTERVAL = 8_000
+const RETRY_MAX_INTERVAL = 60_000
+const RECENT_ACTIVITY_WINDOW = 45_000
+
+let pollTimer = null
+let polling = false
+let disposed = false
+let resumeAfterPoll = false
+let failureCount = 0
+let recentNotificationsUntil = 0
 let toneUnlocked = false
 
 function userCanReceive() {
@@ -55,9 +65,59 @@ function showIncoming(notification) {
     window.setTimeout(() => dismiss(notification.id), 7000)
 }
 
-async function poll() {
-    if (!userCanReceive()) return
+function isForeground() {
+    return document.visibilityState === 'visible'
+        && (typeof document.hasFocus !== 'function' || document.hasFocus())
+}
 
+function clearPollTimer() {
+    if (!pollTimer) return
+    window.clearTimeout(pollTimer)
+    pollTimer = null
+}
+
+function nextPollDelay() {
+    if (failureCount > 0) {
+        return Math.min(NOTIFICATION_POLL_INTERVAL * (2 ** Math.min(failureCount, 2)), RETRY_MAX_INTERVAL)
+    }
+
+    return Date.now() < recentNotificationsUntil
+        ? RECENT_NOTIFICATION_INTERVAL
+        : NOTIFICATION_POLL_INTERVAL
+}
+
+function schedulePoll(delay = nextPollDelay()) {
+    clearPollTimer()
+    if (disposed || !userCanReceive() || !isForeground()) return
+
+    pollTimer = window.setTimeout(() => {
+        pollTimer = null
+        poll()
+    }, delay)
+}
+
+function requestPoll() {
+    if (disposed || !userCanReceive() || !isForeground()) {
+        clearPollTimer()
+        return
+    }
+
+    if (polling) {
+        resumeAfterPoll = true
+        return
+    }
+
+    poll()
+}
+
+async function poll() {
+    if (disposed || !userCanReceive() || !isForeground()) return
+    if (polling) {
+        resumeAfterPoll = true
+        return
+    }
+
+    polling = true
     try {
         const response = await window.axios.get(route('app.notifications.feed'), {
             params: { after: latestId.value },
@@ -65,10 +125,21 @@ async function poll() {
         const payload = response.data || {}
         const incoming = Array.isArray(payload.notifications) ? payload.notifications : []
 
+        failureCount = 0
+
         if (!initialized.value) {
             latestId.value = Number(payload.latest_id || latestId.value || 0)
             initialized.value = true
+            // Keep the notification badge correct on the first, silent sync.
+            // Existing inbox entries are not replayed as disruptive toasts.
+            window.dispatchEvent(new CustomEvent('almunjaz:notification-count', {
+                detail: { unread: Number(payload.unread || 0) },
+            }))
             return
+        }
+
+        if (incoming.length) {
+            recentNotificationsUntil = Date.now() + RECENT_ACTIVITY_WINDOW
         }
 
         for (const notification of incoming) {
@@ -81,31 +152,56 @@ async function poll() {
         }))
     } catch (_) {
         // A transient request error should not interrupt the active app.
+        failureCount = Math.min(failureCount + 1, 3)
+    } finally {
+        polling = false
+        if (disposed || !userCanReceive() || !isForeground()) return
+
+        const shouldResumeImmediately = resumeAfterPoll
+        resumeAfterPoll = false
+        schedulePoll(shouldResumeImmediately ? 0 : nextPollDelay())
     }
 }
 
-function refreshOnVisible() {
-    if (document.visibilityState === 'visible') poll()
+function handleVisibilityChange() {
+    if (!isForeground()) {
+        clearPollTimer()
+        return
+    }
+
+    requestPoll()
+}
+
+function handleWindowBlur() {
+    clearPollTimer()
+}
+
+function handleWindowFocus() {
+    requestPoll()
 }
 
 onMounted(() => {
     if (!userCanReceive()) return
 
+    disposed = false
     window.addEventListener('pointerdown', unlockTone, true)
     window.addEventListener('keydown', unlockTone, true)
-    document.addEventListener('visibilitychange', refreshOnVisible)
-    poll()
-    // The feed is incremental (`after`), therefore a short visible-session
-    // interval has a small payload and feels immediate without pretending a
-    // shared-host deployment has a permanent websocket process.
-    pollTimer = window.setInterval(poll, 5000)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('blur', handleWindowBlur)
+    window.addEventListener('focus', handleWindowFocus)
+    // The feed is incremental (`after`). Keep it responsive while the app is
+    // open, but avoid a permanent five-second request loop on shared hosting.
+    requestPoll()
 })
 
 onBeforeUnmount(() => {
-    window.clearInterval(pollTimer)
+    disposed = true
+    clearPollTimer()
     window.removeEventListener('pointerdown', unlockTone, true)
     window.removeEventListener('keydown', unlockTone, true)
-    document.removeEventListener('visibilitychange', refreshOnVisible)
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    window.removeEventListener('blur', handleWindowBlur)
+    window.removeEventListener('focus', handleWindowFocus)
 })
 </script>
 

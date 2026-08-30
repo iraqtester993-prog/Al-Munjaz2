@@ -11,6 +11,9 @@ use Inertia\Inertia;
 
 class AppReportController extends Controller
 {
+    /** @var array<int, string> */
+    private const ARCHIVE_STATUSES = ['delivered', 'returned'];
+
     /**
      * The merchant archive is deliberately calculated from the same scoped
      * order data that powers the dashboard.  It is not a client-side copy of
@@ -21,14 +24,20 @@ class AppReportController extends Controller
     {
         abort_unless($request->user()->role === 'merchant', 403);
 
+        $archiveStatuses = self::ARCHIVE_STATUSES;
         $data = $request->validate([
             'period' => ['nullable', Rule::in(['all', 'today'])],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', 'after_or_equal:from'],
             // The archive is intentionally not a second live-order list. It
             // contains only completed deliveries and completed returns.
-            'status' => ['nullable', Rule::in(['all', 'delivered', 'returned'])],
+            'status' => ['nullable', Rule::in(['all', ...$archiveStatuses])],
             'province_id' => ['nullable', 'integer', 'exists:provinces,id'],
+            // Detail rows are loaded only after the merchant opens one of
+            // the status cards. Keeping this separate from the report filter
+            // lets the overview remain an inexpensive aggregate query.
+            'detail_status' => ['nullable', Rule::in($archiveStatuses)],
+            'detail_cursor' => ['nullable', 'string', 'max:512'],
         ]);
 
         $period = $data['period'] ?? 'all';
@@ -39,10 +48,7 @@ class AppReportController extends Controller
             'province_id' => isset($data['province_id']) ? (int) $data['province_id'] : null,
         ];
         $query = Order::query()
-            ->with('province')
-            ->whereIn('status', ['delivered', 'returned'])
-            ->latest('date')
-            ->latest('id');
+            ->whereIn('status', $archiveStatuses);
 
         if ($period === 'today') {
             $query->whereDate('date', today());
@@ -60,49 +66,88 @@ class AppReportController extends Controller
             $query->where('province_id', $filters['province_id']);
         }
 
-        $orders = $query->get();
+        // The archive may contain years of completed work. Calculate its
+        // cards and totals in SQL instead of hydrating every historic order
+        // just to count it again in PHP.
+        $totals = (clone $query)
+            ->selectRaw('COUNT(*) as orders_count')
+            ->selectRaw('COALESCE(SUM(price), 0) as orders_value')
+            ->selectRaw("SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered_count")
+            ->selectRaw("COALESCE(SUM(CASE WHEN status = 'delivered' THEN price ELSE 0 END), 0) as delivered_value")
+            ->selectRaw("SUM(CASE WHEN status = 'returned' THEN 1 ELSE 0 END) as returned_count")
+            ->selectRaw("COALESCE(SUM(CASE WHEN status = 'returned' THEN price ELSE 0 END), 0) as returned_value")
+            ->first();
 
-        $archiveStatuses = ['delivered', 'returned'];
-        $statusCounts = collect($archiveStatuses)
-            ->mapWithKeys(fn (string $status) => [$status => $orders->where('status', $status)->count()])
-            ->all();
-        $statusValues = collect($archiveStatuses)
-            ->mapWithKeys(fn (string $status) => [$status => (int) $orders->where('status', $status)->sum('price')])
-            ->all();
-        $provinceIds = $orders->pluck('province_id')->filter()->unique()->values();
-        $provinceOptions = Province::query()
+        $provinceRows = (clone $query)
+            ->select('province_id')
+            ->selectRaw('COUNT(*) as orders')
+            ->selectRaw('COALESCE(SUM(price), 0) as amount')
+            ->groupBy('province_id')
+            ->orderByDesc('orders')
+            ->orderBy('province_id')
+            ->get();
+
+        $provinceIds = $provinceRows->pluck('province_id')->filter()->map(fn ($id) => (int) $id)->unique()->values();
+        $provinceById = Province::query()
             ->whereIn('id', $provinceIds)
             ->orderBy('sort_order')
             ->orderBy('name_ar')
             ->get(['id', 'name_ar', 'name_en', 'name_ku'])
-            ->values();
-        $provinceDistribution = $orders
-            ->groupBy('province_id')
-            ->map(function ($provinceOrders, $provinceId) use ($provinceOptions) {
-                $province = $provinceOptions->firstWhere('id', (int) $provinceId);
+            ->keyBy('id');
+        $provinceOptions = $provinceById->values();
+        $provinceDistribution = $provinceRows
+            ->map(function ($row) use ($provinceById) {
+                $province = $provinceById->get((int) $row->province_id);
 
                 return [
                     'id' => $province?->id,
                     'name_ar' => $province?->name_ar,
                     'name_en' => $province?->name_en,
                     'name_ku' => $province?->name_ku,
-                    'orders' => $provinceOrders->count(),
-                    'amount' => (int) $provinceOrders->sum('price'),
+                    'orders' => (int) $row->orders,
+                    'amount' => (int) $row->amount,
                 ];
             })
-            ->sortByDesc('orders')
             ->values();
 
         $summary = [
-            'orders_count' => $orders->count(),
-            'orders_value' => (int) $orders->sum('price'),
-            'delivered_count' => $orders->where('status', 'delivered')->count(),
-            'delivered_value' => (int) $orders->where('status', 'delivered')->sum('price'),
-            'returned_count' => $orders->where('status', 'returned')->count(),
-            'returned_value' => (int) $orders->where('status', 'returned')->sum('price'),
-            'status_counts' => $statusCounts,
-            'status_values' => $statusValues,
+            'orders_count' => (int) $totals->orders_count,
+            'orders_value' => (int) $totals->orders_value,
+            'delivered_count' => (int) $totals->delivered_count,
+            'delivered_value' => (int) $totals->delivered_value,
+            'returned_count' => (int) $totals->returned_count,
+            'returned_value' => (int) $totals->returned_value,
+            'status_counts' => [
+                'delivered' => (int) $totals->delivered_count,
+                'returned' => (int) $totals->returned_count,
+            ],
+            'status_values' => [
+                'delivered' => (int) $totals->delivered_value,
+                'returned' => (int) $totals->returned_value,
+            ],
         ];
+
+        $detailStatus = $data['detail_status'] ?? null;
+        $detailOrders = collect();
+        $orderPagination = [
+            'has_more' => false,
+            'next_cursor' => null,
+        ];
+
+        if ($detailStatus) {
+            $detailPage = (clone $query)
+                ->where('status', $detailStatus)
+                ->with('province:id,name_ar,name_en,name_ku')
+                ->latest('date')
+                ->latest('id')
+                ->cursorPaginate(25, ['id', 'track_no', 'customer_name_ar', 'customer_name_en', 'price', 'status', 'date', 'province_id'], 'detail_cursor');
+
+            $detailOrders = $detailPage->getCollection();
+            $orderPagination = [
+                'has_more' => $detailPage->hasMorePages(),
+                'next_cursor' => $detailPage->nextCursor()?->encode(),
+            ];
+        }
 
         return Inertia::render('Mobile/Reports', [
             'period' => $period,
@@ -111,13 +156,13 @@ class AppReportController extends Controller
             'statusOptions' => $archiveStatuses,
             'provinceOptions' => $provinceOptions,
             'provinceDistribution' => $provinceDistribution,
-            'orders' => $orders->map(fn (Order $order) => [
+            'detailStatus' => $detailStatus,
+            'orderPagination' => $orderPagination,
+            'orders' => $detailOrders->map(fn (Order $order) => [
                 'id' => $order->id,
                 'track_no' => $order->track_no,
                 'customer_name_ar' => $order->customer_name_ar,
                 'customer_name_en' => $order->customer_name_en,
-                'address_ar' => $order->address_ar,
-                'address_en' => $order->address_en,
                 'price' => $order->price,
                 'status' => $order->status,
                 'date' => $order->date->toDateString(),

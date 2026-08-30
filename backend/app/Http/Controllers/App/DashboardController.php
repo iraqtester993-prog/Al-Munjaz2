@@ -7,7 +7,6 @@ use App\Models\MobileSlide;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\CourierOrderAccess;
-use App\Services\FinanceRequestService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -45,9 +44,29 @@ class DashboardController extends Controller
     protected function statsFor(User $user, bool $isCourier): array
     {
         if ($isCourier) {
-            $today = today();
+            $today = today()->toDateString();
             $mine = app(CourierOrderAccess::class)->assigned($user);
-            $todayDelivered = (clone $mine)->where('status', 'delivered')->whereDate('date', $today)->get();
+            // Keep the home screen to one aggregate query.  Loading every
+            // delivered order just to total price minus fee becomes very
+            // expensive for an active courier as their history grows.
+            $assignedStats = (clone $mine)
+                ->selectRaw('COUNT(*) as total')
+                ->selectRaw(
+                    'COALESCE(SUM(CASE WHEN status = ? AND date = ? THEN CASE WHEN COALESCE(price, 0) > COALESCE(fee, 0) THEN COALESCE(price, 0) - COALESCE(fee, 0) ELSE 0 END ELSE 0 END), 0) as collected_today',
+                    ['delivered', $today],
+                )
+                ->selectRaw(
+                    'COALESCE(SUM(CASE WHEN status = ? AND date = ? THEN 1 ELSE 0 END), 0) as delivered_today',
+                    ['delivered', $today],
+                )
+                ->selectRaw(
+                    'COALESCE(SUM(CASE WHEN status IN (?, ?) THEN 1 ELSE 0 END), 0) as with_me',
+                    ['approved', 'courier'],
+                )
+                ->selectRaw('COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as delivered', ['delivered'])
+                ->selectRaw('COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as returned', ['returned'])
+                ->toBase()
+                ->first();
             $wallet = $user->wallet;
 
             return [
@@ -55,28 +74,40 @@ class DashboardController extends Controller
                 // platform fee. The Qi wallet itself is debited at delivery
                 // by the workflow service, while this figure reflects cash
                 // the courier actually retains from completed jobs.
-                'collectedToday' => $todayDelivered->sum(
-                    fn (Order $order): int => FinanceRequestService::netCollectionForOrder($order)
-                ),
-                'deliveredToday' => $todayDelivered->count(),
+                'collectedToday' => (int) ($assignedStats->collected_today ?? 0),
+                'deliveredToday' => (int) ($assignedStats->delivered_today ?? 0),
                 'onDuty' => (bool) $user->is_online,
                 'available' => app(CourierOrderAccess::class)->available($user)->count(),
-                'withMe' => (clone $mine)->whereIn('status', ['approved', 'courier'])->count(),
-                'delivered' => (clone $mine)->where('status', 'delivered')->count(),
-                'returned' => (clone $mine)->where('status', 'returned')->count(),
+                'withMe' => (int) ($assignedStats->with_me ?? 0),
+                'delivered' => (int) ($assignedStats->delivered ?? 0),
+                'returned' => (int) ($assignedStats->returned ?? 0),
                 'walletBalance' => $wallet?->balance ?? 0,
                 'budget' => $wallet?->budget ?? 0,
             ];
         }
 
+        // Merchant status figures are displayed together, so calculate them
+        // together instead of issuing one full count query per card.
+        $today = today()->toDateString();
+        $merchantStats = Order::query()
+            ->selectRaw('COUNT(*) as total')
+            ->selectRaw('COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as pending', ['pending'])
+            ->selectRaw('COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as approved', ['approved'])
+            ->selectRaw('COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as courier', ['courier'])
+            ->selectRaw('COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as delivered', ['delivered'])
+            ->selectRaw('COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as returned', ['returned'])
+            ->selectRaw('COALESCE(SUM(CASE WHEN date = ? THEN 1 ELSE 0 END), 0) as today', [$today])
+            ->toBase()
+            ->first();
+
         return [
-            'total' => Order::query()->count(),
-            'pending' => Order::query()->where('status', 'pending')->count(),
-            'approved' => Order::query()->where('status', 'approved')->count(),
-            'courier' => Order::query()->where('status', 'courier')->count(),
-            'delivered' => Order::query()->where('status', 'delivered')->count(),
-            'returned' => Order::query()->where('status', 'returned')->count(),
-            'today' => Order::query()->whereDate('date', today())->count(),
+            'total' => (int) ($merchantStats->total ?? 0),
+            'pending' => (int) ($merchantStats->pending ?? 0),
+            'approved' => (int) ($merchantStats->approved ?? 0),
+            'courier' => (int) ($merchantStats->courier ?? 0),
+            'delivered' => (int) ($merchantStats->delivered ?? 0),
+            'returned' => (int) ($merchantStats->returned ?? 0),
+            'today' => (int) ($merchantStats->today ?? 0),
             // Per-user wallet is the canonical merchant balance.  The old
             // tenant column is retained only for backwards-compatible data
             // exports and must never override an approved payout balance.

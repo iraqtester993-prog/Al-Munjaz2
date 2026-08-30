@@ -123,6 +123,8 @@ class AppProfileController extends Controller
         $request->validate(['locale' => ['required', 'in:ar,en,ku']]);
 
         $request->user()->update(['locale' => $request->input('locale')]);
+        $request->session()->put('locale', $request->input('locale'));
+        $request->session()->flash('inertia.translations.refresh', true);
 
         return back();
     }

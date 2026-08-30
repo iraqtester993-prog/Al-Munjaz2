@@ -103,10 +103,19 @@ class AdminOrderSearchTest extends TestCase
                 ->where('orders.data.0.id', $delivery->id)
                 ->where('orders.data.1.id', $pickup->id)
                 ->where('orders.data.2.id', $direct->id)
-                ->where('courierFilters', fn ($couriers) => collect($couriers)->contains(
-                    fn (array $courier) => $courier['id'] === $suspendedCourier->id
-                        && $courier['status'] === 'suspended'
-                )));
+                // The large courier directory is intentionally not sent with
+                // every orders page; it loads only when the selector opens.
+                ->missing('courierFilters'));
+
+        $directory = $this->actingAs($admin)
+            ->getJson('/dashboard/orders?directory=courier_filters')
+            ->assertOk()
+            ->json('courierFilters');
+
+        $this->assertTrue(collect($directory)->contains(
+            fn (array $courier) => $courier['id'] === $suspendedCourier->id
+                && $courier['status'] === 'suspended'
+        ));
 
         // The platform-wide operations route remains an admin-only boundary;
         // branch users must use their separately scoped branch portal.

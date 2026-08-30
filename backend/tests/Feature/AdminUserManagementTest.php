@@ -81,6 +81,43 @@ class AdminUserManagementTest extends TestCase
         )));
     }
 
+    public function test_rosters_paginate_and_search_accounts_on_the_server(): void
+    {
+        $admin = User::where('role', 'admin')->firstOrFail();
+        $merchant = User::where('role', 'merchant')->firstOrFail();
+
+        foreach (range(1, 27) as $index) {
+            User::create([
+                'tenant_id' => $merchant->tenant_id,
+                'name' => "Merchant page {$index}",
+                'username' => "merchant-page-{$index}",
+                'phone' => sprintf('071%08d', $index),
+                'password' => 'Password123!',
+                'role' => 'merchant',
+                'status' => $index === 27 ? 'pending' : 'active',
+            ]);
+        }
+
+        $this->actingAs($admin)
+            ->get('/dashboard/merchants?page=2')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Admin/Roster')
+                ->has('rows', 4)
+                ->where('pagination.currentPage', 2)
+                ->where('pagination.lastPage', 2)
+                ->where('pagination.total', 28));
+
+        $this->actingAs($admin)
+            ->get('/dashboard/merchants?search=merchant-page-27')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Admin/Roster')
+                ->where('query.search', 'merchant-page-27')
+                ->has('rows', 1)
+                ->where('rows.0.user.username', 'merchant-page-27'));
+    }
+
     public function test_admin_can_correct_operational_account_data_without_changing_its_role(): void
     {
         $admin = User::where('role', 'admin')->firstOrFail();

@@ -323,7 +323,7 @@ class SmokeTest extends TestCase
             ->assertInertia(fn (Assert $p) => $p->component('Admin/Settings'));
     }
 
-    public function test_admin_orders_expose_a_complete_operational_detail_payload(): void
+    public function test_admin_orders_load_the_complete_operational_payload_only_for_the_opened_detail(): void
     {
         $admin = User::where('role', 'admin')->firstOrFail();
         $merchant = User::where('username', 'تاجر')->firstOrFail();
@@ -376,22 +376,37 @@ class SmokeTest extends TestCase
             'occurred_at' => now()->addMinute(),
         ]);
 
+        // The dashboard table is intentionally a small summary. It should not
+        // serialize a history graph for every row before an operator opens it.
         $this->actingAs($admin)->get('/dashboard/orders')
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Admin/Orders')
                 ->where('orders.data.0.track_no', $order->track_no)
                 ->where('orders.data.0.customer.name', 'عميل تفصيلي')
-                ->where('orders.data.0.customer.phone2', '07710009991')
                 ->where('orders.data.0.merchant.id', $merchant->id)
                 ->where('orders.data.0.financial.order_value', 45000)
                 ->where('orders.data.0.financial.delivery_fee', 3000)
-                ->where('orders.data.0.financial.net_to_merchant', 42000)
                 ->where('orders.data.0.origin_branch.id', $branch->id)
                 ->where('orders.data.0.destination_branch.id', $branch->id)
-                ->where('orders.data.0.timeline.0.kind', 'movement')
-                ->where('orders.data.0.timeline.0.stage', 'at_origin_branch')
-                ->has('orders.data.0.timeline', 3));
+                ->missing('orders.data.0.customer.phone2')
+                ->missing('orders.data.0.timeline'));
+
+        // Opening one detail sheet uses the same protected endpoint and
+        // returns the complete audit data for that one authorised order.
+        $this->actingAs($admin)->getJson("/dashboard/orders?detail={$order->id}")
+            ->assertOk()
+            ->assertJsonPath('order.track_no', $order->track_no)
+            ->assertJsonPath('order.customer.phone2', '07710009991')
+            ->assertJsonPath('order.merchant.id', $merchant->id)
+            ->assertJsonPath('order.financial.order_value', 45000)
+            ->assertJsonPath('order.financial.delivery_fee', 3000)
+            ->assertJsonPath('order.financial.net_to_merchant', 42000)
+            ->assertJsonPath('order.origin_branch.id', $branch->id)
+            ->assertJsonPath('order.destination_branch.id', $branch->id)
+            ->assertJsonPath('order.timeline.0.kind', 'movement')
+            ->assertJsonPath('order.timeline.0.stage', 'at_origin_branch')
+            ->assertJsonCount(3, 'order.timeline');
     }
 
     public function test_admin_can_save_branding_and_send_general_or_targeted_notifications(): void
@@ -521,7 +536,7 @@ class SmokeTest extends TestCase
         $this->assertDatabaseHas('orders', ['id' => $order->id, 'status' => 'courier', 'courier_id' => $courier->id]);
     }
 
-    public function test_mobile_order_payload_uses_the_real_branch_route_and_operational_history_for_each_authorized_role(): void
+    public function test_mobile_order_detail_loads_the_real_branch_route_and_operational_history_for_each_authorized_role(): void
     {
         $merchant = User::where('username', 'تاجر')->firstOrFail();
         $courier = User::where('username', 'مندوب')->firstOrFail();
@@ -605,32 +620,47 @@ class SmokeTest extends TestCase
             'occurred_at' => now()->subMinutes(10),
         ]);
 
-        $mobilePayload = fn (Assert $page) => $page
+        $mobileSummaryPayload = fn (Assert $page) => $page
             ->component('Mobile/Orders')
             ->where('orders.0.track_no', $order->track_no)
-            ->where('orders.0.workflow_stage', 'awaiting_transfer')
-            ->where('orders.0.origin_branch.id', $origin->id)
-            ->where('orders.0.origin_branch.name_en', 'Mobile Pickup Branch')
-            ->where('orders.0.destination_branch.id', $destination->id)
-            ->where('orders.0.destination_branch.name_ku', 'لقی گەیاندنی تۆڕ')
-            ->where('orders.0.timeline.0.kind', 'movement')
-            ->where('orders.0.timeline.0.stage', 'awaiting_transfer')
-            ->where('orders.0.timeline.0.from_branch.id', $origin->id)
-            ->where('orders.0.timeline.0.to_branch.id', $destination->id)
-            ->where('orders.0.timeline.0.actor.id', $admin->id)
-            ->has('orders.0.timeline', 3);
+            ->where('orders.0.status', 'approved')
+            ->missing('orders.0.timeline')
+            ->missing('orders.0.origin_branch')
+            ->missing('orders.0.merchant');
+
+        // The list remains a small card summary. The full timeline is fetched
+        // only when the user opens one authorised order sheet.
+        $this->actingAs($merchant)->get('/app/orders?filter=approved')
+            ->assertOk()
+            ->assertInertia($mobileSummaryPayload);
+
+        $this->actingAs($merchant)->getJson("/app/orders?detail={$order->id}")
+            ->assertOk()
+            ->assertJsonPath('order.track_no', $order->track_no)
+            ->assertJsonPath('order.workflow_stage', 'awaiting_transfer')
+            ->assertJsonPath('order.origin_branch.id', $origin->id)
+            ->assertJsonPath('order.origin_branch.name_en', 'Mobile Pickup Branch')
+            ->assertJsonPath('order.destination_branch.id', $destination->id)
+            ->assertJsonPath('order.destination_branch.name_ku', 'لقی گەیاندنی تۆڕ')
+            ->assertJsonPath('order.timeline.0.kind', 'movement')
+            ->assertJsonPath('order.timeline.0.stage', 'awaiting_transfer')
+            ->assertJsonPath('order.timeline.0.from_branch.id', $origin->id)
+            ->assertJsonPath('order.timeline.0.to_branch.id', $destination->id)
+            ->assertJsonPath('order.timeline.0.actor.id', $admin->id)
+            ->assertJsonCount(3, 'order.timeline');
 
         // Both parties can read only their own operational order. The courier
         // needs the same shared branch path even though it belongs to the
         // merchant tenant, while unassigned orders remain excluded elsewhere
         // by CourierOrderAccess.
-        $this->actingAs($merchant)->get('/app/orders')
+        $this->actingAs($courier)->get('/app/orders?filter=approved')
             ->assertOk()
-            ->assertInertia($mobilePayload);
+            ->assertInertia($mobileSummaryPayload);
 
-        $this->actingAs($courier)->get('/app/orders')
+        $this->actingAs($courier)->getJson("/app/orders?detail={$order->id}")
             ->assertOk()
-            ->assertInertia($mobilePayload);
+            ->assertJsonPath('order.timeline.0.kind', 'movement')
+            ->assertJsonCount(3, 'order.timeline');
     }
 
     public function test_courier_must_be_on_duty_to_claim_an_order(): void

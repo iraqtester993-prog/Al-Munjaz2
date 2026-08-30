@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AppShell from '../../Components/AppShell.vue'
@@ -13,6 +13,8 @@ const props = defineProps({
     counts: { type: Object, required: true },
     filter: { type: String, default: 'all' },
     q: { type: String, default: '' },
+    list: { type: Boolean, default: false },
+    pagination: { type: Object, default: () => ({ next_cursor: null, has_more: false }) },
     isCourier: { type: Boolean, default: false },
     wallet: { type: Object, default: () => ({ balance: 0, budget: 0 }) },
 })
@@ -30,15 +32,27 @@ const homeOrderId = Number(homeOrderQuery.get('open') || 0)
 
 const query = ref(props.q)
 const active = ref(props.filter)
-const merchantOverview = ref(!props.isCourier && props.filter === 'all' && !props.q)
-const courierOverview = ref(props.isCourier && props.filter === 'all' && !props.q && !showCourierOrderList)
+const merchantOverview = ref(!props.isCourier && props.filter === 'all' && !props.q && !props.list)
+const courierOverview = ref(props.isCourier && props.filter === 'all' && !props.q && !props.list && !showCourierOrderList)
+const loadedOrders = ref([...props.orders])
+const pagination = ref({ ...props.pagination })
 const selected = ref(null)
 const showForm = ref(false)
 const editing = ref(null)
 const busy = ref(null)
 const returnFlow = ref(null)
+const detailLoading = ref(false)
+const loadingMore = ref(false)
 const now = ref(Date.now())
 let ticker
+
+watch(() => props.orders, (orders) => {
+    loadedOrders.value = [...(orders || [])]
+})
+
+watch(() => props.pagination, (nextPagination) => {
+    pagination.value = { ...(nextPagination || {}) }
+})
 
 function moneyDigits(value) {
     return String(value ?? '').replace(/[^0-9]/g, '')
@@ -60,7 +74,7 @@ const filters = computed(() => {
 })
 
 const merchantStatusCards = computed(() => [
-    { key: 'all', label: t('All Orders'), tone: 'all', count: props.counts.all ?? props.orders.length ?? 0 },
+    { key: 'all', label: t('All Orders'), tone: 'all', count: props.counts.all ?? loadedOrders.value.length ?? 0 },
     { key: 'pending', label: t('Pending'), tone: 'pending', count: props.counts.pending ?? 0 },
     { key: 'approved', label: t('Approved'), tone: 'approved', count: props.counts.approved ?? 0 },
     { key: 'courier', label: t('With Courier'), tone: 'courier', count: props.counts.courier ?? 0 },
@@ -83,9 +97,9 @@ const courierStatusCards = computed(() => [
 // makes the transition immediate while the server remains the source of truth
 // for the final list.
 const visibleOrders = computed(() => {
-    if (active.value === 'all') return props.orders
+    if (active.value === 'all') return loadedOrders.value
 
-    return props.orders.filter((order) => order.status === active.value)
+    return loadedOrders.value.filter((order) => order.status === active.value)
 })
 
 function statusIcon(key) {
@@ -119,7 +133,7 @@ function changeFilter(key) {
     active.value = key
     if (props.isCourier) courierOverview.value = false
     else merchantOverview.value = false
-    router.get(route('app.orders'), { filter: key, q: query.value }, { preserveState: true, replace: true })
+    router.get(route('app.orders'), { filter: key, q: query.value, list: 1 }, { preserveState: true, replace: true })
 }
 
 function showMerchantOrders(key) {
@@ -142,11 +156,77 @@ function backToCourierOverview() {
 }
 
 function doSearch() {
-    router.get(route('app.orders'), { filter: active.value, q: query.value }, { preserveState: true, replace: true })
+    router.get(route('app.orders'), { filter: active.value, q: query.value, list: 1 }, { preserveState: true, replace: true })
 }
 
-function openOrder(o) {
-    selected.value = o
+function orderRequestUrl(parameters = {}) {
+    const url = new URL(route('app.orders'), window.location.origin)
+
+    Object.entries(parameters).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== '') url.searchParams.set(key, String(value))
+    })
+
+    return url.toString()
+}
+
+async function readOrderJson(parameters = {}) {
+    const response = await fetch(orderRequestUrl(parameters), {
+        credentials: 'same-origin',
+        headers: {
+            Accept: 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+    })
+
+    if (!response.ok) throw new Error(`Order request failed with ${response.status}`)
+
+    return response.json()
+}
+
+async function openOrder(order) {
+    if (!order?.id || detailLoading.value) return
+
+    const orderId = Number(order.id)
+    selected.value = { ...order, _detailLoading: true }
+    detailLoading.value = true
+
+    try {
+        const payload = await readOrderJson({ detail: orderId })
+        // The user may close the sheet while the request is in flight. Do not
+        // unexpectedly reopen it after that intentional close.
+        if (selected.value?.id === orderId && selected.value?._detailLoading) {
+            selected.value = payload.order
+        }
+    } catch {
+        if (selected.value?.id === orderId && selected.value?._detailLoading) {
+            selected.value = { ...order, _detailError: true }
+        }
+    } finally {
+        detailLoading.value = false
+    }
+}
+
+async function loadMoreOrders() {
+    const cursor = pagination.value?.next_cursor
+    if (!cursor || loadingMore.value) return
+
+    loadingMore.value = true
+
+    try {
+        const payload = await readOrderJson({
+            filter: active.value,
+            q: query.value,
+            list: 1,
+            cursor,
+        })
+        const loadedIds = new Set(loadedOrders.value.map((order) => Number(order.id)))
+        const nextOrders = (payload.orders || []).filter((order) => !loadedIds.has(Number(order.id)))
+
+        loadedOrders.value = [...loadedOrders.value, ...nextOrders]
+        pagination.value = { ...(payload.pagination || {}) }
+    } finally {
+        loadingMore.value = false
+    }
 }
 
 // The backend is authoritative: whenever it rejects a courier operation
@@ -430,10 +510,7 @@ function pickupText(order) {
 onMounted(() => {
     ticker = window.setInterval(() => { now.value = Date.now() }, 1000)
 
-    if (props.isCourier && homeOrderId > 0) {
-        const order = props.orders.find((row) => Number(row.id) === homeOrderId)
-        if (order) openOrder(order)
-    }
+    if (props.isCourier && homeOrderId > 0) openOrder({ id: homeOrderId })
 })
 
 onUnmounted(() => window.clearInterval(ticker))
@@ -512,6 +589,10 @@ onUnmounted(() => window.clearInterval(ticker))
                 <footer v-if="o.status === 'approved' && pickupText(o)" class="mobile-order-timer"><i></i> {{ t('Time to reach the merchant') }}: <b class="mono">{{ pickupText(o) }}</b></footer>
             </article>
         </div>
+        <button v-if="pagination.has_more" class="orders-load-more" type="button" :disabled="loadingMore" @click="loadMoreOrders">
+            <span v-if="loadingMore" class="loader"></span>
+            <span v-else>{{ t('See all') }}</span>
+        </button>
         <div v-else class="empty-hint">{{ t('No orders found') }}</div>
         </template>
 
@@ -525,6 +606,16 @@ onUnmounted(() => window.clearInterval(ticker))
 
         <SheetModal :open="!!selected" @close="selected = null">
             <template v-if="selected">
+                <section v-if="selected._detailLoading" class="order-detail-loading">
+                    <span class="loader"></span>
+                    <b>{{ t('Loading...') }}</b>
+                </section>
+                <section v-else-if="selected._detailError" class="order-detail-loading">
+                    <b>{{ t('Retry') }}</b>
+                    <button class="btn" type="button" @click="openOrder(selected)">{{ t('Retry') }}</button>
+                    <button class="btn order-detail-close" type="button" @click="selected = null">{{ t('Close') }}</button>
+                </section>
+                <template v-else>
                 <section class="order-detail-status">
                     <div class="order-detail-status-head">
                         <span class="order-detail-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8"/></svg></span>
@@ -676,6 +767,7 @@ onUnmounted(() => window.clearInterval(ticker))
 
                 <button v-if="!isCourier && selected.status === 'pending'" class="btn btn-ghost" style="width: 100%; margin-top: 10px" @click="openEdit">{{ t('Edit') }}</button>
                 <button class="btn order-detail-close" type="button" @click="selected = null">{{ t('Close') }}</button>
+                </template>
             </template>
         </SheetModal>
 
@@ -686,8 +778,10 @@ onUnmounted(() => window.clearInterval(ticker))
 <style scoped>
 .orders-overview-title{margin:3px 0 18px;color:var(--ink);font-size:19px;font-weight:900}.merchant-status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.merchant-status-card{display:grid;min-height:164px;place-items:center;align-content:center;gap:10px;padding:16px 10px;border:1.5px solid var(--border);border-radius:25px;background:var(--surface);color:var(--ink);font:inherit;text-align:center;cursor:pointer;transition:transform .15s,box-shadow .15s}.merchant-status-card:active{transform:scale(.985);box-shadow:0 3px 10px rgba(11,110,104,.08)}.merchant-status-icon{width:62px;height:62px;display:grid;place-items:center;border-radius:18px}.merchant-status-card strong{font-size:26px;font-weight:900;line-height:1}.merchant-status-card b{color:var(--ink-soft);font-size:12px;font-weight:900}.merchant-status-card.pending .merchant-status-icon{background:#FFF2C7;color:#E88400}.merchant-status-card.pending strong{color:#D97706}.merchant-status-card.approved .merchant-status-icon{background:#E0F2FE;color:#0EA5E9}.merchant-status-card.approved strong{color:#0EA5E9}.merchant-status-card.courier .merchant-status-icon{background:#DBEAFE;color:#2563EB}.merchant-status-card.courier strong{color:#2563EB}.merchant-status-card.delivered .merchant-status-icon{background:#DCFCE7;color:#16A34A}.merchant-status-card.delivered strong{color:#16A34A}.merchant-status-card.returned .merchant-status-icon{background:#FEE2E2;color:#DC2626}.merchant-status-card.returned strong{color:#DC2626}.orders-list-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}.orders-back{display:grid;place-items:center;width:36px;height:36px;border:0;border-radius:10px;background:var(--surface-2);color:var(--ink);cursor:pointer}.orders-list-head>b{flex:1;font-size:14px;font-weight:900}.orders-list-head>span{padding:3px 10px;border-radius:20px;background:var(--surface-2);color:var(--ink-soft);font-size:11px;font-weight:800}
 .mobile-order-stack{display:grid;gap:10px}.mobile-order-card{overflow:hidden;border:1.5px solid color-mix(in srgb,var(--primary) 35%,var(--border));border-radius:16px;background:linear-gradient(145deg,color-mix(in srgb,var(--primary-tint) 75%,var(--surface)),var(--surface));box-shadow:0 4px 13px rgba(11,110,104,.08);cursor:pointer}.mobile-order-head{display:flex;align-items:center;gap:10px;padding:12px 13px 8px}.mobile-order-head .order-mid{flex:1}.mobile-order-head .order-mid b{font-size:13px}.mobile-order-head :deep(.badge){flex:none}.mobile-order-summary{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 13px 10px}.mobile-order-summary strong{color:var(--primary-strong);font-size:16px;font-weight:900}.mobile-order-summary small{color:var(--ink-faint);font-family:var(--font);font-size:10px}.mobile-order-tags{display:flex;align-items:center;justify-content:flex-end;gap:5px;min-width:0;flex-wrap:wrap}.mobile-vehicle-badge,.mobile-order-type-badge{display:inline-flex;align-items:center;gap:4px;max-width:125px;padding:5px 9px;border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border));border-radius:9px;background:color-mix(in srgb,var(--primary-tint) 75%,var(--surface));color:var(--primary-strong);font-size:10px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mobile-order-type-badge{border-color:color-mix(in srgb,var(--accent) 26%,var(--border));background:color-mix(in srgb,var(--accent-tint) 70%,var(--surface));color:var(--accent)}.mobile-order-note{margin:0 13px 10px;padding:6px 8px;border-radius:8px;background:var(--surface-2);color:var(--ink-soft);font-size:10px;font-weight:700}.mobile-order-note b{color:var(--primary-strong)}.mobile-order-timer{display:flex;align-items:center;gap:5px;padding:8px 12px;border-top:1px solid var(--border);background:var(--surface-2);color:var(--success);font-size:10px;font-weight:900}.mobile-order-timer i{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 7px color-mix(in srgb,var(--success) 70%,transparent)}
+.orders-load-more{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:42px;margin-top:12px;border:1px solid color-mix(in srgb,var(--primary) 28%,var(--border));border-radius:12px;background:var(--primary-tint);color:var(--primary-strong);font:900 12px var(--font);cursor:pointer}.orders-load-more:disabled{opacity:.65;cursor:wait}
 .mobile-pickup-location-card{display:grid;gap:8px;margin:14px 0;padding:13px;border:1.5px solid color-mix(in srgb,var(--success) 42%,var(--border));border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--success-tint) 72%,var(--surface)),var(--surface))}.mobile-pickup-location-head{display:flex;align-items:center;gap:9px}.mobile-pickup-location-icon{display:grid;place-items:center;width:38px;height:38px;flex:none;border-radius:11px;background:var(--success);color:#fff}.mobile-pickup-location-head span:last-child{display:grid;gap:2px;min-width:0}.mobile-pickup-location-head small{color:var(--ink-faint);font-size:9.5px;font-weight:800}.mobile-pickup-location-head b{overflow:hidden;color:var(--ink);font-size:12px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.mobile-pickup-location-card p{margin:0;color:var(--ink-soft);font-size:10px;font-weight:700;line-height:1.55}.mobile-pickup-location-action{display:flex;align-items:center;justify-content:center;gap:6px;min-height:38px;border-radius:10px;background:var(--primary);color:#fff;font-size:10.5px;font-weight:900;text-decoration:none;box-shadow:0 4px 10px rgba(11,110,104,.16)}
 .order-detail-status{margin:-2px 0 18px;padding-bottom:15px;border-bottom:1px solid var(--border)}
+.order-detail-loading{display:grid;justify-items:center;gap:14px;min-height:180px;padding:36px 18px;color:var(--ink-soft);text-align:center}.order-detail-loading .btn{min-width:130px}.order-detail-loading .order-detail-close{margin-top:0}
 .order-detail-status-head{display:flex;align-items:center;gap:8px}.order-detail-status-head :deep(.badge){margin-inline-start:auto;flex:none}.order-detail-track{color:var(--primary-strong);font-size:16px;font-weight:900}.order-detail-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;background:var(--primary-tint);color:var(--primary-strong)}
 .order-detail-steps{position:relative;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px;margin-top:19px}.order-detail-steps::before{position:absolute;top:12px;inset-inline:10%;height:2px;background:var(--border);content:""}.order-detail-step{position:relative;z-index:1;display:grid;justify-items:center;gap:5px;min-width:0;color:var(--ink-faint);font-size:8.5px;font-weight:900;line-height:1.35;text-align:center}.order-detail-step b{overflow:hidden;max-width:100%;text-overflow:ellipsis}.order-detail-step i{display:grid;place-items:center;width:25px;height:25px;border:2px solid var(--border);border-radius:50%;background:var(--surface);font-size:10px;font-style:normal;color:var(--ink-faint)}.order-detail-step.done{color:var(--success)}.order-detail-step.done i{border-color:var(--success);background:var(--success);color:#fff}.order-detail-step.active{color:var(--ink)}.order-detail-step.active i{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint);color:var(--accent)}
 .order-detail-section{padding:3px 0 0}.order-detail-section h3{margin:0 0 10px;color:var(--ink);font-size:15px;font-weight:900}.order-detail-section .detail-row{align-items:center;padding:7px 0}.order-detail-section .detail-row>b{font-size:12px;font-weight:800;text-align:start}.delivery-vehicle-pill{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border:1px solid color-mix(in srgb,var(--primary) 25%,var(--border));border-radius:10px;background:var(--primary-tint);color:var(--primary-strong)}.detail-note-box{margin:8px 0;padding:9px 10px;border-radius:10px;background:var(--surface-2);color:var(--ink-soft);font-size:11px;font-weight:700;line-height:1.55}.detail-note-box b{color:var(--danger)}.transport-note-box b{color:var(--primary-strong)}

@@ -10,15 +10,17 @@ use App\Models\OrderMovement;
 use App\Models\OrderStatusLog;
 use App\Models\Scopes\TenantScope;
 use App\Models\Setting;
+use App\Models\Tenant;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Services\CourierLocationService;
 use App\Services\CourierOrderAccess;
 use App\Services\CourierOrderAssignmentService;
-use App\Services\CourierLocationService;
 use App\Services\OrderWorkflowService;
 use App\Services\PricingService;
 use App\Tenancy\TenantContext;
 use DateTimeInterface;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -32,13 +34,36 @@ class AppOrderController extends Controller
         $request->validate([
             'filter' => ['nullable', Rule::in(array_merge(['all'], Order::STATUSES))],
             'q' => ['nullable', 'string', 'max:120'],
+            // Cursor pagination keeps the mobile list bounded even for a
+            // merchant or courier account with a long delivery history.
+            'cursor' => ['nullable', 'string', 'max:1024'],
+            'list' => ['nullable', 'boolean'],
+            // `detail` is intentionally served by this same authenticated
+            // route as a small JSON response. This avoids a second public
+            // route while ensuring the exact same tenant/courier scope is
+            // applied before an order sheet is opened.
+            'detail' => ['nullable', 'integer', 'min:1'],
         ]);
 
-        $isCourier = $request->user()->isCourierRole();
+        $viewer = $request->user();
+        $isCourier = $viewer->isCourierRole();
 
         $baseQuery = $isCourier
-            ? app(CourierOrderAccess::class)->assigned($request->user())
+            ? app(CourierOrderAccess::class)->assigned($viewer)
             : Order::query();
+
+        if ($request->filled('detail')) {
+            abort_unless($request->expectsJson(), 406);
+
+            return response()->json([
+                'order' => $this->detailPayloadFor(
+                    (clone $baseQuery)->whereKey($request->integer('detail'))->firstOrFail(),
+                    $viewer,
+                    $isCourier,
+                ),
+            ]);
+        }
+
         $query = clone $baseQuery;
 
         $filter = $request->input('filter', 'all');
@@ -62,160 +87,74 @@ class AppOrderController extends Controller
             });
         }
 
-        $orderRecords = $query->with([
-            'courier:id,name,phone,vehicle,role',
-            'pickupCourier:id,name,phone,vehicle,role',
-            'deliveryCourier:id,name,phone,vehicle,role',
-            'merchant:id,name,phone,address,shop_name,merchant_verified_at,role',
-            'tenant:id,name',
-            // Route branches can belong to the platform operations tenant,
-            // so the relations intentionally resolve outside the viewer's
-            // tenant scope. The order itself has already passed the merchant
-            // or assigned-courier visibility query above.
-            'originBranch:id,name_ar,name_en,name_ku,city',
-            'destinationBranch:id,name_ar,name_en,name_ku,city',
-            'statusLogs' => fn ($logs) => $logs
-                ->with('user:id,name,phone,role')
-                ->latest('created_at'),
-            'movements' => fn ($movements) => $movements
-                // A courier belongs to a different tenant from the merchant
-                // order. Its auditable movement history must not disappear
-                // merely because the courier is viewing an assigned order.
-                ->withoutGlobalScope(TenantScope::class)
-                ->with('actor:id,name,phone,role')
-                ->latest('occurred_at'),
-        ])->latest('id')->get();
+        // The status overview has no list on screen, so avoid loading even a
+        // first page until the user explicitly enters a list or searches.
+        $shouldLoadSummaries = $filter !== 'all' || filled($q) || $request->boolean('list');
+        $orders = collect();
+        $pagination = [
+            'next_cursor' => null,
+            'has_more' => false,
+            'per_page' => 20,
+        ];
 
-        // Order movements retain the branch ids that were active when an
-        // event occurred. Resolve that historical route independently of the
-        // current viewer's tenant so the timeline remains truthful after a
-        // cross-network assignment.
-        $movementBranchIds = $orderRecords
-            ->flatMap(fn (Order $order) => $order->movements->flatMap(fn (OrderMovement $movement) => [
-                $movement->from_branch_id,
-                $movement->to_branch_id,
-            ]))
-            ->filter()
-            ->unique()
-            ->values();
+        if ($shouldLoadSummaries) {
+            $paginator = $query
+                ->select([
+                    'id',
+                    'track_no',
+                    'customer_name_ar',
+                    'customer_name_en',
+                    // The courier may contact the customer at every visible
+                    // operational state. This is a small scalar in a list
+                    // summary, unlike the history and relationship graph
+                    // which remain on-demand in the order sheet.
+                    'phone',
+                    'address_ar',
+                    'address_en',
+                    'order_type',
+                    'delivery_vehicle',
+                    'vehicle_note',
+                    'price',
+                    'fee',
+                    'status',
+                    'pickup_deadline_at',
+                ])
+                ->latest('id')
+                ->cursorPaginate(20, ['*'], 'cursor', $request->input('cursor'));
 
-        $movementBranches = $movementBranchIds->isEmpty()
-            ? collect()
-            : Branch::withoutGlobalScope(TenantScope::class)
-                ->withTrashed()
-                ->whereIn('id', $movementBranchIds)
-                ->get(['id', 'name_ar', 'name_en', 'name_ku', 'city'])
-                ->keyBy('id');
-
-        // Expose one server-authoritative deletion capability rather than
-        // asking the mobile client to infer ledger state. This stays one
-        // batched lookup regardless of how many orders are rendered.
-        $financialOrderIds = $orderRecords->isEmpty()
-            ? collect()
-            : Transaction::withoutGlobalScopes()
-                ->whereIn('order_id', $orderRecords->pluck('id'))
-                ->whereNull('deleted_at')
-                ->pluck('order_id')
-                ->flip();
-
-        $viewer = $request->user();
-        $orders = $orderRecords->map(function (Order $o) use ($isCourier, $movementBranches, $financialOrderIds, $viewer): array {
-            return [
-            'id' => $o->id,
-            'track_no' => $o->track_no,
-            'source' => $o->source,
-            'customer_name_ar' => $o->customer_name_ar,
-            'customer_name_en' => $o->customer_name_en,
-            // The merchant and the assigned/eligible courier need customer
-            // contact details at every delivery state, including pending.
-            'phone' => $o->phone,
-            'phone2' => $o->phone2,
-            'phone_revealed' => true,
-            'address_ar' => $o->address_ar,
-            'address_en' => $o->address_en,
-            'pickup_latitude' => $o->pickup_latitude === null ? null : (float) $o->pickup_latitude,
-            'pickup_longitude' => $o->pickup_longitude === null ? null : (float) $o->pickup_longitude,
-            'pickup_location_label' => $o->pickup_location_label,
-            'order_type' => $o->order_type,
-            'delivery_vehicle' => $o->delivery_vehicle,
-            'weight_grams' => (int) ($o->weight_grams ?? 0),
-            'vehicle_note' => $o->vehicle_note,
-            'province_id' => $o->province_id,
-            'price' => $o->price,
-            'fee' => $o->fee,
-            // The pricing quote stays immutable; the return flow exposes the
-            // separately selected amount only after a courier chooses it.
-            'return_fee' => (int) ($o->return_fee ?? 0),
-            'return_fee_applied' => (int) ($o->return_fee_applied ?? 0),
-            'pricing_rule_id' => $o->pricing_rule_id,
-            'status' => $o->status,
-            'workflow_stage' => $o->workflow_stage,
-            'date' => $o->date->toDateString(),
-            'created_at' => $this->timestamp($o->created_at),
-            'updated_at' => $this->timestamp($o->updated_at),
-            'returned_at' => $this->timestamp($o->returned_at),
-            'returned_to_merchant_at' => $this->timestamp($o->returned_to_merchant_at),
-            'return_fee_charged_at' => $this->timestamp($o->return_fee_charged_at),
-            'notes' => $o->notes,
-            'pickup_deadline_at' => $o->pickup_deadline_at?->toIso8601String(),
-            // `courier` remains the primary assignment for compatibility.
-            // Merchant-facing UI consumes `assigned_courier`, which resolves
-            // the proper pickup/delivery assignee for specialist workflows.
-            'courier' => $o->courier ? ['name' => $o->courier->name, 'phone' => $o->courier->phone, 'vehicle' => $o->courier->vehicle] : null,
-            'assigned_courier' => $this->assignedCourierPayload($o),
-            'merchant' => $o->merchant
-                ? [
-                    'name' => $o->merchant->name,
-                    'shop_name' => $o->merchant->shop_name,
-                    'phone' => $o->merchant->phone,
-                    'address' => $o->merchant->address,
-                    'verified' => $o->merchant->isMerchantVerified(),
-                ]
-                : ($o->tenant ? ['name' => $o->tenant->name, 'phone' => null, 'address' => null] : null),
-            'courier_id' => $o->courier_id,
-            'pickup_courier_id' => $o->pickup_courier_id,
-            'delivery_courier_id' => $o->delivery_courier_id,
-            'merchant_id' => $o->merchant_id,
-            'can_delete_by_merchant' => ! $isCourier
-                && $viewer->role === 'merchant'
-                && (int) $o->merchant_id === (int) $viewer->id
-                && $o->status === 'pending'
-                && ! $o->courier_id
-                && ! $o->pickup_courier_id
-                && ! $o->delivery_courier_id
-                && ! $financialOrderIds->has($o->id),
-            'origin_branch' => $o->originBranch
-                ? $this->branchPayload($o->originBranch)
-                : null,
-            'destination_branch' => $o->destinationBranch
-                ? $this->branchPayload($o->destinationBranch)
-                : null,
-            'timeline' => $this->timelinePayload($o, $movementBranches),
+            // List cards receive only data needed to paint a card. Expensive
+            // relationship graphs and complete operational timelines are now
+            // requested only when the user opens that one order.
+            $orders = $paginator->getCollection()
+                ->map(fn (Order $order) => $this->summaryPayload($order))
+                ->values();
+            $pagination = [
+                'next_cursor' => $paginator->nextCursor()?->encode(),
+                'has_more' => $paginator->nextCursor() !== null,
+                'per_page' => 20,
             ];
-        })->values();
+        }
 
-        $counts = $isCourier
-            ? [
-                'all' => (clone $baseQuery)->count(),
-                'pending' => (clone $baseQuery)->where('status', 'pending')->count(),
-                'approved' => (clone $baseQuery)->where('status', 'approved')->count(),
-                'courier' => (clone $baseQuery)->where('status', 'courier')->count(),
-                'delivered' => (clone $baseQuery)->where('status', 'delivered')->count(),
-                'returned' => (clone $baseQuery)->where('status', 'returned')->count(),
-                'cancelled' => (clone $baseQuery)->where('status', 'cancelled')->count(),
-                'damaged' => (clone $baseQuery)->where('status', 'damaged')->count(),
-                'rejected' => (clone $baseQuery)->where('status', 'rejected')->count(),
-            ]
-            : $this->counts();
+        $counts = $this->countsFor($baseQuery);
 
-        return Inertia::render('Mobile/Orders', [
+        $payload = [
             'orders' => $orders,
+            'pagination' => $pagination,
             'counts' => $counts,
             'filter' => $filter,
             'q' => $q,
+            'list' => $request->boolean('list'),
             'isCourier' => $isCourier,
-            'wallet' => $this->walletData($request->user()),
-        ]);
+            'wallet' => $this->walletData($viewer),
+        ];
+
+        // The "show more" control performs a same-origin JSON request so it
+        // can append the next cursor page without recreating the whole view.
+        if ($request->expectsJson()) {
+            return response()->json($payload);
+        }
+
+        return Inertia::render('Mobile/Orders', $payload);
     }
 
     public function store(Request $request)
@@ -647,12 +586,193 @@ class AppOrderController extends Controller
         }
     }
 
+    /**
+     * The list endpoint intentionally contains no relationship graph. Load
+     * the complete data only for an explicitly opened order, after the same
+     * query scope used for the list has authorised it.
+     */
+    private function detailPayloadFor(Order $order, User $viewer, bool $isCourier): array
+    {
+        $order->load([
+            'courier:id,name,phone,vehicle,role',
+            'pickupCourier:id,name,phone,vehicle,role',
+            'deliveryCourier:id,name,phone,vehicle,role',
+            'merchant:id,name,phone,address,shop_name,merchant_verified_at,role',
+            'tenant:id,name',
+            // Route branches can belong to the platform operations tenant,
+            // so the relations intentionally resolve outside the viewer's
+            // tenant scope. The order itself was already authorised above.
+            'originBranch:id,name_ar,name_en,name_ku,city',
+            'destinationBranch:id,name_ar,name_en,name_ku,city',
+            'statusLogs' => fn ($logs) => $logs
+                ->with('user:id,name,phone,role')
+                ->latest('created_at'),
+            'movements' => fn ($movements) => $movements
+                // A courier belongs to a different tenant from the merchant
+                // order. Its auditable movement history must not disappear
+                // merely because the courier is viewing an assigned order.
+                ->withoutGlobalScope(TenantScope::class)
+                ->with('actor:id,name,phone,role')
+                ->latest('occurred_at'),
+        ]);
+
+        // Order movements retain the branch ids that were active when an
+        // event occurred. Resolve that historical route independently of the
+        // current viewer's tenant so the timeline remains truthful after a
+        // cross-network assignment.
+        $movementBranchIds = $order->movements
+            ->flatMap(fn (OrderMovement $movement) => [
+                $movement->from_branch_id,
+                $movement->to_branch_id,
+            ])
+            ->filter()
+            ->unique()
+            ->values();
+
+        $movementBranches = $movementBranchIds->isEmpty()
+            ? collect()
+            : Branch::withoutGlobalScope(TenantScope::class)
+                ->withTrashed()
+                ->whereIn('id', $movementBranchIds)
+                ->get(['id', 'name_ar', 'name_en', 'name_ku', 'city'])
+                ->keyBy('id');
+
+        // This is deliberately a single existence query for one opened order
+        // rather than a transaction lookup for every card in every page.
+        $hasFinancialPosting = Transaction::withoutGlobalScopes()
+            ->where('order_id', $order->id)
+            ->whereNull('deleted_at')
+            ->exists();
+
+        return $this->detailPayload(
+            $order,
+            $movementBranches,
+            $hasFinancialPosting,
+            $viewer,
+            $isCourier,
+        );
+    }
+
+    /**
+     * Small, card-only representation used by cursor-paginated mobile lists.
+     * Keep this independent from the sheet payload so list requests never
+     * serialise customer contact information, users, branches or histories.
+     */
+    private function summaryPayload(Order $order): array
+    {
+        return [
+            'id' => $order->id,
+            'track_no' => $order->track_no,
+            'customer_name_ar' => $order->customer_name_ar,
+            'customer_name_en' => $order->customer_name_en,
+            'phone' => $order->phone,
+            'phone_revealed' => true,
+            'address_ar' => $order->address_ar,
+            'address_en' => $order->address_en,
+            'order_type' => $order->order_type,
+            'delivery_vehicle' => $order->delivery_vehicle,
+            'vehicle_note' => $order->vehicle_note,
+            'price' => $order->price,
+            // Keeping the persisted fee in the summary preserves the
+            // existing Inertia prop contract for older installed clients.
+            'fee' => $order->fee,
+            'status' => $order->status,
+            'pickup_deadline_at' => $order->pickup_deadline_at?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Full order payload for the on-demand sheet only.
+     */
+    private function detailPayload(
+        Order $order,
+        $movementBranches,
+        bool $hasFinancialPosting,
+        User $viewer,
+        bool $isCourier,
+    ): array {
+        return [
+            'id' => $order->id,
+            'track_no' => $order->track_no,
+            'source' => $order->source,
+            'customer_name_ar' => $order->customer_name_ar,
+            'customer_name_en' => $order->customer_name_en,
+            // The merchant and assigned courier need customer contact details
+            // at every delivery state, including pending.
+            'phone' => $order->phone,
+            'phone2' => $order->phone2,
+            'phone_revealed' => true,
+            'address_ar' => $order->address_ar,
+            'address_en' => $order->address_en,
+            'pickup_latitude' => $order->pickup_latitude === null ? null : (float) $order->pickup_latitude,
+            'pickup_longitude' => $order->pickup_longitude === null ? null : (float) $order->pickup_longitude,
+            'pickup_location_label' => $order->pickup_location_label,
+            'order_type' => $order->order_type,
+            'delivery_vehicle' => $order->delivery_vehicle,
+            'weight_grams' => (int) ($order->weight_grams ?? 0),
+            'vehicle_note' => $order->vehicle_note,
+            'province_id' => $order->province_id,
+            'price' => $order->price,
+            'fee' => $order->fee,
+            // The pricing quote stays immutable; the return flow exposes the
+            // separately selected amount only after a courier chooses it.
+            'return_fee' => (int) ($order->return_fee ?? 0),
+            'return_fee_applied' => (int) ($order->return_fee_applied ?? 0),
+            'pricing_rule_id' => $order->pricing_rule_id,
+            'status' => $order->status,
+            'workflow_stage' => $order->workflow_stage,
+            'date' => $order->date?->toDateString(),
+            'created_at' => $this->timestamp($order->created_at),
+            'updated_at' => $this->timestamp($order->updated_at),
+            'returned_at' => $this->timestamp($order->returned_at),
+            'returned_to_merchant_at' => $this->timestamp($order->returned_to_merchant_at),
+            'return_fee_charged_at' => $this->timestamp($order->return_fee_charged_at),
+            'notes' => $order->notes,
+            'pickup_deadline_at' => $order->pickup_deadline_at?->toIso8601String(),
+            // `courier` remains the primary assignment for compatibility.
+            // Merchant-facing UI consumes `assigned_courier`, which resolves
+            // the proper pickup/delivery assignee for specialist workflows.
+            'courier' => $order->courier
+                ? ['name' => $order->courier->name, 'phone' => $order->courier->phone, 'vehicle' => $order->courier->vehicle]
+                : null,
+            'assigned_courier' => $this->assignedCourierPayload($order),
+            'merchant' => $order->merchant
+                ? [
+                    'name' => $order->merchant->name,
+                    'shop_name' => $order->merchant->shop_name,
+                    'phone' => $order->merchant->phone,
+                    'address' => $order->merchant->address,
+                    'verified' => $order->merchant->isMerchantVerified(),
+                ]
+                : ($order->tenant ? ['name' => $order->tenant->name, 'phone' => null, 'address' => null] : null),
+            'courier_id' => $order->courier_id,
+            'pickup_courier_id' => $order->pickup_courier_id,
+            'delivery_courier_id' => $order->delivery_courier_id,
+            'merchant_id' => $order->merchant_id,
+            'can_delete_by_merchant' => ! $isCourier
+                && $viewer->role === 'merchant'
+                && (int) $order->merchant_id === (int) $viewer->id
+                && $order->status === 'pending'
+                && ! $order->courier_id
+                && ! $order->pickup_courier_id
+                && ! $order->delivery_courier_id
+                && ! $hasFinancialPosting,
+            'origin_branch' => $order->originBranch
+                ? $this->branchPayload($order->originBranch)
+                : null,
+            'destination_branch' => $order->destinationBranch
+                ? $this->branchPayload($order->destinationBranch)
+                : null,
+            'timeline' => $this->timelinePayload($order, $movementBranches),
+        ];
+    }
+
     private function operatingBranchForUser(User $user, int $provinceId): ?Branch
     {
         $branchId = (int) $user->branch_id;
 
         $branches = Branch::withoutGlobalScopes()
-            ->where('tenant_id', \App\Models\Tenant::platform()->id)
+            ->where('tenant_id', Tenant::platform()->id)
             ->where('is_platform_managed', true)
             ->where('is_active', true)
             ->where('province_id', $provinceId)
@@ -804,18 +924,28 @@ class AppOrderController extends Controller
         return Carbon::parse($value)->toIso8601String();
     }
 
-    protected function counts(): array
+    /**
+     * Read every visible order status in one aggregate query. The previous
+     * version ran one count query per status on every mobile page visit.
+     */
+    protected function countsFor(Builder $query): array
     {
+        $aggregate = (clone $query)->selectRaw('COUNT(*) as aggregate_all');
+
+        foreach (Order::STATUSES as $status) {
+            $aggregate->selectRaw(
+                "SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as aggregate_{$status}",
+                [$status],
+            );
+        }
+
+        $values = $aggregate->first();
+
         return [
-            'all' => Order::query()->count(),
-            'pending' => Order::query()->where('status', 'pending')->count(),
-            'approved' => Order::query()->where('status', 'approved')->count(),
-            'courier' => Order::query()->where('status', 'courier')->count(),
-            'delivered' => Order::query()->where('status', 'delivered')->count(),
-            'returned' => Order::query()->where('status', 'returned')->count(),
-            'cancelled' => Order::query()->where('status', 'cancelled')->count(),
-            'damaged' => Order::query()->where('status', 'damaged')->count(),
-            'rejected' => Order::query()->where('status', 'rejected')->count(),
+            'all' => (int) ($values->aggregate_all ?? 0),
+            ...collect(Order::STATUSES)
+                ->mapWithKeys(fn (string $status) => [$status => (int) ($values->{"aggregate_{$status}"} ?? 0)])
+                ->all(),
         ];
     }
 

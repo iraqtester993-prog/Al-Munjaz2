@@ -10,13 +10,12 @@ use App\Models\Tenant;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Models\Wallet;
-use App\Services\CourierLocationService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
 class AdminDashboardController extends Controller
 {
-    public function index(Request $request, CourierLocationService $locations)
+    public function index(Request $request)
     {
         $today = today();
         // The platform dashboard is intentionally cross-tenant.  Be
@@ -25,29 +24,54 @@ class AdminDashboardController extends Controller
         $ordersQuery = Order::withoutGlobalScope(TenantScope::class);
         $transactionsQuery = Transaction::withoutGlobalScope(TenantScope::class);
         $notificationsQuery = Notification::withoutGlobalScope(TenantScope::class);
-        $statusCounts = array_fill_keys(Order::STATUSES, 0);
-        $recordedStatuses = (clone $ordersQuery)
-            ->selectRaw('status, COUNT(*) as total')
-            ->groupBy('status')
-            ->pluck('total', 'status')
-            ->map(fn ($total) => (int) $total)
-            ->all();
-        $statusCounts = array_replace($statusCounts, $recordedStatuses);
+        // Keep the dashboard overview to one aggregate order query. The old
+        // implementation ran separate SUM/COUNT queries for every KPI and
+        // another query for every day of the weekly chart, which became
+        // expensive as the operational tables grew.
+        $orderStatsQuery = (clone $ordersQuery)
+            ->selectRaw('COUNT(*) as orders_count')
+            ->selectRaw('COALESCE(SUM(price), 0) as order_value')
+            ->selectRaw("COALESCE(SUM(CASE WHEN status = 'delivered' THEN price ELSE 0 END), 0) as delivered_value")
+            ->selectRaw('COALESCE(SUM(fee), 0) as fees')
+            ->selectRaw('COALESCE(SUM(CASE WHEN date = ? THEN 1 ELSE 0 END), 0) as today_orders', [$today->toDateString()]);
 
-        $ordersCount = (int) array_sum($statusCounts);
-        $orderValue = (int) (clone $ordersQuery)->sum('price');
-        $deliveredValue = (int) (clone $ordersQuery)->where('status', 'delivered')->sum('price');
+        foreach (Order::STATUSES as $status) {
+            $orderStatsQuery->selectRaw(
+                'COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as status_'.$status,
+                [$status],
+            );
+        }
+
+        $orderStats = $orderStatsQuery->toBase()->first();
+        $statusCounts = collect(Order::STATUSES)
+            ->mapWithKeys(fn (string $status): array => [
+                $status => (int) ($orderStats->{'status_'.$status} ?? 0),
+            ])
+            ->all();
+
+        $ordersCount = (int) ($orderStats->orders_count ?? 0);
+        $orderValue = (int) ($orderStats->order_value ?? 0);
+        $deliveredValue = (int) ($orderStats->delivered_value ?? 0);
         // The order fee is the source of truth for the platform's delivery fee,
         // while transactions represent the later accounting movement.
-        $fees = (int) (clone $ordersQuery)->sum('fee');
+        $fees = (int) ($orderStats->fees ?? 0);
         $merchantCount = Tenant::query()->where('kind', 'merchant')->count();
         $courierRoles = ['courier', 'pickup_courier', 'delivery_courier', 'transporter'];
-        $courierCount = User::query()->whereIn('role', $courierRoles)->count();
-        $onlineCouriers = User::query()
-            ->whereIn('role', $courierRoles)
-            ->where('status', 'active')
-            ->where('is_online', true)
-            ->count();
+        $rolePlaceholders = implode(',', array_fill(0, count($courierRoles), '?'));
+        $userStats = User::query()
+            ->selectRaw('COUNT(*) as users_count')
+            ->selectRaw(
+                "COALESCE(SUM(CASE WHEN role IN ({$rolePlaceholders}) THEN 1 ELSE 0 END), 0) as couriers_count",
+                $courierRoles,
+            )
+            ->selectRaw(
+                "COALESCE(SUM(CASE WHEN role IN ({$rolePlaceholders}) AND status = ? AND is_online = ? THEN 1 ELSE 0 END), 0) as online_couriers_count",
+                [...$courierRoles, 'active', true],
+            )
+            ->toBase()
+            ->first();
+        $courierCount = (int) ($userStats->couriers_count ?? 0);
+        $onlineCouriers = (int) ($userStats->online_couriers_count ?? 0);
 
         $merchantBalance = (int) Wallet::query()
             ->whereHas('user', fn ($query) => $query->where('role', 'merchant'))
@@ -60,12 +84,19 @@ class AdminDashboardController extends Controller
             ->where('direction', 1)
             ->sum('amount');
 
+        $weekCounts = (clone $ordersQuery)
+            ->whereBetween('date', [$today->copy()->subDays(6)->toDateString(), $today->toDateString()])
+            ->selectRaw('date, COUNT(*) as total')
+            ->groupBy('date')
+            ->pluck('total', 'date')
+            ->map(fn ($total) => (int) $total);
+
         $week = [];
         for ($i = 6; $i >= 0; $i--) {
             $d = $today->copy()->subDays($i);
             $week[] = [
                 'label' => $d->translatedFormat('D'),
-                'count' => (clone $ordersQuery)->whereDate('date', $d)->count(),
+                'count' => (int) ($weekCounts->get($d->toDateString()) ?? 0),
             ];
         }
 
@@ -129,7 +160,7 @@ class AdminDashboardController extends Controller
                 'collected' => (int) $merchant->collected,
             ]);
 
-        $todayOrders = (clone $ordersQuery)->whereDate('date', $today)->count();
+        $todayOrders = (int) ($orderStats->today_orders ?? 0);
         $attentionCount = ($statusCounts['pending'] ?? 0) + ($statusCounts['approved'] ?? 0);
         $deliveryRate = $ordersCount > 0
             ? (int) round((($statusCounts['delivered'] ?? 0) / $ordersCount) * 100)
@@ -146,7 +177,7 @@ class AdminDashboardController extends Controller
                 'fees' => $fees,
                 'merchants' => $merchantCount,
                 'couriers' => $courierCount,
-                'users' => User::query()->count(),
+                'users' => (int) ($userStats->users_count ?? 0),
                 'unreadNotifs' => (clone $notificationsQuery)->whereNull('read_at')->count(),
             ],
             'operations' => [
@@ -168,9 +199,6 @@ class AdminDashboardController extends Controller
             'recentOrders' => $recentOrders,
             'recentNotifs' => $recentNotifs,
             'topMerchants' => $topMerchants,
-            // Current map pins only. The location service intentionally
-            // exposes no route history or client/device metadata.
-            'courierLocations' => $locations->dashboardRows(),
         ]);
     }
 

@@ -22,4 +22,22 @@ export default defineConfig({
             ignored: ['**/storage/framework/views/**'],
         },
     },
+    build: {
+        rollupOptions: {
+            output: {
+                // Keep framework code in a content-hashed, long-lived chunk.
+                // The mobile app and dashboard change much more often than
+                // Vue/Inertia/Axios.  This lets returning visitors reuse the
+                // framework bytes from the browser/PWA cache after a release
+                // instead of re-downloading them with the application entry.
+                manualChunks(id) {
+                    const normalizedId = id.replaceAll('\\', '/');
+
+                    if (normalizedId.includes('/node_modules/')) {
+                        return 'vendor';
+                    }
+                },
+            },
+        },
+    },
 });
