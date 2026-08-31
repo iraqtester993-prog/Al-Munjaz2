@@ -155,6 +155,10 @@ class OrderWorkflowService
                 app(LoyaltyPointService::class)->creditForDelivery($order);
             }
 
+            if ($status === 'returned') {
+                $this->postReturnedAdministrativeDeduction($order);
+            }
+
             // A courier's order-value reservation must be released for every
             // terminal outcome after assignment. The ledger guard inside the
             // helper makes this safe when a status post is retried.
@@ -270,6 +274,7 @@ class OrderWorkflowService
             // The order-value budget hold is no longer needed after a failed
             // delivery. This method is idempotent, so a repeat browser post
             // cannot release the same reservation twice.
+            $this->postReturnedAdministrativeDeduction($delivery);
             $this->releaseCourierBudgetIfHeld($delivery, 'returned');
         });
     }
@@ -479,25 +484,27 @@ class OrderWorkflowService
         $courier = User::withoutGlobalScopes()->find($order->courier_id);
         $wallet = Wallet::query()->where('user_id', $order->courier_id)->lockForUpdate()->first();
 
+        $budgetHold = max(0, (int) $order->price) + max(0, (int) $order->fee);
+
         if ($wallet) {
-            $wallet->increment('budget', $order->price);
+            $wallet->increment('budget', $budgetHold);
         }
 
         Transaction::create([
             'tenant_id' => $courier?->tenant_id,
             'user_id' => $order->courier_id,
             'type' => 'budget_release',
-            'amount' => $order->price,
+            'amount' => $budgetHold,
             'direction' => 1,
             'ref' => $order->track_no,
             'order_id' => $order->id,
             'date' => today(),
             'note' => match ($status) {
-                'delivered' => 'إعادة ميزانية بعد التسليم',
+                'delivered' => 'إعادة ميزانية الطلب والتوصيل بعد التسليم',
                 'cancelled' => 'إعادة ميزانية بعد إلغاء الطلب',
                 'damaged' => 'إعادة ميزانية بعد تسجيل الطلب كتالف',
                 'rejected' => 'إعادة ميزانية بعد رفض الطلب',
-                default => 'إعادة ميزانية بعد الإرجاع',
+                default => 'إعادة ميزانية الطلب والتوصيل بعد الإرجاع',
             },
         ]);
     }
@@ -506,8 +513,9 @@ class OrderWorkflowService
      * Record a delivered COD order without mixing physical courier cash with
      * the courier's prepaid Qi credit:
      *
-     * - the courier collection is the order value after the company fee;
-     * - the company fee is debited from the courier's Qi wallet; and
+     * - the courier collection is the delivery charge after the fixed,
+     *   courier-specific administration deduction;
+     * - that deduction is debited from the courier's Qi wallet; and
      * - the merchant receives the full order value because the courier pays
      *   it from the cash budget used when accepting the job.
      *
@@ -517,8 +525,7 @@ class OrderWorkflowService
     protected function postDeliveredSettlement(Order $order): void
     {
         $orderValue = max(0, (int) $order->price);
-        $fee = min($orderValue, max(0, (int) $order->fee));
-        $netCollection = $orderValue - $fee;
+        $deliveryCharge = max(0, (int) $order->fee);
         $courierId = $order->delivery_courier_id ?: $order->courier_id;
 
         if ($courierId) {
@@ -532,64 +539,19 @@ class OrderWorkflowService
                     ->where('direction', 1)
                     ->exists();
 
-                $feePosted = Transaction::withoutGlobalScope(TenantScope::class)
-                    ->where('order_id', $order->id)
-                    ->where('user_id', $courier->id)
-                    ->where('type', 'delivery_fee')
-                    ->where('direction', -1)
-                    ->exists();
-
-                if (! $feePosted && $fee > 0) {
-                    Wallet::firstOrCreate(['user_id' => $courier->id], ['balance' => 0, 'budget' => 0]);
-                    $courierWallet = Wallet::query()
-                        ->where('user_id', $courier->id)
-                        ->lockForUpdate()
-                        ->firstOrFail();
-
-                    $this->ensure(
-                        (int) $courierWallet->balance >= $fee,
-                        'رصيد المندوب لا يغطي رسوم الشركة لهذا الطلب.'
-                    );
-
-                    $courierWallet->decrement('balance', $fee);
-
-                    Transaction::create([
-                        'tenant_id' => $courier->tenant_id ?? $order->tenant_id,
-                        'user_id' => $courier->id,
-                        'type' => 'delivery_fee',
-                        'amount' => $fee,
-                        'direction' => -1,
-                        'ref' => $order->track_no,
-                        'order_id' => $order->id,
-                        'date' => today(),
-                        'note' => 'استقطاع رسوم الشركة من رصيد Qi بعد تسليم الطلب.',
-                    ]);
-
-                    Notification::create([
-                        'tenant_id' => $courier->tenant_id,
-                        'user_id' => $courier->id,
-                        'type' => 'finance',
-                        'title_ar' => 'استقطاع رسوم الطلب',
-                        'title_en' => 'Delivery fee deducted',
-                        'title_ku' => 'کرێی گەیاندن کەمکرایەوە',
-                        'body_ar' => 'تم استقطاع '.number_format($fee).' د.ع من رصيد Qi للطلب '.$order->track_no.'.',
-                        'body_en' => number_format($fee).' IQD was deducted from your Qi balance for '.$order->track_no.'.',
-                        'body_ku' => number_format($fee).' IQD was deducted from your Qi balance for '.$order->track_no.'.',
-                        'data' => ['order_id' => $order->id, 'type' => 'delivery_fee', 'amount' => $fee],
-                    ]);
-                }
+                $companyFee = $this->postAdministrativeDeduction($order, $courier, 'بعد تسليم الطلب');
 
                 if (! $alreadyCollected) {
                     Transaction::create([
                         'tenant_id' => $courier->tenant_id ?? $order->tenant_id,
                         'user_id' => $courier->id,
                         'type' => 'collected',
-                        'amount' => $netCollection,
+                        'amount' => max(0, $deliveryCharge - $companyFee),
                         'direction' => 1,
                         'ref' => $order->track_no,
                         'order_id' => $order->id,
                         'date' => today(),
-                        'note' => 'تحصيل صافٍ بعد خصم رسوم الشركة عند تسليم الطلب.',
+                        'note' => 'تحصيل أجرة التوصيل الصافي بعد استقطاع الإدارة عند تسليم الطلب.',
                     ]);
                 }
             }
@@ -648,5 +610,78 @@ class OrderWorkflowService
         Tenant::query()
             ->whereKey($merchant->tenant_id)
             ->update(['wallet_balance' => (int) $wallet->fresh()->balance]);
+    }
+
+    /** Charge the fixed administration amount once when a returned order ends. */
+    protected function postReturnedAdministrativeDeduction(Order $order): void
+    {
+        $courierId = $order->delivery_courier_id ?: $order->courier_id;
+        if (! $courierId) {
+            return;
+        }
+
+        $courier = User::withoutGlobalScopes()->find($courierId);
+        if ($courier && $courier->isCourierRole()) {
+            $this->postAdministrativeDeduction($order, $courier, 'بعد إرجاع الطلب');
+        }
+    }
+
+    /**
+     * Administration deductions are independent of the delivery charge shown
+     * to the merchant.  The amount is snapshotted at assignment and guarded
+     * by the ledger so retries cannot debit a courier twice.
+     */
+    protected function postAdministrativeDeduction(Order $order, User $courier, string $when): int
+    {
+        $amount = $order->admin_deduction_applied === null
+            ? max(0, (int) $courier->admin_deduction_per_order)
+            : max(0, (int) $order->admin_deduction_applied);
+
+        if ($amount === 0) {
+            return 0;
+        }
+
+        $posted = Transaction::withoutGlobalScope(TenantScope::class)
+            ->where('order_id', $order->id)
+            ->where('user_id', $courier->id)
+            ->where('type', 'commission')
+            ->where('direction', -1)
+            ->exists();
+
+        if ($posted) {
+            return $amount;
+        }
+
+        Wallet::firstOrCreate(['user_id' => $courier->id], ['balance' => 0, 'budget' => 0]);
+        $wallet = Wallet::query()->where('user_id', $courier->id)->lockForUpdate()->firstOrFail();
+        $this->ensure((int) $wallet->balance >= $amount, 'رصيد المندوب لا يغطي استقطاع الإدارة لهذا الطلب.');
+        $wallet->decrement('balance', $amount);
+
+        Transaction::create([
+            'tenant_id' => $courier->tenant_id ?? $order->tenant_id,
+            'user_id' => $courier->id,
+            'type' => 'commission',
+            'amount' => $amount,
+            'direction' => -1,
+            'ref' => $order->track_no,
+            'order_id' => $order->id,
+            'date' => today(),
+            'note' => 'استقطاع الإدارة الثابت '.$when.'.',
+        ]);
+
+        Notification::create([
+            'tenant_id' => $courier->tenant_id,
+            'user_id' => $courier->id,
+            'type' => 'finance',
+            'title_ar' => 'استقطاع الإدارة',
+            'title_en' => 'Administration deduction',
+            'title_ku' => 'کەمکردنەوەی بەڕێوەبەرایەتی',
+            'body_ar' => 'تم استقطاع '.number_format($amount).' د.ع من رصيد Qi للطلب '.$order->track_no.'.',
+            'body_en' => number_format($amount).' IQD was deducted from your Qi balance for '.$order->track_no.'.',
+            'body_ku' => number_format($amount).' IQD was deducted from your Qi balance for '.$order->track_no.'.',
+            'data' => ['order_id' => $order->id, 'type' => 'commission', 'amount' => $amount],
+        ]);
+
+        return $amount;
     }
 }

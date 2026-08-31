@@ -4,6 +4,7 @@ namespace App\Http\Controllers\App;
 
 use App\Http\Controllers\Controller;
 use App\Models\Document;
+use App\Models\Setting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
@@ -51,6 +52,9 @@ class AppProfileController extends Controller
             'walletBudget' => $wallet?->budget ?? 0,
             'courierUploadLimits' => $this->courierDocumentUploadLimits(),
             'merchantUploadLimits' => $this->merchantVerificationDocumentUploadLimits(),
+            // Legal copy is loaded only on the profile page, where the user
+            // explicitly opens it, rather than into every PWA navigation.
+            'legalContent' => Setting::publicContent(),
             'profile' => [
                 'name' => $user->name,
                 'username' => $user->username,

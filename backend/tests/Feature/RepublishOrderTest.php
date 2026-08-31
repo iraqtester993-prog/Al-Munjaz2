@@ -59,4 +59,22 @@ class RepublishOrderTest extends TestCase
             app(CourierOrderAccess::class)->available($courier)->whereKey($order->id)->exists(),
         );
     }
+
+    public function test_merchant_cannot_republish_before_the_offer_window_expires(): void
+    {
+        $merchant = User::query()->where('username', 'تاجر')->firstOrFail();
+        $order = Order::withoutGlobalScopes()
+            ->where('tenant_id', $merchant->tenant_id)
+            ->where('status', 'pending')
+            ->whereNull('courier_id')
+            ->firstOrFail();
+
+        $order->forceFill(['pickup_deadline_at' => now()->addMinute()])->save();
+
+        $this->actingAs($merchant)
+            ->post(route('app.orders.republish', $order))
+            ->assertStatus(422);
+
+        $this->assertTrue($order->fresh()->pickup_deadline_at->greaterThan(now()));
+    }
 }

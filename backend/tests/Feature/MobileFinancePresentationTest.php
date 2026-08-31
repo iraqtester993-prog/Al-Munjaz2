@@ -120,6 +120,7 @@ class MobileFinancePresentationTest extends TestCase
                 ->has('summary.completed_deliveries')
                 ->has('summary.returned_deliveries')
                 ->has('summary.collections_total')
+                ->has('summary.company_fees_total')
                 ->has('summary.cash_on_hand')
                 ->has('transactions'));
 

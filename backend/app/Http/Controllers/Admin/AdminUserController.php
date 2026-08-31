@@ -91,6 +91,11 @@ class AdminUserController extends Controller
                 'status' => $status,
             ],
             'pagination' => $this->paginationMeta($paginator),
+            // The route middleware is the authorization source of truth. These
+            // flags only keep the client from offering buttons that would
+            // inevitably respond with a 403 for a restricted employee.
+            'canUpdateUsers' => $request->user()->canUseAdminPermission('merchants', 'update'),
+            'canDeleteUsers' => $request->user()->canUseAdminPermission('merchants', 'delete'),
         ]);
     }
 
@@ -147,6 +152,8 @@ class AdminUserController extends Controller
                 'status' => $status,
             ],
             'pagination' => $this->paginationMeta($paginator),
+            'canUpdateUsers' => $request->user()->canUseAdminPermission('couriers', 'update'),
+            'canDeleteUsers' => $request->user()->canUseAdminPermission('couriers', 'delete'),
         ]);
     }
 
@@ -362,6 +369,7 @@ class AdminUserController extends Controller
             'shop_name' => ['nullable', 'string', 'max:120'],
             'address' => ['nullable', 'string', 'max:255'],
             'vehicle' => ['nullable', Rule::in(['bike', 'sedan', 'suv', 'truck'])],
+            'admin_deduction_per_order' => ['nullable', 'integer', 'min:0', 'max:1000000'],
         ]);
 
         $user->update([
@@ -372,6 +380,9 @@ class AdminUserController extends Controller
             'shop_name' => $user->role === 'merchant' ? ($data['shop_name'] ?? null) : null,
             'address' => $data['address'] ?? null,
             'vehicle' => $user->isCourierRole() ? ($data['vehicle'] ?? null) : null,
+            'admin_deduction_per_order' => $user->isCourierRole()
+                ? (int) ($data['admin_deduction_per_order'] ?? 0)
+                : 0,
         ]);
 
         ActivityLog::create([
@@ -382,7 +393,7 @@ class AdminUserController extends Controller
             'subject_id' => $user->id,
             'data' => [
                 'role' => $user->role,
-                'fields' => ['name', 'username', 'email', 'phone', 'shop_name', 'address', 'vehicle'],
+                'fields' => ['name', 'username', 'email', 'phone', 'shop_name', 'address', 'vehicle', 'admin_deduction_per_order'],
             ],
             'ip' => $request->ip(),
         ]);
@@ -544,6 +555,7 @@ class AdminUserController extends Controller
             'trial_ends_at' => $user->tenant?->trial_ends_at?->toDateString(),
             'wallet_balance' => $user->wallet?->balance ?? $user->tenant?->wallet_balance ?? 0,
             'cash_budget' => $user->wallet?->budget ?? 0,
+            'admin_deduction_per_order' => (int) $user->admin_deduction_per_order,
             'points_balance' => (int) ($user->loyaltyAccount?->balance ?? 0),
             'user' => [
                 'id' => $user->id,
@@ -553,6 +565,7 @@ class AdminUserController extends Controller
                 'status' => $user->status,
                 'role' => $user->role,
                 'vehicle' => $user->vehicle,
+                'admin_deduction_per_order' => (int) $user->admin_deduction_per_order,
                 'email' => $user->email,
                 'shop_name' => $user->shop_name,
                 'address' => $user->address,

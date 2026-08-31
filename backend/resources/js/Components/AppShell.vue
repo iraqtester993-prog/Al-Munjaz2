@@ -144,13 +144,33 @@ function syncLiveNotificationCount(event) {
     if (Number.isFinite(unread)) liveNotificationUnread.value = Math.max(0, unread)
 }
 
+// Android Chrome and installed PWAs do not always resize `100dvh` while the
+// software keyboard is open.  Use the visual viewport as the single source
+// of truth, so a focused field stays inside the visible application frame
+// rather than being moved under the keyboard by the document viewport.
+function syncVisualViewport() {
+    const viewport = window.visualViewport
+    if (!viewport) return
+
+    const height = Math.max(0, Math.round(viewport.height))
+    document.documentElement.style.setProperty('--app-viewport-height', `${height}px`)
+    window.dispatchEvent(new CustomEvent('almunjaz:viewport-change', {
+        detail: { height, offsetTop: Math.round(viewport.offsetTop || 0) },
+    }))
+}
+
 onMounted(() => {
     applyTheme(theme.value)
     window.addEventListener('almunjaz:notification-count', syncLiveNotificationCount)
+    syncVisualViewport()
+    window.visualViewport?.addEventListener('resize', syncVisualViewport)
+    window.visualViewport?.addEventListener('scroll', syncVisualViewport)
 })
 
 onBeforeUnmount(() => {
     window.removeEventListener('almunjaz:notification-count', syncLiveNotificationCount)
+    window.visualViewport?.removeEventListener('resize', syncVisualViewport)
+    window.visualViewport?.removeEventListener('scroll', syncVisualViewport)
 })
 
 // Profile settings may update the shared Inertia user object without

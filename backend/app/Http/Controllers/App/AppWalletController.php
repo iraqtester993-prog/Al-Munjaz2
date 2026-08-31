@@ -150,19 +150,26 @@ class AppWalletController extends Controller
     private function courierSummary($user, FinanceRequestService $finance): array
     {
         $deliveries = app(CourierOrderAccess::class)->assigned($user);
-        $completed = (int) (clone $deliveries)->where('status', 'delivered')->count();
-        $returned = (int) (clone $deliveries)->where('status', 'returned')->count();
+        // Keep the wallet page constant-size as a courier's delivery history
+        // grows. The fixed administration deductions are persisted in the
+        // ledger, rather than inferred from a mutable price rule.
+        $deliveryTotals = (clone $deliveries)
+            ->selectRaw('COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as completed_deliveries', ['delivered'])
+            ->selectRaw('COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as returned_deliveries', ['returned'])
+            ->selectRaw('0 as company_fees_total')
+            ->toBase()
+            ->first();
         $collections = $finance->collectionsTotal($user);
-        $companyFees = (int) (clone $deliveries)
-            ->where('status', 'delivered')
-            ->get(['price', 'fee'])
-            ->sum(fn (Order $order): int => min(max(0, (int) $order->price), max(0, (int) $order->fee)));
 
         return [
-            'completed_deliveries' => $completed,
-            'returned_deliveries' => $returned,
+            'completed_deliveries' => (int) ($deliveryTotals->completed_deliveries ?? 0),
+            'returned_deliveries' => (int) ($deliveryTotals->returned_deliveries ?? 0),
             'collections_total' => $collections,
-            'company_fees_total' => $companyFees,
+            'company_fees_total' => (int) Transaction::withoutGlobalScope(\App\Models\Scopes\TenantScope::class)
+                ->where('user_id', $user->id)
+                ->where('type', 'commission')
+                ->where('direction', -1)
+                ->sum('amount'),
             'cash_on_hand' => $finance->cashOnHand($user->id),
         ];
     }

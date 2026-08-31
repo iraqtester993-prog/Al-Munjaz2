@@ -60,7 +60,10 @@ function playTone() {
 }
 
 function showIncoming(notification) {
-    notifications.value.unshift(notification)
+    // A burst of notifications must not cover the whole mobile screen. The
+    // newest notice replaces the visible toast; every item still remains in
+    // the notifications inbox where it can be opened or deleted.
+    notifications.value = [notification]
     playTone()
     window.setTimeout(() => dismiss(notification.id), 7000)
 }

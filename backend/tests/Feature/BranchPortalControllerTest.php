@@ -101,6 +101,22 @@ class BranchPortalControllerTest extends TestCase
             ->assertJsonPath('props.summary.branches', 1);
     }
 
+    public function test_disabled_branch_membership_does_not_keep_the_portal_accessible(): void
+    {
+        [$platform] = $this->tenants();
+        $branch = $this->branch($platform, 'BGD-OFF', 'فرع بغداد المتوقف');
+        $branch->update(['is_active' => false]);
+        $owner = $this->user($platform, 'owner', 'disabled-branch-owner');
+        $owner->managedBranches()->attach($branch->id, ['access_role' => BranchMembership::OWNER]);
+
+        $this->actingAs($owner)
+            ->withHeader('X-Inertia', 'true')
+            ->get('/__tests/branch-portal')
+            ->assertOk()
+            ->assertJsonCount(0, 'props.branches')
+            ->assertJsonPath('props.summary.branches', 0);
+    }
+
     public function test_operational_lists_and_related_profiles_are_limited_to_authorised_branches(): void
     {
         [$platform, $otherTenant] = $this->tenants();

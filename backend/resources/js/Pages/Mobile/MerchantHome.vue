@@ -119,11 +119,11 @@ onUnmounted(() => window.clearInterval(ticker))
 
         <div class="section-title">
             <h3>{{ t('Recent Orders') }}</h3>
-            <a @click="$inertia.visit(route('app.orders'))">{{ t('See all') }}</a>
+            <a @click="$inertia.visit(route('app.orders', { list: 1 }))">{{ t('See all') }}</a>
         </div>
 
         <div v-if="recentOrders.length" class="list-card">
-            <div v-for="o in recentOrders" :key="o.id" class="merchant-home-order" @click="$inertia.visit(route('app.orders'))">
+            <button v-for="o in recentOrders" :key="o.id" class="merchant-home-order" type="button" @click="$inertia.visit(route('app.orders', { list: 1, open: o.id }))">
                 <div class="merchant-order-top">
                     <div class="order-ic">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -139,24 +139,7 @@ onUnmounted(() => window.clearInterval(ticker))
                         <StatusBadge :status="o.status" />
                     </div>
                 </div>
-                <p v-if="o.vehicle_note" class="merchant-order-note merchant-order-vehicle-note"><b>{{ t('Vehicle Note') }}:</b> {{ o.vehicle_note }}</p>
-                <div v-if="(o.status === 'approved' || o.status === 'courier') && o.assigned_courier" class="merchant-courier-card">
-                    <span class="merchant-courier-avatar">{{ o.assigned_courier.name?.slice(0, 1) || 'م' }}</span>
-                    <span class="merchant-courier-copy">
-                        <small>{{ t('Courier') }}</small>
-                        <b>{{ o.assigned_courier.name }}</b>
-                        <em v-if="vehicleLabel(o.assigned_courier.vehicle)">{{ vehicleLabel(o.assigned_courier.vehicle) }}</em>
-                    </span>
-                    <button type="button" @click.stop="openOrderChat(o)">{{ t('Chat') }}</button>
-                </div>
-                <div v-if="o.status === 'approved' || o.status === 'courier'" class="merchant-order-tools">
-                    <span v-if="o.status === 'approved' && pickupRemainingText(o)" class="merchant-pickup-timer">
-                        <i></i> {{ t('Time to reach the merchant') }}: <b class="mono">{{ pickupRemainingText(o) }}</b>
-                    </span>
-                    <span v-else>{{ t('Out for Delivery') }}</span>
-                    <button type="button" @click.stop="openComplaint(o)">{{ t('Contact Support') }}</button>
-                </div>
-            </div>
+            </button>
         </div>
         <div v-else class="empty-hint">{{ t('No orders yet') }}</div>
 
@@ -171,7 +154,7 @@ onUnmounted(() => window.clearInterval(ticker))
     font-size: 14px; font-weight: 800; margin-bottom: 16px; border: 0; cursor: pointer;
     box-shadow: 0 8px 24px -6px color-mix(in srgb, var(--primary) 55%, transparent);
 }
-.merchant-home-order { padding:12px 14px; border-bottom:1px solid var(--border); cursor:pointer; }
+.merchant-home-order { display:block; width:100%; padding:12px 14px; border:0; border-bottom:1px solid var(--border); background:transparent; color:inherit; font:inherit; text-align:inherit; cursor:pointer; }
 .merchant-home-order:last-child { border-bottom:0; }
 .merchant-order-top { display:flex; align-items:center; gap:11px; }
 .merchant-order-top .order-end :deep(.badge) { margin-top:4px; }

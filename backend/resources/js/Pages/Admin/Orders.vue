@@ -92,7 +92,11 @@ const hasActiveQuery = computed(() => (
     || Boolean(courierFilter.value)
 ))
 
-const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned', 'cancelled', 'damaged', 'rejected']
+// The active operational flow is deliberately limited to the five states
+// shown in the mobile application. Legacy cancellation/damage/rejection
+// records remain readable in the audit history, but cannot be created again
+// from the dashboard.
+const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned']
 
 function tStatus(status) {
     const labels = {
@@ -278,9 +282,9 @@ function setStatus(order, status) {
     // example, changing a delivered order back to pending) is deliberately
     // auditable on the server, so ask the operator for the required note.
     const normalMoves = {
-        pending: ['approved', 'cancelled', 'rejected'],
-        approved: ['courier', 'cancelled', 'rejected'],
-        courier: ['delivered', 'cancelled', 'damaged', 'rejected'],
+        pending: ['approved'],
+        approved: ['courier'],
+        courier: ['delivered', 'returned'],
     }
     const isCorrection = !normalMoves[order.status]?.includes(status)
     const note = isCorrection

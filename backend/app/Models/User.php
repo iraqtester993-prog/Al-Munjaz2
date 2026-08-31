@@ -62,7 +62,7 @@ class User extends Authenticatable
 
     protected $fillable = [
         'tenant_id', 'branch_id', 'name', 'username', 'email', 'phone', 'password',
-        'role', 'status', 'vehicle', 'shop_name', 'address', 'identity_number', 'theme', 'locale',
+        'role', 'status', 'vehicle', 'admin_deduction_per_order', 'shop_name', 'address', 'identity_number', 'theme', 'locale',
         'merchant_verified_at', 'merchant_verified_by',
         'is_online', 'last_active_at',
         'current_latitude', 'current_longitude', 'location_accuracy_meters', 'location_updated_at',
@@ -88,6 +88,7 @@ class User extends Authenticatable
             'location_accuracy_meters' => 'integer',
             'identity_number' => 'encrypted',
             'is_online' => 'boolean',
+            'admin_deduction_per_order' => 'integer',
             'password' => 'hashed',
             'dashboard_permissions' => 'array',
             'is_super_admin' => 'boolean',

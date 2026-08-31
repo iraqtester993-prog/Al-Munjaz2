@@ -70,13 +70,13 @@ class CourierOrderAssignmentService
                 ]);
             }
 
-            $this->ensure($wallet->budget >= $delivery->price, 'ميزانية المندوب أقل من قيمة الطلب.');
+            $budgetHold = max(0, (int) $delivery->price) + max(0, (int) $delivery->fee);
+            $this->ensure($wallet->budget >= $budgetHold, 'ميزانية المندوب أقل من إجمالي الطلب والتوصيل.');
 
-            // The courier's Qi balance pays the platform fee only when the
-            // order is delivered, but checking the quoted fee before the
-            // job is accepted prevents a courier from completing work that
-            // cannot be settled later.
-            $companyFee = min(max(0, (int) $delivery->price), max(0, (int) $delivery->fee));
+            // Administration configures a fixed deduction for each courier.
+            // The order keeps a snapshot below, so future account edits do
+            // not alter this accepted order's financial outcome.
+            $companyFee = max(0, (int) $courier->admin_deduction_per_order);
             $this->ensure(
                 (int) $wallet->balance >= $companyFee,
                 'رصيد المندوب لا يغطي رسوم الشركة لهذا الطلب.'
@@ -89,21 +89,22 @@ class CourierOrderAssignmentService
             $delivery->update([
                 'courier_id' => $courier->id,
                 'pickup_deadline_at' => now()->addMinutes($pickupMinutes),
+                'admin_deduction_applied' => $companyFee,
             ]);
             app(OrderWorkflowService::class)->changeStatus($delivery, 'approved', $actor, $note);
 
-            $wallet->decrement('budget', $delivery->price);
+            $wallet->decrement('budget', $budgetHold);
 
             Transaction::create([
                 'tenant_id' => $courier->tenant_id,
                 'user_id' => $courier->id,
                 'type' => 'paid_order',
-                'amount' => $delivery->price,
+                'amount' => $budgetHold,
                 'direction' => -1,
                 'ref' => $delivery->track_no,
                 'order_id' => $delivery->id,
                 'date' => today(),
-                'note' => 'حجز ميزانية لاستلام الطلب',
+                'note' => 'حجز ميزانية الطلب والتوصيل لاستلام الطلب',
             ]);
 
             Notification::create([

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AppShell from '../../Components/AppShell.vue'
@@ -12,6 +12,7 @@ const props = defineProps({
     stats: { type: Object, required: true },
     recentOrders: { type: Array, default: () => [] },
     availableOrders: { type: Array, default: () => [] },
+    availablePagination: { type: Object, default: () => ({ next_cursor: null, has_more: false }) },
     heroSlides: { type: Array, default: () => [] },
 })
 
@@ -20,10 +21,21 @@ const user = computed(() => page.props.auth?.user)
 const locale = computed(() => page.props.locale || 'ar')
 const selected = ref(null)
 const claiming = ref(false)
+const loadingMoreAvailable = ref(false)
+const loadedAvailableOrders = ref([...props.availableOrders])
+const availablePagination = ref({ ...props.availablePagination })
 const now = ref(Date.now())
 let ticker
 
-const visibleAvailableOrders = computed(() => props.availableOrders.filter((order) => remainingMs(order) > 0))
+const visibleAvailableOrders = computed(() => loadedAvailableOrders.value.filter((order) => remainingMs(order) > 0))
+
+watch(() => props.availableOrders, (orders) => {
+    loadedAvailableOrders.value = [...(orders || [])]
+})
+
+watch(() => props.availablePagination, (nextPagination) => {
+    availablePagination.value = { ...(nextPagination || {}) }
+})
 
 function toggleDuty() {
     router.post(route('app.duty'), { is_online: !props.stats.onDuty }, { preserveScroll: true })
@@ -70,6 +82,10 @@ function orderTypeLabel(order) {
     return order?.order_type || t('Not specified')
 }
 
+function orderTotal(order) {
+    return Number(order?.price || 0) + Number(order?.fee || 0)
+}
+
 const deliverySteps = computed(() => ([
     { status: 'pending', label: t('Pending') },
     { status: 'approved', label: t('Approved') },
@@ -111,6 +127,32 @@ function canViewCustomerPhone(order) {
 
 function openDetails(order) {
     selected.value = order
+}
+
+async function loadMoreAvailableOrders() {
+    const cursor = availablePagination.value?.next_cursor
+    if (!cursor || loadingMoreAvailable.value) return
+
+    loadingMoreAvailable.value = true
+    try {
+        const url = new URL(route('app'), window.location.origin)
+        url.searchParams.set('available_cursor', cursor)
+        const response = await fetch(url.toString(), {
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        })
+        if (!response.ok) throw new Error(`Available orders request failed with ${response.status}`)
+
+        const payload = await response.json()
+        const known = new Set(loadedAvailableOrders.value.map((order) => Number(order.id)))
+        loadedAvailableOrders.value = [
+            ...loadedAvailableOrders.value,
+            ...(payload.availableOrders || []).filter((order) => !known.has(Number(order.id))),
+        ]
+        availablePagination.value = { ...(payload.availablePagination || {}) }
+    } finally {
+        loadingMoreAvailable.value = false
+    }
 }
 
 function reopenLocationGateIfRequired(errors) {
@@ -211,6 +253,10 @@ onUnmounted(() => window.clearInterval(ticker))
                 <div class="expiry-track"><i :style="{ width: `${progress(order)}%`, background: countdownColor(order) }"></i></div>
             </article>
         </div>
+        <button v-if="availablePagination.has_more" class="available-load-more" type="button" :disabled="loadingMoreAvailable" @click="loadMoreAvailableOrders">
+            <span v-if="loadingMoreAvailable" class="loader"></span>
+            <span v-else>{{ t('See all') }}</span>
+        </button>
         <div v-else class="availability-empty">
             <span class="availability-empty-icon" aria-hidden="true">
                 <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12 2.3 2.3 4.8-5"/></svg>
@@ -230,7 +276,7 @@ onUnmounted(() => window.clearInterval(ticker))
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="M6 17l4-8h4l3 8M10 9h4M15 6a1.4 1.4 0 1 0 0-2.8A1.4 1.4 0 0 0 15 6Z"/></svg>
                     </span>
                     <span class="order-mid"><b>{{ customerName(order) }}</b></span>
-                    <span class="order-end"><b class="mono">{{ fmt(order.price) }}</b><StatusBadge :status="order.status" /></span>
+                    <span class="order-end"><small class="order-date">{{ order.date }}</small><b class="mono">{{ fmt(order.price) }}</b><StatusBadge :status="order.status" /></span>
                 </button>
             </div>
         </section>
@@ -258,10 +304,10 @@ onUnmounted(() => window.clearInterval(ticker))
                     <div class="detail-row"><span class="text-muted">{{ t('Phone') }}</span><b v-if="canViewCustomerPhone(selected)" class="mono">{{ selected.phone }}</b><b v-else class="customer-phone-locked" :aria-label="t('Phone')">•••••••••••</b></div>
                     <div class="detail-row"><span class="text-muted">{{ t('Address') }}</span><b>{{ customerAddress(selected) }}</b></div>
                     <div class="detail-row"><span class="text-muted">{{ t('Order Type') }}</span><b class="delivery-vehicle-pill">{{ orderTypeLabel(selected) }}</b></div>
-                    <div class="detail-row"><span class="text-muted">{{ t('Delivery Vehicle') }}</span><b class="delivery-vehicle-pill">{{ vehicleLabel(selected) }}</b></div>
                     <div v-if="selected.notes" class="detail-note-box"><b>{{ t('Order Note') }}:</b> {{ selected.notes }}</div>
-                    <div v-if="selected.vehicle_note" class="detail-note-box vehicle-note-box"><b>{{ t('Vehicle Note') }}:</b> {{ selected.vehicle_note }}</div>
                     <div class="detail-row detail-price"><span class="text-muted">{{ t('Order amount') }}</span><b class="mono">{{ fmt(selected.price) }} {{ t('IQD') }}</b></div>
+                    <div class="detail-row"><span class="text-muted">{{ t('Delivery Price') }}</span><b class="mono">{{ fmt(selected.fee) }} {{ t('IQD') }}</b></div>
+                    <div class="detail-total-card"><span>{{ t('Total') }}</span><strong class="mono">{{ fmt(orderTotal(selected)) }} <small>{{ t('IQD') }}</small></strong></div>
                     <div class="detail-row"><span class="text-muted">{{ t('Available Budget') }}</span><b class="mono">{{ fmt(stats.budget) }} {{ t('IQD') }}</b></div>
                     <div v-if="selected.pickup_deadline_at" class="detail-row"><span class="text-muted">{{ t('Time to reach the merchant') }}</span><b class="mono" :style="{ color: countdownColor(selected) }">{{ remainingText(selected) }}</b></div>
                 </section>
@@ -313,6 +359,7 @@ onUnmounted(() => window.clearInterval(ticker))
 
 <style scoped>
 .courier-collection { position:relative; overflow:hidden; padding:16px; border-radius:16px; background:linear-gradient(135deg, var(--primary-strong), var(--primary)); color:#fff; margin-bottom:17px; }
+.detail-total-card{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;padding:13px 14px;border-radius:13px;background:var(--primary);color:#fff}.detail-total-card span{font-size:11px;font-weight:850;opacity:.85}.detail-total-card strong{font-size:20px;font-weight:950;line-height:1}.detail-total-card small{font-family:var(--font);font-size:10px;opacity:.8}
 .courier-collection.offline { filter:saturate(.55); }
 .collection-orb { position:absolute; top:-20px; inset-inline-end:-20px; width:80px; height:80px; border-radius:50%; background:rgba(255,255,255,.11); }
 .collection-copy { position:relative; z-index:1; }
@@ -327,6 +374,7 @@ onUnmounted(() => window.clearInterval(ticker))
 .available-heading h3 { margin:0; color:var(--ink); font-size:13px; font-weight:900; }
 .available-heading span { padding:3px 10px; border-radius:20px; background:var(--surface-2); color:var(--ink-faint); font-size:10.5px; font-weight:800; }
 .available-list { display:grid; gap:10px; }
+.available-load-more{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;min-height:42px;margin-top:12px;border:1px solid color-mix(in srgb,var(--primary) 28%,var(--border));border-radius:12px;background:var(--primary-tint);color:var(--primary-strong);font:800 11px var(--font);cursor:pointer}.available-load-more:disabled{opacity:.6;cursor:wait}
 .available-order-card { overflow:hidden; border:1.5px solid color-mix(in srgb, var(--primary) 42%, var(--border)); border-radius:16px; background:linear-gradient(145deg, color-mix(in srgb, var(--primary-tint) 84%, var(--surface)), color-mix(in srgb, var(--primary-tint) 52%, var(--surface))); box-shadow:0 6px 16px rgba(11,110,104,.12); cursor:pointer; }
 .available-order-main { padding:11px 12px 9px; }
 .available-order-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
@@ -341,6 +389,7 @@ onUnmounted(() => window.clearInterval(ticker))
 .available-order-note { margin:9px 0 0; padding:7px 9px; border:1px solid color-mix(in srgb,var(--danger) 18%,transparent); border-radius:10px; background:color-mix(in srgb,var(--danger-tint) 68%,var(--surface)); color:var(--ink-soft); font-size:10px; font-weight:750; line-height:1.55; }
 .available-order-note b { color:var(--danger); }
 .available-order-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 14px; border-top:1px solid var(--border); background:var(--surface-2); }
+.order-date{display:block;margin-bottom:2px;color:var(--ink-faint);font-size:8.5px;font-weight:700}
 .pickup-clock { display:flex; align-items:center; gap:5px; min-width:0; font-size:11px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .pickup-clock i { width:8px; height:8px; flex:none; border-radius:50%; animation:new-order-pulse 1.35s ease-in-out infinite; }
 .view-order { padding:7px 12px; border-radius:9px; background:var(--primary); color:#fff; box-shadow:0 3px 8px rgba(11,110,104,.2); font:inherit; font-size:10.5px; font-weight:900; white-space:nowrap; }

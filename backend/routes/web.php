@@ -171,7 +171,7 @@ Route::middleware(['auth', 'active'])->group(function () {
             ->middleware('role:courier,pickup_courier,delivery_courier,transporter')
             ->name('app.location.clear');
         Route::get('orders', [AppOrderController::class, 'index'])->name('app.orders');
-        Route::get('reports', [AppReportController::class, 'index'])->name('app.reports')->middleware('role:merchant');
+        Route::get('reports', [AppReportController::class, 'index'])->name('app.reports')->middleware('role:merchant,courier,pickup_courier,delivery_courier,transporter');
         Route::post('orders', [AppOrderController::class, 'store'])->name('app.orders.store');
         Route::post('orders/{order}/update', [AppOrderController::class, 'update'])->name('app.orders.update');
         Route::delete('orders/{order}', [AppOrderController::class, 'destroy'])->name('app.orders.destroy');

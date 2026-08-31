@@ -441,6 +441,10 @@ class BranchPortalController extends Controller
         return Branch::withoutGlobalScope(TenantScope::class)
             ->where('branches.tenant_id', $platformTenantId)
             ->where('branches.is_platform_managed', true)
+            // Disabling a branch must revoke its portal boundary as well as
+            // hide it from operational lists. Otherwise a previous manager
+            // could keep working through a bookmarked dashboard URL.
+            ->where('branches.is_active', true)
             ->where(function (Builder $eligible) use ($user, $requiredAccessRole): void {
                 $eligible->whereHas('memberships', function (Builder $memberships) use ($user, $requiredAccessRole): void {
                     $memberships

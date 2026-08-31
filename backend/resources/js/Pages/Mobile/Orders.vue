@@ -14,6 +14,7 @@ const props = defineProps({
     filter: { type: String, default: 'all' },
     q: { type: String, default: '' },
     list: { type: Boolean, default: false },
+    openOrderId: { type: Number, default: null },
     pagination: { type: Object, default: () => ({ next_cursor: null, has_more: false }) },
     isCourier: { type: Boolean, default: false },
     wallet: { type: Object, default: () => ({ balance: 0, budget: 0 }) },
@@ -21,19 +22,18 @@ const props = defineProps({
 
 const page = usePage()
 const locale = computed(() => page.props.locale || 'ar')
+const isCourier = computed(() => props.isCourier)
 const currentRole = computed(() => page.props.auth?.user?.role || '')
 const isGeneralCourier = computed(() => currentRole.value === 'courier')
-// The courier home is intentionally a compact summary. These query flags
-// let its recent-delivery links skip the status overview and, when requested,
-// open the selected order after the scoped order list has loaded.
-const homeOrderQuery = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search)
-const showCourierOrderList = homeOrderQuery.get('list') === '1'
-const homeOrderId = Number(homeOrderQuery.get('open') || 0)
+// Home-screen rows can open a detail sheet directly. The server sends the
+// requested id as a prop so Inertia visits work even when this component is
+// retained instead of being recreated.
+const showCourierOrderList = computed(() => props.list || Number(props.openOrderId || 0) > 0)
 
 const query = ref(props.q)
 const active = ref(props.filter)
 const merchantOverview = ref(!props.isCourier && props.filter === 'all' && !props.q && !props.list)
-const courierOverview = ref(props.isCourier && props.filter === 'all' && !props.q && !props.list && !showCourierOrderList)
+const courierOverview = ref(props.isCourier && props.filter === 'all' && !props.q && !props.list && !showCourierOrderList.value)
 const loadedOrders = ref([...props.orders])
 const pagination = ref({ ...props.pagination })
 const selected = ref(null)
@@ -41,6 +41,7 @@ const showForm = ref(false)
 const editing = ref(null)
 const busy = ref(null)
 const returnFlow = ref(null)
+const pickupConfirmation = ref(null)
 const detailLoading = ref(false)
 const loadingMore = ref(false)
 const now = ref(Date.now())
@@ -319,12 +320,24 @@ function confirmReturnToMerchant(order) {
 }
 
 function handleAction(order, status) {
+    if (status === 'courier') {
+        pickupConfirmation.value = order
+        return
+    }
+
     if (status === 'returned') {
         startReturn(order)
         return
     }
 
     setStatus(order, status)
+}
+
+function confirmPickup() {
+    const order = pickupConfirmation.value
+    if (!order) return
+    pickupConfirmation.value = null
+    setStatus(order, 'courier')
 }
 
 function canAct(order) {
@@ -422,8 +435,8 @@ function deletePendingOrder(order) {
     })
 }
 
-function openSupport() {
-    router.post(route('app.chats.open'), {}, { preserveScroll: true })
+function openSupport(order) {
+    router.post(route('app.chats.open'), { order_id: order.id, complaint: true }, { preserveScroll: true })
 }
 
 function openOrderChat(order) {
@@ -507,10 +520,31 @@ function pickupText(order) {
     return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')} ${t('Minutes abbreviation')}`
 }
 
+function orderTotal(order) {
+    return Number(order?.price || 0) + Number(order?.fee || 0)
+}
+
+function canRepublishExpiredOrder(order) {
+    if (isCourier.value || order?.status !== 'pending' || order?.courier_id || !order?.pickup_deadline_at) {
+        return false
+    }
+
+    return new Date(order.pickup_deadline_at).getTime() <= now.value
+}
+
 onMounted(() => {
     ticker = window.setInterval(() => { now.value = Date.now() }, 1000)
 
-    if (props.isCourier && homeOrderId > 0) openOrder({ id: homeOrderId })
+    if (Number(props.openOrderId || 0) > 0) openOrder({ id: props.openOrderId })
+})
+
+watch(() => props.openOrderId, (orderId, previousOrderId) => {
+    const id = Number(orderId || 0)
+    if (!id || id === Number(previousOrderId || 0)) return
+
+    courierOverview.value = false
+    merchantOverview.value = false
+    openOrder({ id })
 })
 
 onUnmounted(() => window.clearInterval(ticker))
@@ -554,8 +588,12 @@ onUnmounted(() => window.clearInterval(ticker))
             <span>{{ counts[active] ?? 0 }}</span>
         </div>
 
-        <div v-if="!isCourier" class="search" style="max-width: 100%; margin-bottom: 12px">
-            <input v-model="query" :placeholder="t('Search')" @keyup.enter="doSearch" />
+        <div class="search" style="max-width: 100%; margin-bottom: 12px">
+            <input
+                v-model="query"
+                :placeholder="`${t('Search')} — ${t('Customer')} / ${t('Phone')}`"
+                @keyup.enter="doSearch"
+            />
         </div>
 
         <div v-if="visibleOrders.length" class="mobile-order-stack">
@@ -644,12 +682,7 @@ onUnmounted(() => window.clearInterval(ticker))
                     <span class="text-muted">{{ t('Order Type') }}</span>
                     <b class="delivery-vehicle-pill">{{ orderTypeLabel(selected) }}</b>
                 </div>
-                <div class="detail-row">
-                    <span class="text-muted">{{ t('Delivery Vehicle') }}</span>
-                    <b class="delivery-vehicle-pill"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8"/></svg>{{ vehicleLabel(selected) }}</b>
-                </div>
                 <div v-if="selected.notes" class="detail-note-box"><b>{{ t('Order Note') }}:</b> {{ selected.notes }}</div>
-                <div v-if="selected.vehicle_note" class="detail-note-box transport-note-box"><b>{{ t('Vehicle Note') }}:</b> {{ selected.vehicle_note }}</div>
                 <div class="detail-row">
                     <span class="text-muted">{{ t('Price') }}</span>
                     <b class="mono">{{ fmt(selected.price) }} {{ t('IQD') }}</b>
@@ -657,6 +690,10 @@ onUnmounted(() => window.clearInterval(ticker))
                 <div class="detail-row">
                     <span class="text-muted">{{ t('Delivery Price') }}</span>
                     <b class="mono">{{ fmt(selected.fee) }} {{ t('IQD') }}</b>
+                </div>
+                <div class="detail-total-card">
+                    <span>{{ t('Total') }}</span>
+                    <strong class="mono">{{ fmt(orderTotal(selected)) }} <small>{{ t('IQD') }}</small></strong>
                 </div>
                 </section>
 
@@ -748,16 +785,25 @@ onUnmounted(() => window.clearInterval(ticker))
                     {{ t('Contact Support') }}
                 </button>
 
-                <button v-else-if="isCourier && ['approved', 'courier'].includes(selected.status)" class="order-complaint" type="button" @click="openSupport">
+                <button v-else-if="isCourier && ['approved', 'courier'].includes(selected.status)" class="order-complaint" type="button" @click="openSupport(selected)">
                     {{ t('Contact Support to Cancel') }}
                 </button>
+
+                <a v-if="isCourier && ['delivered', 'returned'].includes(selected.status)" class="order-archive" :href="route('app.reports', { detail_status: selected.status })">
+                    {{ t('Archive') }}
+                </a>
 
                 <button v-if="!isCourier && selected.status === 'returned'" class="order-recreate" type="button" :disabled="busy === selected.id" @click="recreateReturnedOrder(selected)">
                     <span v-if="busy === selected.id" class="loader"></span>
                     <span v-else>{{ t('Add New Order') }}</span>
                 </button>
 
-                <button v-if="!isCourier && selected.status === 'pending' && !selected.courier_id" class="order-recreate" type="button" :disabled="busy === selected.id" @click="republishOrder(selected)">
+                <section v-if="canRepublishExpiredOrder(selected)" class="republish-expired" role="status">
+                    <b>{{ t('Time expired') }}</b>
+                    <span>{{ t('Republish Order') }}</span>
+                </section>
+
+                <button v-if="canRepublishExpiredOrder(selected)" class="order-recreate" type="button" :disabled="busy === selected.id" @click="republishOrder(selected)">
                     <span v-if="busy === selected.id" class="loader"></span><span v-else>{{ t('Republish Order') }}</span>
                 </button>
 
@@ -772,6 +818,18 @@ onUnmounted(() => window.clearInterval(ticker))
         </SheetModal>
 
         <OrderForm :open="showForm" :order="editing" @close="showForm = false" />
+
+        <div v-if="pickupConfirmation" class="pickup-confirm-backdrop" role="presentation" @click.self="pickupConfirmation = null">
+            <section class="pickup-confirm-dialog" role="dialog" aria-modal="true" :aria-label="t('Confirm Order Pickup')">
+                <span class="pickup-confirm-icon">✓</span>
+                <h3>{{ t('Confirm Order Pickup') }}</h3>
+                <p>{{ t('Confirm that you received the order from the merchant. The order will move to With Courier.') }}</p>
+                <div>
+                    <button type="button" class="pickup-confirm-cancel" @click="pickupConfirmation = null">{{ t('Cancel') }}</button>
+                    <button type="button" class="pickup-confirm-submit" @click="confirmPickup">{{ t('Confirm Pickup') }}</button>
+                </div>
+            </section>
+        </div>
     </AppShell>
 </template>
 
@@ -787,7 +845,9 @@ onUnmounted(() => window.clearInterval(ticker))
 .order-detail-section{padding:3px 0 0}.order-detail-section h3{margin:0 0 10px;color:var(--ink);font-size:15px;font-weight:900}.order-detail-section .detail-row{align-items:center;padding:7px 0}.order-detail-section .detail-row>b{font-size:12px;font-weight:800;text-align:start}.delivery-vehicle-pill{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border:1px solid color-mix(in srgb,var(--primary) 25%,var(--border));border-radius:10px;background:var(--primary-tint);color:var(--primary-strong)}.detail-note-box{margin:8px 0;padding:9px 10px;border-radius:10px;background:var(--surface-2);color:var(--ink-soft);font-size:11px;font-weight:700;line-height:1.55}.detail-note-box b{color:var(--danger)}.transport-note-box b{color:var(--primary-strong)}
 .customer-whatsapp{display:flex;align-items:center;justify-content:center;min-height:42px;margin:12px 0;border-radius:10px;background:#e0f0eb;color:#079050;font-size:12px;font-weight:900;text-decoration:none}.courier-merchant-card{display:grid;gap:9px;margin:16px 0;padding:14px;border:1.5px solid color-mix(in srgb,var(--primary) 35%,var(--border));border-radius:14px;background:var(--primary-tint)}.merchant-courier-card{background:linear-gradient(135deg,color-mix(in srgb,#dbeafe 68%,var(--surface)),var(--surface));border-color:color-mix(in srgb,#2563eb 32%,var(--border))}.merchant-card-label{color:var(--primary-strong);font-size:11px;font-weight:900}.merchant-card-profile{display:flex;align-items:center;gap:10px}.merchant-card-profile>span:last-child{display:grid;gap:3px;min-width:0}.merchant-card-profile b{font-size:14px;color:var(--ink)}.merchant-avatar{display:grid;place-items:center;order:-1;width:43px;height:43px;flex:none;border-radius:50%;background:var(--primary);color:#fff;font-size:18px;font-weight:900}.courier-avatar{background:#2563eb}.merchant-verified{display:inline-grid;place-items:center;width:15px;height:15px;margin-inline-start:4px;border-radius:50%;background:#1d9bf0;color:#fff;font-size:10px;font-style:normal;line-height:1;vertical-align:1px}.merchant-info-row{display:flex;align-items:center;gap:4px;overflow:hidden;color:var(--ink-soft);font-size:10px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.merchant-info-row svg{flex:none}.merchant-location-row{display:flex;align-items:center;gap:5px;overflow:hidden;padding:9px 10px;border-radius:10px;background:color-mix(in srgb,var(--success-tint) 78%,var(--surface));color:var(--success);font-size:10.5px;font-weight:900;text-decoration:none;text-overflow:ellipsis;white-space:nowrap}.merchant-location-row svg{flex:none}.merchant-card-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}.merchant-card-actions>*{display:grid;place-items:center;min-height:38px;border:0;border-radius:10px;background:var(--primary);color:#fff;font:900 11px var(--font);text-decoration:none;cursor:pointer}.merchant-card-actions a{background:color-mix(in srgb,var(--success-tint) 72%,var(--surface));color:var(--success)}.courier-assignment-pending{background:var(--surface-2);border-color:var(--border)}.courier-assignment-pending>b{font-size:12px}.courier-assignment-pending small{color:var(--ink-soft);font-size:10px;font-weight:700;line-height:1.6}
 .pickup-countdown{display:grid;justify-items:center;gap:6px;margin:14px 0;padding:13px;border:1px solid #edc980;border-radius:15px;background:#fff4de;color:var(--ink)}.pickup-countdown b{font-size:12px}.pickup-countdown strong{color:#c58315;font-size:26px;font-weight:900}.order-detail-actions{display:grid;gap:8px;margin-top:12px}.order-detail-actions .mini-btn{width:100%;min-height:48px;border-radius:13px;font-size:13px}.order-detail-close{width:100%;min-height:48px;margin-top:10px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2);color:var(--ink);font-size:13px;font-weight:900}
+.detail-total-card{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;padding:13px 14px;border-radius:13px;background:var(--primary);color:#fff}.detail-total-card span{font-size:11px;font-weight:850;opacity:.85}.detail-total-card strong{font-size:20px;font-weight:950;line-height:1}.detail-total-card small{font-family:var(--font);font-size:10px;opacity:.8}.order-archive{display:flex;align-items:center;justify-content:center;width:100%;min-height:43px;margin-top:10px;border:1px solid var(--primary);border-radius:11px;background:var(--surface);color:var(--primary);font-size:12px;font-weight:900;text-decoration:none}
 .order-complaint{display:flex;align-items:center;justify-content:center;width:100%;margin-top:10px;padding:9px 12px;border:1px solid color-mix(in srgb,var(--danger) 24%,transparent);border-radius:10px;background:color-mix(in srgb,var(--danger-tint) 82%,transparent);color:var(--danger);font:inherit;font-size:11px;font-weight:900;cursor:pointer}
+.republish-expired{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;padding:11px 12px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--border));border-radius:11px;background:var(--accent-tint);color:var(--accent);font-size:11px;font-weight:900}.republish-expired span{color:var(--ink-soft);font-size:10px}
 .order-chat{border-color:color-mix(in srgb,var(--primary) 28%,transparent);background:var(--primary-tint);color:var(--primary-strong)}
 .customer-phone-locked{letter-spacing:1px;color:var(--ink-faint);font-size:12px}
 .order-recreate{display:flex;align-items:center;justify-content:center;width:100%;min-height:39px;margin-top:10px;border:1px solid color-mix(in srgb,var(--primary) 28%,transparent);border-radius:10px;background:var(--primary-tint);color:var(--primary-strong);font:900 11px var(--font);cursor:pointer}.order-recreate:disabled{opacity:.6;cursor:wait}
@@ -798,4 +858,5 @@ onUnmounted(() => window.clearInterval(ticker))
 .mobile-order-vehicle-note{border-color:color-mix(in srgb,var(--primary) 22%,transparent);background:color-mix(in srgb,var(--primary-tint) 68%,var(--surface))}.mobile-order-vehicle-note b{color:var(--primary-strong)}
 .mobile-operational-section{margin:15px 0}.mobile-operational-section h4{margin:0 0 9px;color:var(--ink);font-size:12px;font-weight:900}.mobile-branch-route{display:grid;gap:5px;margin-top:9px;padding:11px 12px;border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border));border-radius:12px;background:color-mix(in srgb,var(--primary-tint) 62%,var(--surface));color:var(--primary-strong)}.mobile-route-label{font-size:10px;font-weight:900;color:var(--ink-soft)}.mobile-branch-route>b{font-size:12px}.mobile-branch-route small{color:var(--ink-soft);font-size:10px;font-weight:700}.mobile-order-timeline{display:grid;gap:0}.mobile-timeline-event{display:grid;grid-template-columns:28px 1fr;gap:9px;min-height:57px}.mobile-timeline-rail{position:relative;display:flex;justify-content:center}.mobile-timeline-rail::after{position:absolute;top:24px;bottom:-3px;width:1px;background:var(--border);content:""}.mobile-timeline-event:last-child .mobile-timeline-rail::after{display:none}.mobile-timeline-marker{position:relative;z-index:1;display:grid;place-items:center;width:23px;height:23px;border:1px solid var(--border);border-radius:50%;background:var(--surface);color:var(--ink-soft);font-size:11px;font-weight:900}.mobile-timeline-marker.is-created{border-color:color-mix(in srgb,var(--primary) 40%,var(--border));background:var(--primary-tint);color:var(--primary-strong)}.mobile-timeline-marker.is-status{border-color:color-mix(in srgb,var(--success) 44%,var(--border));background:var(--success-tint);color:var(--success)}.mobile-timeline-marker.is-movement{border-color:color-mix(in srgb,var(--accent) 42%,var(--border));background:var(--accent-tint);color:var(--accent)}.mobile-timeline-copy{display:grid;gap:2px;padding:1px 0 14px}.mobile-timeline-copy>b{font-size:11px;color:var(--ink)}.mobile-timeline-copy p{margin:0;color:var(--ink-soft);font-size:10px;line-height:1.55}.mobile-timeline-copy time{color:var(--ink-faint);font-size:9px}
 .merchant-location-row{display:none}.merchant-pickup-location{display:grid;grid-template-columns:38px minmax(0,1fr);gap:9px;padding:10px;border:1.5px solid color-mix(in srgb,var(--success) 45%,var(--border));border-radius:12px;background:linear-gradient(135deg,color-mix(in srgb,var(--success-tint) 76%,var(--surface)),var(--surface));color:inherit;text-decoration:none;box-shadow:0 3px 9px rgba(11,110,104,.06)}.merchant-pickup-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--success);color:#fff}.merchant-pickup-copy{display:grid;min-width:0;gap:2px}.merchant-pickup-copy small{color:var(--ink-faint);font-size:9px;font-weight:850}.merchant-pickup-copy b{overflow:hidden;color:var(--ink);font-size:11.5px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.merchant-pickup-copy em{overflow:hidden;color:var(--ink-soft);font-size:9.5px;font-style:normal;font-weight:700;line-height:1.45;text-overflow:ellipsis;white-space:nowrap}.merchant-pickup-open{display:flex;grid-column:1/-1;align-items:center;justify-content:center;gap:6px;min-height:35px;border-radius:9px;background:var(--primary);color:#fff;font-size:10.5px;font-weight:900;box-shadow:0 3px 8px rgba(11,110,104,.16)}.merchant-pickup-open svg{flex:none}
+.pickup-confirm-backdrop{position:fixed;z-index:180;inset:0;display:grid;place-items:center;padding:20px;background:rgba(7,20,22,.58);backdrop-filter:blur(4px)}.pickup-confirm-dialog{width:min(100%,350px);padding:23px 20px;border:1px solid var(--border);border-radius:20px;background:var(--surface);box-shadow:0 25px 65px rgba(0,0,0,.3);text-align:center}.pickup-confirm-icon{display:grid;width:45px;height:45px;place-items:center;margin:0 auto 12px;border-radius:15px;background:var(--primary-tint);color:var(--primary-strong);font-size:22px;font-weight:950}.pickup-confirm-dialog h3{margin:0;color:var(--ink);font-size:16px;font-weight:950}.pickup-confirm-dialog p{margin:9px 0 18px;color:var(--ink-soft);font-size:11px;font-weight:700;line-height:1.75}.pickup-confirm-dialog>div{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pickup-confirm-dialog button{min-height:43px;border-radius:12px;font:850 11px var(--font);cursor:pointer}.pickup-confirm-cancel{border:1px solid var(--border);background:var(--surface-2);color:var(--ink-soft)}.pickup-confirm-submit{border:0;background:var(--primary);color:#fff}
 </style>

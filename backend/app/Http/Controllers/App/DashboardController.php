@@ -14,13 +14,33 @@ class DashboardController extends Controller
 {
     public function app(Request $request)
     {
+        $request->validate([
+            // The courier home intentionally receives only a small first
+            // page. Additional available jobs are fetched on demand instead
+            // of serialising the entire regional queue on every app visit.
+            'available_cursor' => ['nullable', 'string', 'max:1024'],
+        ]);
+
         $user = $request->user();
         $isCourier = $user->isCourierRole();
+        $available = $isCourier
+            ? $this->availableOrders($user, $request->input('available_cursor'))
+            : ['orders' => [], 'pagination' => ['next_cursor' => null, 'has_more' => false]];
+
+        if ($request->expectsJson()) {
+            abort_unless($isCourier, 403);
+
+            return response()->json([
+                'availableOrders' => $available['orders'],
+                'availablePagination' => $available['pagination'],
+            ]);
+        }
 
         return Inertia::render($isCourier ? 'Mobile/CourierHome' : 'Mobile/MerchantHome', [
             'stats' => $this->statsFor($user, $isCourier),
             'recentOrders' => $this->recentOrders($user, $isCourier),
-            'availableOrders' => $isCourier ? $this->availableOrders($user) : [],
+            'availableOrders' => $available['orders'],
+            'availablePagination' => $available['pagination'],
             'heroSlides' => $this->heroSlides(
                 $isCourier,
                 (int) ($request->session()->get('operating_branch_id') ?: $user->branch_id),
@@ -159,14 +179,16 @@ class DashboardController extends Controller
         })->all();
     }
 
-    protected function availableOrders(User $user): array
+    protected function availableOrders(User $user, ?string $cursor = null): array
     {
-        return app(CourierOrderAccess::class)
+        $paginator = app(CourierOrderAccess::class)
             ->available($user)
             ->with(['tenant:id,name', 'merchant:id,name,phone,address,shop_name,merchant_verified_at,role'])
             ->latest('id')
-            ->limit(12)
-            ->get()
+            ->cursorPaginate(10, ['*'], 'available_cursor', $cursor);
+
+        return [
+            'orders' => $paginator->getCollection()
             ->map(fn (Order $order) => [
                 'id' => $order->id,
                 'track_no' => $order->track_no,
@@ -194,7 +216,13 @@ class DashboardController extends Controller
                 'pickup_deadline_at' => $order->pickup_deadline_at?->toIso8601String(),
                 'created_at' => $order->created_at?->toIso8601String(),
             ])
-            ->all();
+            ->values()
+            ->all(),
+            'pagination' => [
+                'next_cursor' => $paginator->nextCursor()?->encode(),
+                'has_more' => $paginator->nextCursor() !== null,
+            ],
+        ];
     }
 
     /**

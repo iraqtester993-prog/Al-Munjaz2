@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Events\AdminNotificationDispatched;
 use App\Models\Notification;
 use App\Models\NotificationCampaign;
+use App\Models\Scopes\TenantScope;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -126,7 +127,10 @@ class AdminNotificationDispatcher
      */
     private function recipientsFor(array $payload): Builder
     {
-        $query = User::query()
+        // The platform dashboard may send to every active app account. Do
+        // not let the host-selected tenant scope silently reduce an “all”
+        // campaign to a single tenant.
+        $query = User::withoutGlobalScope(TenantScope::class)
             ->whereIn('role', User::NOTIFICATION_RECIPIENT_ROLES)
             ->where('status', 'active')
             ->orderBy('id');

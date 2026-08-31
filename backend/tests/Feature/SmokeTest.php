@@ -528,7 +528,7 @@ class SmokeTest extends TestCase
             'type' => 'paid_order',
             'direction' => -1,
         ]);
-        $this->assertSame($startingBudget - $order->price, $courier->wallet->fresh()->budget);
+        $this->assertSame($startingBudget - $order->price - $order->fee, $courier->wallet->fresh()->budget);
 
         $this->actingAs($courier)->post("/app/orders/{$order->id}/status", ['status' => 'courier'])
             ->assertRedirect();
@@ -729,7 +729,7 @@ class SmokeTest extends TestCase
             'type' => 'paid_order',
             'direction' => -1,
         ]);
-        $this->assertSame($startingBudget - $order->price, $courier->wallet->fresh()->budget);
+        $this->assertSame($startingBudget - $order->price - $order->fee, $courier->wallet->fresh()->budget);
     }
 
     public function test_wallet_withdraw_and_chat_send(): void

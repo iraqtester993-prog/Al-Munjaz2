@@ -50,7 +50,7 @@ class DashboardController extends Controller
                 ? User::query()->whereIn('role', User::COURIER_ROLES)->where('status', 'active')->count()
                 : null,
             'fees' => $user->isSuperAdmin()
-                ? Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'delivery_fee')->sum('amount')
+                ? Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'commission')->sum('amount')
                 : null,
         ];
 

@@ -6,6 +6,7 @@ import AppShell from '../../Components/AppShell.vue'
 import SheetModal from '../../Components/SheetModal.vue'
 import PushNotificationSettings from '../../Components/PushNotificationSettings.vue'
 import DeveloperInfoSheet from '../../Components/DeveloperInfoSheet.vue'
+import LegalInfoSheet from '../../Components/LegalInfoSheet.vue'
 import { bytesToMegabytes, CourierDocumentError, prepareCourierDocument } from '../../Utils/courierDocuments'
 
 const props = defineProps({
@@ -15,6 +16,7 @@ const props = defineProps({
     courierUploadLimits: { type: Object, default: () => ({}) },
     merchantUploadLimits: { type: Object, default: () => ({}) },
     profile: { type: Object, default: () => ({ documents: [] }) },
+    legalContent: { type: Object, default: () => ({}) },
 })
 
 const page = usePage()
@@ -24,6 +26,7 @@ const isCourier = computed(() => ['courier', 'pickup_courier', 'delivery_courier
 const showEdit = ref(false)
 const showVerification = ref(Boolean(page.props.errors?.documents))
 const showDeveloperInfo = ref(false)
+const showLegalInfo = ref(false)
 const showDeleteAccountNotice = ref(false)
 const replacingDocumentId = ref(null)
 const documentUploadError = ref('')
@@ -53,7 +56,8 @@ const documentFields = computed(() => [
     { key: 'residence_back_document', existing: 'residence_back', label: `${t('Residence Card')} — ${t('Back')}` },
 ])
 const courierDocumentLabels = computed(() => ({
-    residence: t('Residence Card'),
+    residence: `${t('Residence Card')} — ${t('Front')}`,
+    residence_back: `${t('Residence Card')} — ${t('Back')}`,
     id_front: `${t('National ID Card')} — ${t('Front')}`,
     id_back: `${t('National ID Card')} — ${t('Back')}`,
     license_front: `${t('Driving License')} — ${t('Front')}`,
@@ -107,6 +111,7 @@ function icon(name) {
         logout: 'M10 17l5-5-5-5m5 5H3m12-7h3a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-3',
         user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0',
         wallet: 'M20 7H6a2 2 0 0 1-2-2 2 2 0 0 1 2-2h13v3 M20 7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6 M16 14h.01',
+        archive: 'M4 5h16v4H4zM6 9v10h12V9M10 13h4',
         trash: 'M4 7h16M10 11v5m4-5v5M9 7l1-3h4l1 3m-9 0 1 13h10l1-13',
     }[name] || ''
 }
@@ -278,9 +283,11 @@ function logout() { router.post(route('logout')) }
 
         <section class="list-card profile-actions">
             <button class="settings-row clickable" type="button" @click="openEdit"><div class="sri"><svg viewBox="0 0 24 24"><path :d="icon('user')" /></svg></div><div class="srt">{{ isCourier ? t('My Profile') : t('Account Details') }}</div><span class="srv">{{ isCourier ? t('Documents') : selectedLocale }} · {{ t('Edit') }}</span></button>
+            <a v-if="isCourier" class="settings-row clickable" :href="route('app.reports')"><div class="sri"><svg viewBox="0 0 24 24"><path :d="icon('archive')" /></svg></div><div class="srt">{{ t('Archive') }}</div><span class="srv">›</span></a>
             <a class="settings-row clickable" :href="route('app.notifications')"><div class="sri"><svg viewBox="0 0 24 24"><path :d="icon('bell')" /></svg></div><div class="srt">{{ t('Notifications') }}</div><span class="notification-row-end"><b v-if="notificationUnread > 0" class="notification-count">{{ notificationUnread > 9 ? '9+' : notificationUnread }}</b><span class="srv">›</span></span></a>
             <button v-if="!isCourier" class="settings-row clickable" type="button" @click="openVerification"><div class="sri"><svg viewBox="0 0 24 24"><path :d="icon('shield')" /></svg></div><div class="srt">{{ t('Account Verification') }}</div><span class="srv profile-verification-link" :class="verificationState">{{ verificationStatusLabel(verificationState) }} ›</span></button>
             <button class="settings-row clickable" type="button" @click="openSupport"><div class="sri"><svg viewBox="0 0 24 24"><path :d="icon('chat')" /></svg></div><div class="srt">{{ t('Help & Support') }}</div><span class="srv">›</span></button>
+            <button class="settings-row clickable" type="button" @click="showLegalInfo = true"><div class="sri"><svg viewBox="0 0 24 24"><path :d="icon('shield')" /></svg></div><div class="srt">{{ t('Privacy Policy') }} · {{ t('Terms of Use') }}</div><span class="srv">›</span></button>
             <button class="settings-row clickable" type="button" @click="showDeveloperInfo = true"><div class="sri"><svg viewBox="0 0 24 24"><path :d="icon('info')" /></svg></div><div class="srt">{{ t('About the app') }}</div><span class="srv">›</span></button>
         </section>
 
@@ -336,6 +343,7 @@ function logout() { router.post(route('logout')) }
         </SheetModal>
 
         <DeveloperInfoSheet :open="showDeveloperInfo" @close="showDeveloperInfo = false" />
+        <LegalInfoSheet :open="showLegalInfo" :legal-content="legalContent" @close="showLegalInfo = false" />
     </AppShell>
 </template>
 

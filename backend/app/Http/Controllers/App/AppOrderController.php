@@ -38,6 +38,10 @@ class AppOrderController extends Controller
             // merchant or courier account with a long delivery history.
             'cursor' => ['nullable', 'string', 'max:1024'],
             'list' => ['nullable', 'boolean'],
+            // Home-screen rows link directly to a detail sheet. Keeping the
+            // requested id in the Inertia payload makes that work on both a
+            // cold load and an in-app visit where the component is retained.
+            'open' => ['nullable', 'integer', 'min:1'],
             // `detail` is intentionally served by this same authenticated
             // route as a small JSON response. This avoids a second public
             // route while ensuring the exact same tenant/courier scope is
@@ -77,13 +81,25 @@ class AppOrderController extends Controller
             $query->where(function ($builder) use ($q, $isCourier) {
                 $builder->where('track_no', 'like', "%{$q}%")
                     ->orWhere('customer_name_ar', 'like', "%{$q}%")
-                    ->orWhere('customer_name_en', 'like', "%{$q}%");
+                    ->orWhere('customer_name_en', 'like', "%{$q}%")
+                    // The courier query is already restricted to orders
+                    // explicitly assigned to that courier. Phone search is
+                    // therefore useful operationally without exposing a
+                    // regional or another courier's customer directory.
+                    ->orWhere('phone', 'like', "%{$q}%");
 
-                // A courier cannot use search as a side channel to probe a
-                // customer's number before the order is physically with them.
-                if (! $isCourier) {
-                    $builder->orWhere('phone', 'like', "%{$q}%");
-                }
+                // Search stays inside the already-authorised order query.
+                // A courier can locate an assigned delivery by merchant name;
+                // a merchant can locate their own order by its courier.
+                $relation = $isCourier ? 'merchant' : 'courier';
+                $builder->orWhereHas($relation, function (Builder $person) use ($q, $isCourier): void {
+                    $person->where('name', 'like', "%{$q}%")
+                        ->orWhere('phone', 'like', "%{$q}%");
+
+                    if ($isCourier) {
+                        $person->orWhere('shop_name', 'like', "%{$q}%");
+                    }
+                });
             });
         }
 
@@ -144,6 +160,7 @@ class AppOrderController extends Controller
             'filter' => $filter,
             'q' => $q,
             'list' => $request->boolean('list'),
+            'openOrderId' => $request->integer('open') ?: null,
             'isCourier' => $isCourier,
             'wallet' => $this->walletData($viewer),
         ];
@@ -531,6 +548,11 @@ class AppOrderController extends Controller
         $this->authorizeOrder($order, $request);
         abort_unless($request->user()->role === 'merchant', 403, 'إعادة نشر الطلب متاحة للتاجر فقط.');
         abort_unless($order->status === 'pending' && ! $order->courier_id, 422, 'يمكن إعادة نشر الطلبات قيد الانتظار وغير المقبولة فقط.');
+        abort_unless(
+            $order->pickup_deadline_at && $order->pickup_deadline_at->isPast(),
+            422,
+            'لا يمكن إعادة نشر الطلب قبل انتهاء وقت عرضه للمندوبين.'
+        );
 
         $minutes = max(1, min((int) Setting::get('order_expiry_minutes', 30), 1440));
         $order->forceFill(['pickup_deadline_at' => now()->addMinutes($minutes)])->save();

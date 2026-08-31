@@ -225,7 +225,7 @@ class AdminDashboardController extends Controller
             'summary' => [
                 'settlements' => Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'settlement')->where('direction', 1)->sum('amount'),
                 'withdrawals' => Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'withdrawal')->sum('amount'),
-                'fees' => Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'delivery_fee')->sum('amount'),
+                'fees' => Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'commission')->sum('amount'),
                 'collected' => Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'collected')->where('direction', 1)->sum('amount'),
             ],
         ]);

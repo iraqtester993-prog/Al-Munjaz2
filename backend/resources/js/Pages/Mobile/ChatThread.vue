@@ -186,6 +186,13 @@ function handleWindowFocus() {
     requestRefresh()
 }
 
+function handleViewportChange() {
+    // Wait for the shell to adopt the visual viewport height, then keep the
+    // newest bubble and the active composer in the visible part of the chat.
+    if (document.activeElement !== composerEl.value) return
+    requestAnimationFrame(scrollDown)
+}
+
 onMounted(() => {
     disposed = false
     scrollDown()
@@ -196,6 +203,7 @@ onMounted(() => {
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('blur', handleWindowBlur)
     window.addEventListener('focus', handleWindowFocus)
+    window.addEventListener('almunjaz:viewport-change', handleViewportChange)
 })
 
 onBeforeUnmount(() => {
@@ -204,6 +212,7 @@ onBeforeUnmount(() => {
     document.removeEventListener('visibilitychange', handleVisibilityChange)
     window.removeEventListener('blur', handleWindowBlur)
     window.removeEventListener('focus', handleWindowFocus)
+    window.removeEventListener('almunjaz:viewport-change', handleViewportChange)
 })
 </script>
 

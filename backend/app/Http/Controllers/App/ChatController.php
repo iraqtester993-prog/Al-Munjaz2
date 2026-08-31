@@ -131,12 +131,15 @@ class ChatController extends Controller
             $order = Order::withoutGlobalScope(TenantScope::class)->findOrFail($data['order_id']);
             $this->ensureOrderChatAccess($order, $user);
 
-            // A complaint must always reach operations, even when the order
-            // already has a courier. The merchant-to-courier conversation is
-            // retained separately so operational support has a clear audited
-            // thread with the order context instead of an ambiguous reply.
+            // An order support request always reaches operations. Keep the
+            // audited order context, but label it by courier and order rather
+            // than presenting it to the merchant as a "complaint".
             if ($request->boolean('complaint')) {
-                abort_unless($user->role === 'merchant', 403);
+                abort_unless($user->role === 'merchant' || $user->isCourierRole(), 403);
+
+                $supportSnapshot = $user->isCourierRole()
+                    ? $this->courierCancellationSnapshotAttributes($order, $user)
+                    : $this->complaintSnapshotAttributes($order);
 
                 $chat = Chat::withoutGlobalScope(TenantScope::class)->firstOrCreate(
                     [
@@ -145,7 +148,7 @@ class ChatController extends Controller
                         'counterparty_type' => 'order_support',
                         'order_id' => $order->id,
                     ],
-                    $this->complaintSnapshotAttributes($order) + [
+                    $supportSnapshot + [
                         'last_message' => '',
                         'last_at' => now(),
                     ]
@@ -154,7 +157,9 @@ class ChatController extends Controller
                 // Legacy complaints did not retain which courier the issue
                 // referred to. Attach a snapshot the first time one is
                 // opened so the dashboard has a stable, auditable label.
-                $this->completeLegacyComplaintSnapshot($chat, $order);
+                if ($user->role === 'merchant') {
+                    $this->completeLegacyComplaintSnapshot($chat, $order);
+                }
 
                 return redirect()->route('app.chats.show', $chat);
             }
@@ -815,8 +820,22 @@ class ChatController extends Controller
 
         return [
             'counterparty_id' => $courier?->id,
-            'title_ar' => 'شكوى / تأخر — '.$courierName.' — '.$order->track_no,
-            'title_en' => 'Complaint / delay — '.$courierName.' — '.$order->track_no,
+            'title_ar' => 'دعم الطلب — '.$courierName.' — '.$order->track_no,
+            'title_en' => 'Order support — '.$courierName.' — '.$order->track_no,
+        ];
+    }
+
+    /** @return array<string, int|string|null> */
+    private function courierCancellationSnapshotAttributes(Order $order, User $courier): array
+    {
+        $merchantId = $this->merchantIdForOrder($order, $courier);
+        $merchant = $merchantId ? User::withTrashed()->find($merchantId) : null;
+        $merchantName = $merchant?->shop_name ?: ($merchant?->name ?: 'تاجر غير محدد');
+
+        return [
+            'counterparty_id' => $merchant?->id,
+            'title_ar' => 'دعم إلغاء الطلب — '.$merchantName.' — '.$order->track_no,
+            'title_en' => 'Cancellation support — '.$merchantName.' — '.$order->track_no,
         ];
     }
 
@@ -827,7 +846,7 @@ class ChatController extends Controller
         }
 
         $legacyTitle = (string) $chat->title_ar;
-        if ($legacyTitle !== '' && ! str_starts_with($legacyTitle, 'شكوى / تأخر —')) {
+        if ($legacyTitle !== '' && ! str_starts_with($legacyTitle, 'شكوى / تأخر —') && ! str_starts_with($legacyTitle, 'دعم الطلب —')) {
             return;
         }
 
@@ -850,9 +869,9 @@ class ChatController extends Controller
             $titleKu = 'گفتوگۆ لەگەڵ '.($counterpartyName ?: 'بەرامبەر').($trackNo ? ' — '.$trackNo : '');
         } elseif ($chat->counterparty_type === 'order_support') {
             $counterpartyName ??= 'مندوب غير مكلّف';
-            $titleAr = 'شكوى / تأخر — '.$counterpartyName.($trackNo ? ' — '.$trackNo : '');
-            $titleEn = 'Complaint / delay — '.$counterpartyName.($trackNo ? ' — '.$trackNo : '');
-            $titleKu = 'سکاڵا / دواکەوتن — '.$counterpartyName.($trackNo ? ' — '.$trackNo : '');
+            $titleAr = 'دعم الطلب — '.$counterpartyName.($trackNo ? ' — '.$trackNo : '');
+            $titleEn = 'Order support — '.$counterpartyName.($trackNo ? ' — '.$trackNo : '');
+            $titleKu = 'پشتیوانی داواکاری — '.$counterpartyName.($trackNo ? ' — '.$trackNo : '');
         } else {
             $titleAr = $chat->title_ar ?: 'الدعم الفني';
             $titleEn = $chat->title_en ?: 'Support';
@@ -921,8 +940,7 @@ class ChatController extends Controller
         $courierName = $courier?->name;
 
         if ($chat->counterparty_type === 'order_support') {
-            $courierName ??= $order ? $this->operationalCourierFor($order)?->name : null;
-            $displayTitle = 'شكوى / تأخر — '.($courierName ?: 'مندوب غير مكلّف').($order?->track_no ? ' — '.$order->track_no : '');
+            $displayTitle = $chat->title_ar ?: 'دعم الطلب'.($order?->track_no ? ' — '.$order->track_no : '');
         } elseif ($isMerchantCourierChat) {
             $displayTitle = 'محادثة الطلب — '.($merchantName ?: 'تاجر').' ↔ '.($courierName ?: 'مندوب').($order?->track_no ? ' — '.$order->track_no : '');
         } else {

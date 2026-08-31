@@ -15,6 +15,7 @@ const props = defineProps({
     detailStatus: { type: String, default: null },
     orderPagination: { type: Object, default: () => ({ has_more: false, next_cursor: null }) },
     orders: { type: Array, default: () => [] },
+    isCourier: { type: Boolean, default: false },
 })
 
 const page = usePage()
@@ -31,6 +32,7 @@ const filterForm = ref({
     to: props.filters.to || '',
     status: archivedStatuses.includes(props.filters.status) ? props.filters.status : 'all',
     province_id: props.filters.province_id ? String(props.filters.province_id) : '',
+    q: props.filters.q || '',
 })
 
 const statusMeta = computed(() => ({
@@ -106,6 +108,7 @@ function reportQuery(period = filterForm.value.period) {
     if (filterForm.value.to) query.to = filterForm.value.to
     if (filterForm.value.status && filterForm.value.status !== 'all') query.status = filterForm.value.status
     if (filterForm.value.province_id) query.province_id = filterForm.value.province_id
+    if (filterForm.value.q.trim()) query.q = filterForm.value.q.trim()
     return query
 }
 
@@ -125,7 +128,7 @@ function applyFilters() {
 }
 
 function clearFilters() {
-    filterForm.value = { period: 'all', from: '', to: '', status: 'all', province_id: '' }
+    filterForm.value = { period: 'all', from: '', to: '', status: 'all', province_id: '', q: '' }
     filtersOpen.value = false
     visitReport('all')
 }
@@ -135,6 +138,14 @@ function selectStatus(status) {
         ...reportQuery(),
         detail_status: status,
     }, { preserveScroll: true, replace: true })
+}
+
+function orderPerson(order) {
+    return props.isCourier ? order?.merchant?.name : order?.courier?.name
+}
+
+function openOrder(order) {
+    router.get(route('app.orders'), { list: 1, open: order.id }, { preserveScroll: true })
 }
 
 function closeDetails() {
@@ -214,6 +225,7 @@ async function copyReport() {
                         <option v-for="province in provinceOptions" :key="province.id" :value="province.id">{{ provinceName(province) }}</option>
                     </select>
                 </label>
+                <label class="filter-field"><span>{{ t('Search') }}</span><input v-model="filterForm.q" :placeholder="t('Customer name, phone or merchant')" inputmode="search" /></label>
                 <button class="apply-filters" type="button" @click="applyFilters">{{ t('Apply filters') }}</button>
             </section>
 
@@ -261,12 +273,13 @@ async function copyReport() {
             </div>
 
             <template v-if="detailOrders.length">
+                <div class="archive-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/></svg><input v-model="filterForm.q" :placeholder="t('Customer name, phone or merchant')" @change="selectStatus(activeStatus)" /></div>
                 <div class="list-card report-order-list">
-                    <article v-for="order in detailOrders" :key="order.id" class="report-order-row">
+                    <button v-for="order in detailOrders" :key="order.id" class="report-order-row" type="button" @click="openOrder(order)">
                         <span class="report-order-icon" :style="{ color: activeMeta.color, background: activeMeta.tint }">{{ activeMeta.icon }}</span>
-                        <span class="report-order-mid"><b>{{ customerName(order) }}</b><small>{{ provinceName(order.province) }} · <span class="mono">{{ order.track_no }}</span> · {{ formatDate(order.date) }}</small></span>
-                        <span class="report-order-end"><b class="mono">{{ fmt(order.price) }} {{ t('IQD') }}</b><StatusBadge :status="order.status" /></span>
-                    </article>
+                        <span class="report-order-mid"><b>{{ customerName(order) }}</b><small>{{ orderPerson(order) || provinceName(order.province) }} · {{ formatDate(order.date) }}</small></span>
+                        <span class="report-order-end"><b class="mono">{{ fmt(Number(order.price || 0) + Number(order.fee || 0)) }} {{ t('IQD') }}</b><StatusBadge :status="order.status" /></span>
+                    </button>
                 </div>
                 <button v-if="orderPagination.has_more" class="load-more" type="button" :disabled="loadingMore" @click="loadMore">
                     {{ loadingMore ? t('Loading...') : t('Load more') }}
@@ -279,4 +292,5 @@ async function copyReport() {
 
 <style scoped>
 .report-tabs{display:grid;grid-template-columns:1fr 1fr auto auto;gap:7px;margin-bottom:14px}.report-tabs button{display:flex;align-items:center;justify-content:center;gap:4px;min-height:42px;border:1.5px solid var(--border);border-radius:12px;background:var(--surface);color:var(--ink);font:inherit;font-size:10.5px;font-weight:800}.report-tabs button.active{border-color:var(--primary);background:var(--primary);color:#fff}.report-tabs .utility-tab,.report-tabs .copy-report{padding:0 10px}.report-tabs svg,.report-chevron,.report-back svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.report-filters{margin:-4px 0 14px;padding:13px}.filter-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.filter-heading b{font-size:12px;font-weight:900}.filter-heading button{border:0;color:var(--danger);font:800 10px var(--font)}.filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.filter-field{display:grid;gap:5px;margin-bottom:10px;color:var(--ink-soft);font-size:10px;font-weight:800}.filter-field input,.filter-field select{width:100%;min-height:38px;padding:8px 9px;border:1px solid var(--border);border-radius:10px;outline:none;background:var(--surface-2);color:var(--ink);font:inherit;font-size:11px;font-weight:750}.filter-field input:focus,.filter-field select:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-tint)}.apply-filters{width:100%;min-height:40px;border:0;border-radius:10px;background:var(--primary);color:#fff;font:850 11.5px var(--font)}.report-total{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:17px;padding:15px 16px;border-radius:15px;background:var(--primary);color:#fff}.report-total span{display:block;font-size:10.5px;font-weight:700;opacity:.8}.report-total strong{display:block;margin-top:3px;font-size:22px;font-weight:900;line-height:1}.report-total strong small{font-family:var(--font);font-size:11px;opacity:.78}.report-total-count{text-align:end}.status-summary{margin-bottom:17px}.section-title{margin:0 0 10px}.section-title>span{color:var(--ink-faint);font-size:9.5px;font-weight:700}.report-status{width:100%;display:flex;align-items:center;gap:12px;margin-bottom:9px;padding:13px 14px;border:1px solid var(--border);border-radius:14px;background:var(--surface);font:inherit;text-align:right}.report-status-icon,.report-detail-icon,.report-order-icon{display:grid;place-items:center;flex:none;border-radius:12px;font-weight:900}.report-status-icon{width:41px;height:41px}.report-status-copy{flex:1;min-width:0}.report-status-copy b,.report-status-copy small{display:block}.report-status-copy b{font-size:12.5px;font-weight:900}.report-status-copy small{margin-top:3px;color:var(--ink-faint);font-size:10px;font-weight:700}.report-status-value{font-size:13px;font-weight:900;text-align:end}.report-status-value small{display:block;margin-top:2px;color:var(--ink-faint);font-family:var(--font);font-size:9px;font-weight:700}.report-chevron{color:var(--ink-faint);flex:none}.province-report{margin-bottom:14px}.province-heading{padding:14px;border-bottom:1px solid var(--border)}.province-heading b,.province-heading span{display:block}.province-heading b{font-size:12.5px;font-weight:900}.province-heading span{margin-top:2px;color:var(--ink-faint);font-size:9.5px;font-weight:700}.province-row{display:grid;grid-template-columns:minmax(72px,.8fr) minmax(70px,1fr) auto;align-items:center;gap:9px;padding:11px 14px;border-bottom:1px solid var(--border)}.province-row:last-child{border-bottom:0}.province-copy{min-width:0}.province-copy b,.province-copy span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.province-copy b{font-size:10.5px;font-weight:850}.province-copy span{margin-top:2px;color:var(--ink-faint);font-size:9px;font-weight:700}.province-bar{height:6px;overflow:hidden;border-radius:99px;background:var(--surface-2)}.province-bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--primary),var(--accent))}.province-row>strong{font-size:10px;font-weight:900}.report-detail-head{display:flex;align-items:center;gap:9px;margin-bottom:14px}.report-back{display:grid;place-items:center;width:36px;height:36px;border:0;border-radius:10px;background:var(--surface-2);color:var(--ink)}.report-detail-icon{width:32px;height:32px;border-radius:10px}.report-detail-head>b{flex:1;font-size:14px;font-weight:900}.report-detail-total{text-align:end}.report-detail-total strong,.report-detail-total small{display:block}.report-detail-total strong{font-size:13px;font-weight:900}.report-detail-total small{margin-top:2px;color:var(--ink-faint);font-size:9.5px;font-weight:700}.report-order-row{display:flex;align-items:center;gap:10px;padding:12px 13px;border-bottom:1px solid var(--border)}.report-order-row:last-child{border-bottom:0}.report-order-icon{width:37px;height:37px;border-radius:11px}.report-order-mid{flex:1;min-width:0}.report-order-mid b,.report-order-mid small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.report-order-mid b{font-size:12px;font-weight:900}.report-order-mid small{margin-top:2px;color:var(--ink-faint);font-size:9px;font-weight:700}.report-order-end{text-align:end}.report-order-end>b{display:block;font-size:10.5px;font-weight:900}.report-order-end :deep(.badge){margin-top:4px}.load-more{display:block;width:100%;min-height:42px;margin-top:10px;border:1px solid var(--primary);border-radius:11px;background:var(--surface);color:var(--primary);font:850 11.5px var(--font)}.load-more:disabled{opacity:.65}@media(max-width:380px){.report-tabs{grid-template-columns:1fr 1fr auto}.report-tabs .copy-report{grid-column:span 3}.province-row{grid-template-columns:minmax(65px,.8fr) minmax(45px,1fr) auto;gap:7px;padding-inline:10px}}
+.archive-search{position:sticky;z-index:4;top:0;display:flex;align-items:center;gap:8px;margin:0 0 9px;padding:9px 11px;border:1px solid var(--border);border-radius:12px;background:color-mix(in srgb,var(--surface) 96%,var(--primary-tint));box-shadow:0 3px 12px rgba(10,45,42,.08)}.archive-search svg{width:17px;height:17px;flex:none;fill:none;stroke:var(--ink-faint);stroke-width:2;stroke-linecap:round}.archive-search input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:var(--ink);font:750 11px var(--font)}.report-order-row{width:100%;border:0;background:var(--surface);color:var(--ink);font:inherit;text-align:inherit;cursor:pointer}
 </style>

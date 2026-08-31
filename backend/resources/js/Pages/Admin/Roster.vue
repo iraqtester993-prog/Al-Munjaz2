@@ -12,6 +12,8 @@ const props = defineProps({
     selectedRole: { type: String, default: 'all' },
     query: { type: Object, default: () => ({}) },
     pagination: { type: Object, default: () => ({ currentPage: 1, lastPage: 1, total: 0, from: null, to: null }) },
+    canUpdateUsers: { type: Boolean, default: false },
+    canDeleteUsers: { type: Boolean, default: false },
 })
 
 const active = ref(props.query?.status || 'all')
@@ -29,6 +31,7 @@ const editForm = useForm({
     shop_name: '',
     address: '',
     vehicle: '',
+    admin_deduction_per_order: 0,
 })
 
 const filterList = computed(() => [
@@ -59,7 +62,7 @@ function statusLabel(status) {
 }
 
 function changeStatus(row, status) {
-    if (!row.user) return
+    if (!props.canUpdateUsers || !row.user) return
     if (!confirm(t('Change status to') + ' ' + statusLabel(status) + '?')) return
     router.post(route('admin.users.status', row.user.id), { status }, {
         preserveScroll: true,
@@ -68,7 +71,7 @@ function changeStatus(row, status) {
 }
 
 function reviewDoc(row, verdict, requestedDocumentId = null) {
-    if (!row.docs || row.docs === 0) return
+    if (!props.canUpdateUsers || !row.docs || row.docs === 0) return
     const docId = requestedDocumentId || row.pendingDocs?.[0]
     if (!docId) return
     if (!confirm(t('Review this document?') + ' (' + (verdict === 'approved' ? t('Approve') : t('Reject')) + ')')) return
@@ -79,7 +82,7 @@ function reviewDoc(row, verdict, requestedDocumentId = null) {
 }
 
 function setMerchantVerification(row, verified) {
-    if (!row.user || isCourier.value) return
+    if (!props.canUpdateUsers || !row.user || isCourier.value) return
 
     if (verified && !row.verification?.ready_to_verify) {
         openDetails(row)
@@ -101,7 +104,7 @@ function setMerchantVerification(row, verified) {
 }
 
 function deleteAccount(row) {
-    if (!row.user) return
+    if (!props.canDeleteUsers || !row.user) return
     const message = `${t('Delete')} ${row.user.name}? ${t('This action is recoverable but is blocked while the account has open orders.')}`
     if (!confirm(message)) return
     router.delete(route('admin.users.destroy', row.user.id), {
@@ -245,7 +248,7 @@ function syncOpenDetails(row) {
 }
 
 function openEdit(row) {
-    if (!row.user) return
+    if (!props.canUpdateUsers || !row.user) return
     detailsRow.value = null
     editingRow.value = row
     editForm.clearErrors()
@@ -257,6 +260,7 @@ function openEdit(row) {
         shop_name: row.user.shop_name || '',
         address: row.user.address || '',
         vehicle: row.user.vehicle || '',
+        admin_deduction_per_order: Number(row.user.admin_deduction_per_order || 0),
     })
     editForm.reset()
 }
@@ -364,6 +368,10 @@ function vehicleLabel(value) {
                         {{ t('Points Balance') }}
                         <label class="mono">{{ fmt(row.points_balance) }}</label>
                     </span>
+                    <span v-if="isCourier">
+                        استقطاع الإدارة لكل طلب
+                        <label class="mono">{{ fmt(row.admin_deduction_per_order) }} {{ t('IQD') }}</label>
+                    </span>
                     <span v-else>
                         {{ t('Shop Name') }}
                         <label>{{ row.user?.shop_name || '—' }}</label>
@@ -406,13 +414,13 @@ function vehicleLabel(value) {
 
                 <div style="display: flex; gap: 8px; flex-wrap: wrap">
                     <button class="fbtn mini account-action" type="button" @click="openDetails(row)">{{ t('View Details') }}</button>
-                    <button class="fbtn mini account-action" type="button" @click="openEdit(row)">{{ t('Edit') }}</button>
-                    <button v-if="!isCourier && !row.verification?.verified" class="fbtn mini verification-action" type="button" @click="setMerchantVerification(row, true)">{{ row.verification?.ready_to_verify ? t('Grant verification') : t('Review Documents') }}</button>
-                    <button v-if="!isCourier && row.verification?.verified" class="fbtn mini verification-remove" type="button" @click="setMerchantVerification(row, false)">{{ t('Remove verification') }}</button>
-                    <button v-if="row.status !== 'active'" class="fbtn mini" style="background: var(--success-tint); color: var(--success); border: none" @click="changeStatus(row, 'active')">{{ t('Activate') }}</button>
-                    <button v-if="row.status === 'active'" class="fbtn mini" style="background: var(--warning-tint); color: var(--warning); border: none" @click="changeStatus(row, 'suspended')">{{ t('Suspend') }}</button>
-                    <button v-if="row.status === 'pending'" class="fbtn mini" @click="changeStatus(row, 'rejected')">{{ t('Reject') }}</button>
-                    <button class="fbtn mini delete-account" type="button" @click="deleteAccount(row)">{{ t('Delete') }}</button>
+                    <button v-if="canUpdateUsers" class="fbtn mini account-action" type="button" @click="openEdit(row)">{{ t('Edit') }}</button>
+                    <button v-if="canUpdateUsers && !isCourier && !row.verification?.verified" class="fbtn mini verification-action" type="button" @click="setMerchantVerification(row, true)">{{ row.verification?.ready_to_verify ? t('Grant verification') : t('Review Documents') }}</button>
+                    <button v-if="canUpdateUsers && !isCourier && row.verification?.verified" class="fbtn mini verification-remove" type="button" @click="setMerchantVerification(row, false)">{{ t('Remove verification') }}</button>
+                    <button v-if="canUpdateUsers && row.status !== 'active'" class="fbtn mini" style="background: var(--success-tint); color: var(--success); border: none" @click="changeStatus(row, 'active')">{{ t('Activate') }}</button>
+                    <button v-if="canUpdateUsers && row.status === 'active'" class="fbtn mini" style="background: var(--warning-tint); color: var(--warning); border: none" @click="changeStatus(row, 'suspended')">{{ t('Suspend') }}</button>
+                    <button v-if="canUpdateUsers && row.status === 'pending'" class="fbtn mini" @click="changeStatus(row, 'rejected')">{{ t('Reject') }}</button>
+                    <button v-if="canDeleteUsers" class="fbtn mini delete-account" type="button" @click="deleteAccount(row)">{{ t('Delete') }}</button>
                 </div>
             </div>
         </div>
@@ -440,7 +448,7 @@ function vehicleLabel(value) {
                         <b>{{ detailsRow.user?.username }}</b>
                         <small>{{ statusLabel(detailsRow.status) }} · {{ detailsRow.user?.is_online ? t('Online') : t('Offline') }}</small>
                     </div>
-                    <button class="fbtn mini account-action" type="button" @click="openEdit(detailsRow)">{{ t('Edit') }}</button>
+                    <button v-if="canUpdateUsers" class="fbtn mini account-action" type="button" @click="openEdit(detailsRow)">{{ t('Edit') }}</button>
                 </div>
 
                 <dl class="account-data">
@@ -452,6 +460,7 @@ function vehicleLabel(value) {
                     <div v-if="!isCourier"><dt>{{ t('Shop Name') }}</dt><dd>{{ detailsRow.user?.shop_name || '—' }}</dd></div>
                     <div v-if="isCourier"><dt>{{ t('Vehicle') }}</dt><dd>{{ vehicleLabel(detailsRow.user?.vehicle) }}</dd></div>
                     <div v-if="isCourier"><dt>{{ t('Points Balance') }}</dt><dd class="mono">{{ fmt(detailsRow.points_balance) }}</dd></div>
+                    <div v-if="isCourier"><dt>استقطاع الإدارة لكل طلب</dt><dd class="mono">{{ fmt(detailsRow.admin_deduction_per_order) }} {{ t('IQD') }}</dd></div>
                     <div class="wide"><dt>{{ t('Address') }}</dt><dd>{{ detailsRow.user?.address || '—' }}</dd></div>
                     <div v-if="detailsRow.user?.identity_number" class="wide"><dt>{{ t('Identity Number') }}</dt><dd dir="ltr">{{ detailsRow.user.identity_number }}</dd></div>
                     <div v-if="!isCourier" class="wide"><dt>{{ t('Account Verification') }}</dt><dd><b class="detail-verification" :class="detailsRow.verification?.status">{{ detailsRow.verification?.verified ? t('Verified') : detailsRow.verification?.status === 'rejected' ? t('Rejected') : detailsRow.verification?.status === 'pending' ? t('Verification pending') : t('Not submitted') }}</b><small v-if="detailsRow.verification?.verified_by">{{ t('Verified by') }} · {{ detailsRow.verification.verified_by }}</small><small v-else>{{ t('Approved Documents') }}: {{ detailsRow.document_review?.approved || 0 }} / 4 · {{ t('Pending Documents') }}: {{ detailsRow.document_review?.pending || 0 }} · {{ t('Rejected Documents') }}: {{ detailsRow.document_review?.rejected || 0 }} · {{ t('Missing Documents') }}: {{ detailsRow.document_review?.missing || 0 }}</small></dd></div>
@@ -468,16 +477,16 @@ function vehicleLabel(value) {
                     <div v-for="document in detailsRow.documents" :key="document.id" class="account-document-row">
                         <button type="button" @click="openDocument(document)">{{ documentLabel(document.type) }}</button>
                         <span :class="document.status">{{ documentStatus(document.status) }}</span>
-                        <div v-if="document.status === 'pending'" class="account-document-actions"><button type="button" @click="reviewDoc(detailsRow, 'approved', document.id)">{{ t('Approve') }}</button><button type="button" @click="reviewDoc(detailsRow, 'rejected', document.id)">{{ t('Reject') }}</button></div>
+                        <div v-if="canUpdateUsers && document.status === 'pending'" class="account-document-actions"><button type="button" @click="reviewDoc(detailsRow, 'approved', document.id)">{{ t('Approve') }}</button><button type="button" @click="reviewDoc(detailsRow, 'rejected', document.id)">{{ t('Reject') }}</button></div>
                     </div>
                 </section>
 
                 <footer class="dialog-footer">
-                    <button v-if="isCourier && detailsRow.status === 'active'" class="fbtn mini suspension-action" type="button" @click="changeStatus(detailsRow, 'suspended')">{{ t('Suspend') }}</button>
-                    <button v-if="isCourier && detailsRow.status !== 'active'" class="fbtn mini verification-action" type="button" @click="changeStatus(detailsRow, 'active')">{{ t('Activate') }}</button>
-                    <button v-if="!isCourier && !detailsRow.verification?.verified" class="fbtn mini verification-action" type="button" :disabled="!detailsRow.verification?.ready_to_verify" :title="!detailsRow.verification?.ready_to_verify ? t('Complete and approve all four verification documents before granting the merchant badge.') : ''" @click="setMerchantVerification(detailsRow, true)">{{ t('Grant verification') }}</button>
-                    <button v-if="!isCourier && detailsRow.verification?.verified" class="fbtn mini verification-remove" type="button" @click="setMerchantVerification(detailsRow, false)">{{ t('Remove verification') }}</button>
-                    <button class="fbtn mini delete-account" type="button" @click="deleteAccount(detailsRow)">{{ t('Delete') }}</button>
+                    <button v-if="canUpdateUsers && isCourier && detailsRow.status === 'active'" class="fbtn mini suspension-action" type="button" @click="changeStatus(detailsRow, 'suspended')">{{ t('Suspend') }}</button>
+                    <button v-if="canUpdateUsers && isCourier && detailsRow.status !== 'active'" class="fbtn mini verification-action" type="button" @click="changeStatus(detailsRow, 'active')">{{ t('Activate') }}</button>
+                    <button v-if="canUpdateUsers && !isCourier && !detailsRow.verification?.verified" class="fbtn mini verification-action" type="button" :disabled="!detailsRow.verification?.ready_to_verify" :title="!detailsRow.verification?.ready_to_verify ? t('Complete and approve all four verification documents before granting the merchant badge.') : ''" @click="setMerchantVerification(detailsRow, true)">{{ t('Grant verification') }}</button>
+                    <button v-if="canUpdateUsers && !isCourier && detailsRow.verification?.verified" class="fbtn mini verification-remove" type="button" @click="setMerchantVerification(detailsRow, false)">{{ t('Remove verification') }}</button>
+                    <button v-if="canDeleteUsers" class="fbtn mini delete-account" type="button" @click="deleteAccount(detailsRow)">{{ t('Delete') }}</button>
                     <button class="fbtn mini" type="button" @click="closeDetails">{{ t('Close') }}</button>
                 </footer>
             </section>
@@ -508,6 +517,7 @@ function vehicleLabel(value) {
                             <option value="truck">{{ t('Truck') }}</option>
                         </select>
                     </label>
+                    <label v-if="isCourier">استقطاع الإدارة لكل طلب ({{ t('IQD') }})<input v-model.number="editForm.admin_deduction_per_order" type="number" min="0" max="1000000" inputmode="numeric" /></label>
                     <label class="wide">{{ t('Address') }}<textarea v-model="editForm.address" rows="3" maxlength="255" /></label>
                 </div>
                 <p v-if="Object.values(editForm.errors)[0]" class="form-error">{{ Object.values(editForm.errors)[0] }}</p>

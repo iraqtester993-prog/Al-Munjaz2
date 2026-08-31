@@ -6,6 +6,7 @@ const props = defineProps({
     title: { type: String, default: '' },
     subtitle: { type: String, default: '' },
     wide: { type: Boolean, default: false },
+    fullscreen: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['close'])
@@ -74,7 +75,7 @@ onBeforeUnmount(() => {
 <template>
     <Teleport to="body">
         <div class="overlay sheet-overlay" :class="{ open }" @click.self="emit('close')">
-            <section class="sheet-modal" :class="{ dragging }" :style="sheetStyle" role="dialog" aria-modal="true" :aria-label="title || subtitle">
+            <section class="sheet-modal" :class="{ dragging, fullscreen }" :style="sheetStyle" role="dialog" aria-modal="true" :aria-label="title || subtitle">
                 <header class="sheet-header" @touchstart="startDrag" @touchmove="moveDrag" @touchend="endDrag" @touchcancel="endDrag">
                     <span class="sheet-handle" aria-hidden="true"></span>
                     <button class="sheet-close" type="button" :aria-label="t('Close')" @click="emit('close')">
@@ -94,7 +95,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.sheet-modal{transition:transform .2s cubic-bezier(.2,.8,.2,1)}.sheet-modal.dragging{transition:none}.sheet-header{display:flex;align-items:center;gap:8px;padding:4px 0 12px;border-bottom:1px solid var(--border);margin-bottom:14px;touch-action:none}.sheet-handle{display:block;flex:1;height:4px;margin:0;border-radius:20px;background:var(--border)}.sheet-close{display:grid;width:38px;height:38px;place-items:center;flex:none;border:0;border-radius:12px;background:var(--danger);color:#fff;box-shadow:0 2px 8px rgba(239,68,68,.3);cursor:pointer}.sheet-close:active{transform:scale(.96)}.sheet-body{flex:1;min-height:0;overflow-y:auto;padding-inline-end:1px;scrollbar-width:none}.sheet-body::-webkit-scrollbar{display:none}
+.sheet-modal{transition:transform .2s cubic-bezier(.2,.8,.2,1)}.sheet-modal.dragging{transition:none}.sheet-modal.fullscreen{width:100%;max-width:none!important;height:100dvh;max-height:100dvh;border-radius:0;padding:max(18px,env(safe-area-inset-top,0px)) 18px max(18px,env(safe-area-inset-bottom,0px));box-sizing:border-box}.sheet-header{display:flex;align-items:center;gap:8px;padding:4px 0 12px;border-bottom:1px solid var(--border);margin-bottom:14px;touch-action:none}.sheet-handle{display:block;flex:1;height:4px;margin:0;border-radius:20px;background:var(--border)}.sheet-close{display:grid;width:38px;height:38px;place-items:center;flex:none;border:0;border-radius:12px;background:var(--danger);color:#fff;box-shadow:0 2px 8px rgba(239,68,68,.3);cursor:pointer}.sheet-close:active{transform:scale(.96)}.sheet-body{flex:1;min-height:0;overflow-y:auto;padding-inline-end:1px;scrollbar-width:none}.sheet-body::-webkit-scrollbar{display:none}
 .sheet-title h3 {
     font-size: 15px;
     font-weight: 900;

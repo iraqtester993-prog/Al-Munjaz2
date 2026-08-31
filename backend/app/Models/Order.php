@@ -33,7 +33,7 @@ class Order extends Model
         'tenant_id', 'track_no', 'source',
         'customer_name_ar', 'customer_name_en', 'phone', 'phone2',
         'address_ar', 'address_en', 'pickup_latitude', 'pickup_longitude', 'pickup_location_label',
-        'order_type', 'delivery_vehicle', 'vehicle_note', 'weight_grams', 'price', 'fee', 'return_fee', 'return_fee_applied', 'pricing_rule_id',
+        'order_type', 'delivery_vehicle', 'vehicle_note', 'weight_grams', 'price', 'fee', 'admin_deduction_applied', 'return_fee', 'return_fee_applied', 'pricing_rule_id',
         'status', 'workflow_stage', 'courier_id', 'branch_id', 'origin_branch_id', 'destination_branch_id',
         'merchant_id', 'pickup_courier_id', 'delivery_courier_id', 'province_id',
         'date', 'notes', 'created_by',

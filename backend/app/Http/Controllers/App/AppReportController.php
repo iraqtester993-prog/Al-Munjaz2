@@ -5,6 +5,7 @@ namespace App\Http\Controllers\App;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\Province;
+use App\Services\CourierOrderAccess;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -22,7 +23,9 @@ class AppReportController extends Controller
      */
     public function index(Request $request)
     {
-        abort_unless($request->user()->role === 'merchant', 403);
+        $viewer = $request->user();
+        $isCourier = $viewer->isCourierRole();
+        abort_unless($viewer->role === 'merchant' || $isCourier, 403);
 
         $archiveStatuses = self::ARCHIVE_STATUSES;
         $data = $request->validate([
@@ -38,6 +41,7 @@ class AppReportController extends Controller
             // lets the overview remain an inexpensive aggregate query.
             'detail_status' => ['nullable', Rule::in($archiveStatuses)],
             'detail_cursor' => ['nullable', 'string', 'max:512'],
+            'q' => ['nullable', 'string', 'max:120'],
         ]);
 
         $period = $data['period'] ?? 'all';
@@ -46,8 +50,11 @@ class AppReportController extends Controller
             'to' => $data['to'] ?? null,
             'status' => $data['status'] ?? 'all',
             'province_id' => isset($data['province_id']) ? (int) $data['province_id'] : null,
+            'q' => trim((string) ($data['q'] ?? '')),
         ];
-        $query = Order::query()
+        $query = ($isCourier
+            ? app(CourierOrderAccess::class)->assigned($viewer)
+            : Order::query())
             ->whereIn('status', $archiveStatuses);
 
         if ($period === 'today') {
@@ -64,6 +71,20 @@ class AppReportController extends Controller
         }
         if ($filters['province_id']) {
             $query->where('province_id', $filters['province_id']);
+        }
+        if ($filters['q'] !== '') {
+            $q = $filters['q'];
+            $query->where(function ($orders) use ($q, $isCourier): void {
+                $orders->where('track_no', 'like', "%{$q}%")
+                    ->orWhere('customer_name_ar', 'like', "%{$q}%")
+                    ->orWhere('customer_name_en', 'like', "%{$q}%")
+                    ->orWhere('phone', 'like', "%{$q}%")
+                    ->orWhereHas($isCourier ? 'merchant' : 'courier', function ($person) use ($q, $isCourier): void {
+                        $person->where('name', 'like', "%{$q}%")
+                            ->orWhere('phone', 'like', "%{$q}%");
+                        if ($isCourier) $person->orWhere('shop_name', 'like', "%{$q}%");
+                    });
+            });
         }
 
         // The archive may contain years of completed work. Calculate its
@@ -137,10 +158,10 @@ class AppReportController extends Controller
         if ($detailStatus) {
             $detailPage = (clone $query)
                 ->where('status', $detailStatus)
-                ->with('province:id,name_ar,name_en,name_ku')
+                ->with(['province:id,name_ar,name_en,name_ku', 'merchant:id,name,shop_name,phone', 'courier:id,name,phone'])
                 ->latest('date')
                 ->latest('id')
-                ->cursorPaginate(25, ['id', 'track_no', 'customer_name_ar', 'customer_name_en', 'price', 'status', 'date', 'province_id'], 'detail_cursor');
+                ->cursorPaginate(25, ['id', 'track_no', 'customer_name_ar', 'customer_name_en', 'phone', 'price', 'fee', 'status', 'date', 'province_id', 'merchant_id', 'courier_id'], 'detail_cursor');
 
             $detailOrders = $detailPage->getCollection();
             $orderPagination = [
@@ -152,6 +173,7 @@ class AppReportController extends Controller
         return Inertia::render('Mobile/Reports', [
             'period' => $period,
             'filters' => $filters,
+            'isCourier' => $isCourier,
             'summary' => $summary,
             'statusOptions' => $archiveStatuses,
             'provinceOptions' => $provinceOptions,
@@ -163,7 +185,9 @@ class AppReportController extends Controller
                 'track_no' => $order->track_no,
                 'customer_name_ar' => $order->customer_name_ar,
                 'customer_name_en' => $order->customer_name_en,
+                'phone' => $order->phone,
                 'price' => $order->price,
+                'fee' => $order->fee,
                 'status' => $order->status,
                 'date' => $order->date->toDateString(),
                 'province' => $order->province ? [
@@ -172,6 +196,8 @@ class AppReportController extends Controller
                     'name_en' => $order->province->name_en,
                     'name_ku' => $order->province->name_ku,
                 ] : null,
+                'merchant' => $order->merchant ? ['name' => $order->merchant->shop_name ?: $order->merchant->name] : null,
+                'courier' => $order->courier ? ['name' => $order->courier->name] : null,
             ])->all(),
         ]);
     }

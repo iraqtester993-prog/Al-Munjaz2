@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Notification;
 use App\Models\NotificationCampaign;
+use App\Models\Scopes\TenantScope;
 use App\Models\User;
 use App\Services\AdminNotificationDispatcher;
 use Illuminate\Http\Request;
@@ -23,8 +24,17 @@ class AdminNotificationController extends Controller
                 // Inbox removal is a personal soft-delete. Keep delivery
                 // totals stable so the dashboard remains an audit history of
                 // what was sent, rather than a snapshot of inbox visibility.
-                'notifications as notifications_count' => fn ($query) => $query->withTrashed(),
-                'notifications as read_count' => fn ($query) => $query->withTrashed()->whereNotNull('read_at'),
+                // A platform-wide campaign can deliver to accounts belonging
+                // to more than one tenant. The dashboard history must remain
+                // an audit of all deliveries, not only the platform tenant's
+                // inbox records.
+                'notifications as notifications_count' => fn ($query) => $query
+                    ->withoutGlobalScope(TenantScope::class)
+                    ->withTrashed(),
+                'notifications as read_count' => fn ($query) => $query
+                    ->withoutGlobalScope(TenantScope::class)
+                    ->withTrashed()
+                    ->whereNotNull('read_at'),
             ])
             ->latest('id')
             ->limit(40)
@@ -47,7 +57,8 @@ class AdminNotificationController extends Controller
                 'sent_at' => $campaign->sent_at?->diffForHumans(),
             ]);
 
-        $deliveries = Notification::withTrashed()
+        $deliveries = Notification::withoutGlobalScope(TenantScope::class)
+            ->withTrashed()
             ->with('user:id,name,role')
             ->whereNotNull('campaign_id')
             ->latest('id')
@@ -72,15 +83,15 @@ class AdminNotificationController extends Controller
             'canCreateNotifications' => $canCreateNotifications,
             'counts' => [
                 'campaigns' => NotificationCampaign::query()->count(),
-                'deliveries' => Notification::withTrashed()->whereNotNull('campaign_id')->count(),
-                'unread' => Notification::withTrashed()->whereNotNull('campaign_id')->whereNull('read_at')->count(),
+                'deliveries' => Notification::withoutGlobalScope(TenantScope::class)->withTrashed()->whereNotNull('campaign_id')->count(),
+                'unread' => Notification::withoutGlobalScope(TenantScope::class)->withTrashed()->whereNotNull('campaign_id')->whereNull('read_at')->count(),
             ],
         ];
 
         // The recipient picker contains up to 500 names and phone numbers.
         // Viewing sent campaigns does not require access to that directory.
         if ($canCreateNotifications) {
-            $props['recipients'] = User::query()
+            $props['recipients'] = User::withoutGlobalScope(TenantScope::class)
                 ->whereIn('role', User::NOTIFICATION_RECIPIENT_ROLES)
                 ->where('status', 'active')
                 ->orderBy('name')

@@ -157,7 +157,8 @@ class FinanceRequestService
 
     /**
      * Physical cash still held by a courier is based on net collections
-     * (delivery value less the company fee) minus approved branch handovers.
+     * (delivery charge less the fixed administration deduction) minus
+     * approved branch handovers.
      * It is never a browser-supplied number and is separate from the Qi
      * wallet credit used for future fee deductions.
      */
@@ -178,9 +179,8 @@ class FinanceRequestService
     }
 
     /**
-     * Courier collections are what remains after the platform fee on every
-     * delivered order. Keeping this computation on persisted orders also
-     * makes old data present correctly after the fee policy changes.
+     * Courier collections are the delivery charges remaining after the fixed
+     * deduction snapshotted on each accepted order.
      */
     public function collectionsTotal(User|int $courier): int
     {
@@ -202,10 +202,10 @@ class FinanceRequestService
     /** The net collection is used by the wallet, dashboard, and settlement ledger. */
     public static function netCollectionForOrder(Order $order): int
     {
-        $orderValue = max(0, (int) $order->price);
-        $companyFee = min($orderValue, max(0, (int) $order->fee));
+        $deliveryCharge = max(0, (int) $order->fee);
+        $companyFee = max(0, (int) ($order->admin_deduction_applied ?? 0));
 
-        return $orderValue - $companyFee;
+        return max(0, $deliveryCharge - $companyFee);
     }
 
     public function approve(int $requestId, User $admin, int $approvedAmount, ?int $branchId = null, ?string $note = null): FinanceRequest
