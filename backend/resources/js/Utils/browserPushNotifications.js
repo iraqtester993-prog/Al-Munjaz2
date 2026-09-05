@@ -182,6 +182,11 @@ export async function enableBrowserPushNotifications({ config = null } = {}) {
  * Remove this browser's server-side subscription and unsubscribe the device.
  */
 export async function disableBrowserPushNotifications() {
+    if (isNativeApp()) {
+        window.NativeApp.postMessage('notifications:disable')
+        return { status: 'idle' }
+    }
+
     try {
         const registration = await waitForServiceWorkerReady()
         const subscription = await registration.pushManager.getSubscription()

@@ -90,6 +90,10 @@ class _WebAppShellState extends State<_WebAppShell> {
       _onForegroundNotification,
     );
     OneSignal.Notifications.addPermissionObserver(_onNotificationPermission);
+    // A token may arrive after the Android permission dialog closes. Keep
+    // the web switch synchronized with the actual OneSignal subscription,
+    // rather than guessing after a fixed delay.
+    OneSignal.User.pushSubscription.addObserver(_onPushSubscriptionChanged);
 
     final platformController = _controller.platform;
     if (platformController is AndroidWebViewController) {
@@ -115,6 +119,10 @@ class _WebAppShellState extends State<_WebAppShell> {
   }
 
   void _onNotificationPermission(bool granted) {
+    _dispatchNotificationState();
+  }
+
+  void _onPushSubscriptionChanged(OSPushSubscriptionChangedState _) {
     _dispatchNotificationState();
   }
 
@@ -217,12 +225,6 @@ class _WebAppShellState extends State<_WebAppShell> {
         style.textContent = '.pwa-install-banner { display: none !important; }';
         document.head.appendChild(style);
       }
-      document.addEventListener('click', function (event) {
-        const target = event.target.closest?.('.courier-permission-switch, .push-switch');
-        if (target && window.NativeApp?.postMessage) {
-          window.NativeApp.postMessage('notifications:enable');
-        }
-      }, true);
       window.dispatchEvent(new Event('almunjaz:native-ready'));
     ''');
     await _dispatchNotificationState();
@@ -258,9 +260,21 @@ class _WebAppShellState extends State<_WebAppShell> {
         await Future<void>.delayed(const Duration(seconds: 2));
       }
       await _dispatchNotificationState();
+    } else if (value == 'notifications:disable') {
+      // This intentionally stops only this device's OneSignal subscription.
+      // Android's global notification permission remains granted; an app
+      // cannot revoke an operating-system permission on the user's behalf.
+      await OneSignal.User.pushSubscription.optOut();
+      await _dispatchNotificationState();
     } else if (value == 'logout') {
       await OneSignal.logout();
     }
+  }
+
+  @override
+  void dispose() {
+    OneSignal.User.pushSubscription.removeObserver(_onPushSubscriptionChanged);
+    super.dispose();
   }
 
   Future<void> _reload() async {

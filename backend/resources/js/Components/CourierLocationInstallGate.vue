@@ -25,6 +25,7 @@ const completed = ref(false)
 const freshLocationRequired = ref(false)
 const notificationState = ref('idle')
 const notificationRequesting = ref(false)
+const notificationIntent = ref(null)
 
 const supported = computed(() => typeof window !== 'undefined' && 'geolocation' in navigator)
 const secureContext = computed(() => typeof window !== 'undefined' && window.isSecureContext)
@@ -219,9 +220,11 @@ async function saveCurrentPosition(position) {
     failureKind.value = ''
     locationState.value = 'granted'
     setSharing(true, true)
-    notificationState.value = typeof window.NativeApp?.postMessage === 'function'
-        ? 'enabled'
-        : browserNotificationPermission()
+    // Native push state is reported by the Android shell. Do not mark it as
+    // enabled merely because the shell exists: it may still lack an FCM token.
+    if (typeof window.NativeApp?.postMessage !== 'function') {
+        notificationState.value = browserNotificationPermission()
+    }
     // Keep the success state visible only when the courier did not dismiss
     // the sheet while the native browser dialog was open.
     if (!dismissedForSession.value) showGate.value = true
@@ -325,6 +328,7 @@ function requestNotifications({ force = false } = {}) {
     // result with a misleading error state.
     if (typeof window.NativeApp?.postMessage === 'function') {
         notificationRequesting.value = true
+        notificationIntent.value = 'enable'
         notificationState.value = 'idle'
         window.NativeApp.postMessage('notifications:enable')
         window.setTimeout(() => {
@@ -350,7 +354,16 @@ function requestNotifications({ force = false } = {}) {
 }
 
 function toggleNotificationPermission() {
-    if (notificationsEnabled.value || notificationRequesting.value) return
+    if (notificationRequesting.value) return
+
+    if (notificationsEnabled.value) {
+        if (typeof window.NativeApp?.postMessage === 'function') {
+            notificationRequesting.value = true
+            notificationIntent.value = 'disable'
+            window.NativeApp.postMessage('notifications:disable')
+        }
+        return
+    }
 
     // Read the browser value again at the exact tap. Some installed PWAs keep
     // an earlier in-memory value after returning from their settings page.
@@ -377,7 +390,16 @@ function onOperationalLocationRequired() {
 
 function onNativeNotificationState(event) {
     notificationRequesting.value = false
-    notificationState.value = event.detail?.enabled ? 'enabled' : 'error'
+    if (event.detail?.enabled) {
+        notificationState.value = 'enabled'
+    } else if (notificationIntent.value === 'disable') {
+        notificationState.value = 'idle'
+    } else if (event.detail?.permission === false) {
+        notificationState.value = 'denied'
+    } else {
+        notificationState.value = 'error'
+    }
+    notificationIntent.value = null
 }
 
 onMounted(() => {
