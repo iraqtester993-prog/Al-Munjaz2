@@ -66,15 +66,17 @@ class AdminDashboardController extends Controller
         $merchantCount = $this->usersFor($scope, User::query(), $selectedBranchId, $branchFilter)
             ->where('role', 'merchant')
             ->count();
+        $courierRoles = User::COURIER_ROLES;
+        $courierRolePlaceholders = implode(', ', array_fill(0, count($courierRoles), '?'));
         $userStats = $this->usersFor($scope, User::query(), $selectedBranchId, $branchFilter)
             ->selectRaw('COUNT(*) as users_count')
             ->selectRaw(
-                'COALESCE(SUM(CASE WHEN role = ? THEN 1 ELSE 0 END), 0) as couriers_count',
-                ['courier'],
+                "COALESCE(SUM(CASE WHEN role IN ({$courierRolePlaceholders}) THEN 1 ELSE 0 END), 0) as couriers_count",
+                $courierRoles,
             )
             ->selectRaw(
-                'COALESCE(SUM(CASE WHEN role = ? AND status = ? AND is_online = ? THEN 1 ELSE 0 END), 0) as online_couriers_count',
-                ['courier', 'active', true],
+                "COALESCE(SUM(CASE WHEN role IN ({$courierRolePlaceholders}) AND status = ? AND is_online = ? THEN 1 ELSE 0 END), 0) as online_couriers_count",
+                [...$courierRoles, 'active', true],
             )
             ->toBase()
             ->first();
@@ -192,6 +194,10 @@ class AdminDashboardController extends Controller
                 'couriers' => $courierCount,
                 'users' => (int) ($userStats->users_count ?? 0),
                 'unreadNotifs' => (clone $notificationsQuery)->whereNull('read_at')->count(),
+                // OTPs are session-based at the moment, not stored as SMS
+                // deliveries. Keep a visible, truthful card ready for the
+                // SMS provider ledger that will supply this count later.
+                'otpMessages' => 0,
             ],
             'operations' => [
                 'todayOrders' => $todayOrders,
