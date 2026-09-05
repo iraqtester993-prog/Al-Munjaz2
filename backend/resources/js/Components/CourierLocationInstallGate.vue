@@ -319,6 +319,20 @@ function toggleLocationPermission() {
 function requestNotifications({ force = false } = {}) {
     if (notificationRequesting.value || (!force && !canOfferNotifications.value)) return
 
+    // The installed Android app owns its OneSignal subscription natively.
+    // Never invoke the browser/PWA registration in this case: it has a
+    // different service-worker channel and can overwrite the real native
+    // result with a misleading error state.
+    if (typeof window.NativeApp?.postMessage === 'function') {
+        notificationRequesting.value = true
+        notificationState.value = 'idle'
+        window.NativeApp.postMessage('notifications:enable')
+        window.setTimeout(() => {
+            notificationRequesting.value = false
+        }, 5000)
+        return
+    }
+
     // `enableBrowserPushNotifications` begins Notification.requestPermission
     // synchronously before its first await. Calling it from this explicit
     // button keeps the GPS and notification device prompts separate.
@@ -361,13 +375,19 @@ function onOperationalLocationRequired() {
     void refreshPermission({ reveal: false })
 }
 
+function onNativeNotificationState(event) {
+    notificationRequesting.value = false
+    notificationState.value = event.detail?.enabled ? 'enabled' : 'error'
+}
+
 onMounted(() => {
     active.value = true
     dismissedForSession.value = isDismissed()
     notificationState.value = typeof window.NativeApp?.postMessage === 'function'
-        ? 'enabled'
+        ? 'idle'
         : browserNotificationPermission()
     window.addEventListener('almunjaz:location-required', onOperationalLocationRequired)
+    window.addEventListener('almunjaz:native-notifications', onNativeNotificationState)
 
     // Permission inspection is passive. The system dialog is never opened
     // during launch; the courier chooses the visible action in the sheet.
@@ -378,6 +398,7 @@ onBeforeUnmount(() => {
     active.value = false
     permissionStatus?.removeEventListener?.('change', onPermissionChange)
     window.removeEventListener('almunjaz:location-required', onOperationalLocationRequired)
+    window.removeEventListener('almunjaz:native-notifications', onNativeNotificationState)
 })
 </script>
 

@@ -115,7 +115,7 @@ class _WebAppShellState extends State<_WebAppShell> {
   }
 
   void _onNotificationPermission(bool granted) {
-    _dispatchNotificationPermission(granted);
+    _dispatchNotificationState();
   }
 
   void _onNotificationClick(OSNotificationClickEvent event) {
@@ -151,11 +151,18 @@ class _WebAppShellState extends State<_WebAppShell> {
     await _controller.loadRequest(Uri.parse('$_productOrigin$path'));
   }
 
-  Future<void> _dispatchNotificationPermission(bool enabled) async {
+  Future<void> _dispatchNotificationState() async {
     if (!_pageReady) return;
 
+    final permission = OneSignal.Notifications.permission;
+    final subscription = OneSignal.User.pushSubscription;
+    final subscribed = permission && (subscription.optedIn ?? false);
+    final ready = subscribed &&
+        (subscription.id?.isNotEmpty ?? false) &&
+        (subscription.token?.isNotEmpty ?? false);
+
     await _controller.runJavaScript(
-      "window.dispatchEvent(new CustomEvent('almunjaz:native-notifications', {detail: {enabled: ${enabled ? 'true' : 'false'}}}));",
+      "window.dispatchEvent(new CustomEvent('almunjaz:native-notifications', {detail: {enabled: ${ready ? 'true' : 'false'}, permission: ${permission ? 'true' : 'false'}, subscribed: ${subscribed ? 'true' : 'false'}}}));",
     );
   }
 
@@ -218,6 +225,7 @@ class _WebAppShellState extends State<_WebAppShell> {
       }, true);
       window.dispatchEvent(new Event('almunjaz:native-ready'));
     ''');
+    await _dispatchNotificationState();
   }
 
   Future<NavigationDecision> _handleNavigation(String value) async {
@@ -238,11 +246,18 @@ class _WebAppShellState extends State<_WebAppShell> {
       await OneSignal.login(value.substring('login:'.length));
       // Permission is always initiated by the app's visible switch. Do not
       // surprise a newly signed-in courier with an Android prompt.
-      await _dispatchNotificationPermission(OneSignal.Notifications.permission);
+      await _dispatchNotificationState();
     } else if (value == 'notifications:enable') {
       final granted = OneSignal.Notifications.permission ||
           await OneSignal.Notifications.requestPermission(true);
-      await _dispatchNotificationPermission(granted);
+      if (granted) {
+        await OneSignal.User.pushSubscription.optIn();
+        // The FCM/OneSignal token is issued asynchronously after the Android
+        // dialog. Wait briefly so the web switch reflects a real subscription,
+        // not merely a granted runtime permission.
+        await Future<void>.delayed(const Duration(seconds: 2));
+      }
+      await _dispatchNotificationState();
     } else if (value == 'logout') {
       await OneSignal.logout();
     }
