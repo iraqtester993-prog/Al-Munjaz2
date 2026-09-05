@@ -596,7 +596,7 @@ onBeforeUnmount(() => {
 .dashboard-shell {
     /* One desktop-wide display scale. Keeping it in a variable makes a
        rollback to the original density a one-value change. */
-    --dashboard-ui-scale: 1.15;
+    --dashboard-ui-scale: 1.25;
     --bg: #0f172a;
     --surface: #16213a;
     --surface-2: #1d2a47;
@@ -631,7 +631,9 @@ onBeforeUnmount(() => {
     height: 100dvh;
     min-height: 100vh;
     display: grid;
-    grid-template-columns: 242px minmax(0, 1fr);
+    /* The desktop content is intentionally large; compensate the source
+       sidebar width so it grows only a little after the 140% scale. */
+    grid-template-columns: 230px minmax(0, 1fr);
     overflow: hidden;
     color: var(--ink);
     background: var(--bg);
