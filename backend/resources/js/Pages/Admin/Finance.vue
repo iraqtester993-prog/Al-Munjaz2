@@ -57,10 +57,7 @@ const statusMeta = {
 }
 
 const pendingRequests = computed(() => props.pendingRequests)
-const manualAccounts = computed(() => props.accounts.filter((account) => {
-    if (manual.value.type === 'merchant_payout') return account.role === 'merchant'
-    return account.role === 'courier'
-}))
+const manualAccounts = computed(() => props.accounts.filter((account) => account.role === 'courier'))
 const courierAccounts = computed(() => props.accounts.filter((account) => account.role === 'courier'))
 const qiRequests = computed(() => props.requests.filter((request) => request.type === 'qi_topup'))
 const hasFinanceSummary = computed(() => props.canViewFinanceSummary && Object.keys(props.summary).length > 0)
@@ -435,7 +432,7 @@ function submitManual() {
             <form v-if="canRecordSettlement" class="panel finance-manual-panel" @submit.prevent="submitManual">
                 <header class="panel-head"><span><h3>{{ t('Record Settlement') }}</h3><p>{{ t('Record a verified office transaction with a complete audit trail.') }}</p></span></header>
                 <div class="panel-body finance-form-grid">
-                    <label><span>{{ t('Operation') }}</span><PopupSelect v-model="manual.type"><option value="qi_topup">{{ t('Qi Balance Top Up') }}</option><option value="budget_recharge">{{ t('Cash Budget Added') }}</option><option value="cash_handover">{{ t('Delivery Collection Handover') }}</option><option value="merchant_payout">{{ t('Merchant Payout') }}</option></PopupSelect></label>
+                    <label><span>{{ t('Operation') }}</span><PopupSelect v-model="manual.type"><option value="qi_topup">{{ t('Qi Balance Top Up') }}</option><option value="budget_recharge">{{ t('Cash Budget Added') }}</option></PopupSelect></label>
                     <label><span>{{ t('Account') }}</span><PopupSelect v-model="manual.user_id" required><option value="" disabled>{{ t('Select account') }}</option><option v-for="account in manualAccounts" :key="account.id" :value="account.id">{{ account.name }} — {{ account.phone }}</option></PopupSelect></label>
                     <label><span>{{ t('Amount') }} ({{ t('IQD') }})</span><input v-model="manual.amount" type="number" min="1000" step="1000" inputmode="numeric" required></label>
                     <label v-if="isQiTopup(manual.type)"><span>{{ t('Qi Transaction Reference') }}</span><input v-model.trim="manual.external_reference" type="text" inputmode="text" :placeholder="t('Optional for direct administrative credit')"></label>

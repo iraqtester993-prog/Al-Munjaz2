@@ -560,16 +560,18 @@ class AdminFinanceController extends Controller
     }
 
     /**
-     * The office can enter a cash handover, recharge, or merchant settlement
-     * received in person.  It still creates the same request and ledger
+     * The office can enter a courier recharge or Qi credit received in
+     * person. It still creates the same request and ledger
      * record as a mobile request, so the audit trail never has a backdoor.
      */
     public function recordSettlement(Request $request, FinanceRequestService $finance)
     {
         $scope = $this->branchScope($request);
         $data = $request->validate([
-            'user_id' => ['required', 'integer', Rule::exists('users', 'id')->where(fn ($query) => $query->whereIn('role', ['merchant', 'courier']))],
-            'type' => ['required', Rule::in(FinanceRequest::TYPES)],
+            'user_id' => ['required', 'integer', Rule::exists('users', 'id')->where(fn ($query) => $query->where('role', 'courier'))],
+            // Cash handover and merchant payout are intentionally excluded
+            // from the manual-settlement form and endpoint.
+            'type' => ['required', Rule::in([FinanceRequest::QI_TOPUP, FinanceRequest::BUDGET_RECHARGE])],
             'amount' => ['required', 'integer', 'min:1000'],
             'branch_id' => ['nullable', 'integer', Rule::exists('branches', 'id')],
             'external_reference' => ['nullable', 'string', 'max:120'],
@@ -597,17 +599,11 @@ class AdminFinanceController extends Controller
         $account = $accounts->findOrFail($data['user_id']);
         $requestType = $data['type'];
 
-        if ($requestType === FinanceRequest::CASH_HANDOVER && $account->role !== 'courier') {
-            return back()->withErrors(['user_id' => __('Cash handover must belong to a courier account.')]);
-        }
         if ($requestType === FinanceRequest::BUDGET_RECHARGE && $account->role !== 'courier') {
             return back()->withErrors(['user_id' => __('Cash budget additions must belong to a courier account.')]);
         }
         if ($requestType === FinanceRequest::QI_TOPUP && $account->role !== 'courier') {
             return back()->withErrors(['user_id' => __('Qi balance top-ups must belong to a courier account.')]);
-        }
-        if ($requestType === FinanceRequest::MERCHANT_PAYOUT && $account->role !== 'merchant') {
-            return back()->withErrors(['user_id' => __('Merchant payout must belong to a merchant account.')]);
         }
 
         $financeRequest = $finance->submit(
