@@ -274,6 +274,22 @@ function requestCurrentPosition() {
     requesting.value = true
     failureKind.value = ''
     locationState.value = 'requesting'
+
+    // Android WebView owns a second permission layer. Ask the native shell
+    // directly so the same switch opens the real Android dialog and returns
+    // a fresh pin, rather than depending on WebView's Permissions API cache.
+    if (typeof window.NativeApp?.postMessage === 'function') {
+        window.NativeApp.postMessage('location:request')
+        window.setTimeout(() => {
+            if (!requesting.value) return
+            requesting.value = false
+            failureKind.value = 'timeout'
+            locationState.value = 'temporary'
+            revealGate()
+        }, 20_000)
+        return true
+    }
+
     navigator.geolocation.getCurrentPosition(
         async (position) => {
             if (!active.value) {
@@ -309,10 +325,22 @@ function retryPermissionCheck() {
 }
 
 function toggleLocationPermission() {
-    if (locationSwitchEnabled.value || requesting.value) return
+    if (requesting.value) return
+
+    if (locationSwitchEnabled.value) {
+        // The operating-system permission cannot be revoked by a web app,
+        // but this switch must still stop application sharing immediately.
+        setSharing(false)
+        completed.value = false
+        void window.axios.delete(route('app.location.clear')).catch(() => {})
+        return
+    }
 
     if (locationState.value === 'denied') {
-        retryPermissionCheck()
+        // A native app can retry the Android request directly. Browsers keep
+        // the passive refresh path because they cannot reopen a denied prompt.
+        if (typeof window.NativeApp?.postMessage === 'function') requestCurrentPosition()
+        else retryPermissionCheck()
         return
     }
 
@@ -402,6 +430,35 @@ function onNativeNotificationState(event) {
     notificationIntent.value = null
 }
 
+function onNativeLocationResult(event) {
+    if (!active.value || !requesting.value) return
+
+    requesting.value = false
+    const detail = event.detail || {}
+    if (!detail.permission) {
+        handlePositionFailure({ code: 1, PERMISSION_DENIED: 1 })
+        return
+    }
+    if (!detail.latitude || !detail.longitude) {
+        handlePositionFailure({ code: detail.serviceEnabled === false ? 3 : 2, TIMEOUT: 3 })
+        return
+    }
+
+    void saveCurrentPosition({
+        coords: {
+            latitude: detail.latitude,
+            longitude: detail.longitude,
+            accuracy: detail.accuracy,
+        },
+    }).then((saved) => {
+        if (!saved && active.value) {
+            failureKind.value = 'save'
+            locationState.value = 'temporary'
+            revealGate()
+        }
+    })
+}
+
 onMounted(() => {
     active.value = true
     dismissedForSession.value = isDismissed()
@@ -410,6 +467,13 @@ onMounted(() => {
         : browserNotificationPermission()
     window.addEventListener('almunjaz:location-required', onOperationalLocationRequired)
     window.addEventListener('almunjaz:native-notifications', onNativeNotificationState)
+    window.addEventListener('almunjaz:native-location-result', onNativeLocationResult)
+
+    // The native shell may have reported its state before Vue mounted. Ask
+    // again so the switches always show the actual Android state on opening.
+    if (typeof window.NativeApp?.postMessage === 'function') {
+        window.NativeApp.postMessage('notifications:status')
+    }
 
     // Permission inspection is passive. The system dialog is never opened
     // during launch; the courier chooses the visible action in the sheet.
@@ -421,6 +485,7 @@ onBeforeUnmount(() => {
     permissionStatus?.removeEventListener?.('change', onPermissionChange)
     window.removeEventListener('almunjaz:location-required', onOperationalLocationRequired)
     window.removeEventListener('almunjaz:native-notifications', onNativeNotificationState)
+    window.removeEventListener('almunjaz:native-location-result', onNativeLocationResult)
 })
 </script>
 

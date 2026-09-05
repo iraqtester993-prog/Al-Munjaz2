@@ -174,6 +174,59 @@ class _WebAppShellState extends State<_WebAppShell> {
     );
   }
 
+  Future<void> _dispatchNativeLocationResult({
+    required bool permission,
+    required bool serviceEnabled,
+    Position? position,
+  }) async {
+    if (!_pageReady) return;
+
+    final latitude = position?.latitude;
+    final longitude = position?.longitude;
+    final accuracy = position?.accuracy;
+    await _controller.runJavaScript(
+      "window.dispatchEvent(new CustomEvent('almunjaz:native-location-result', {detail: {permission: ${permission ? 'true' : 'false'}, serviceEnabled: ${serviceEnabled ? 'true' : 'false'}, latitude: ${latitude ?? 'null'}, longitude: ${longitude ?? 'null'}, accuracy: ${accuracy ?? 'null'}}}));",
+    );
+  }
+
+  Future<void> _requestNativeLocation() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      await _dispatchNativeLocationResult(
+        permission: false,
+        serviceEnabled: false,
+      );
+      return;
+    }
+
+    final allowed = await _ensureLocationPermission();
+    if (!allowed) {
+      await _dispatchNativeLocationResult(
+        permission: false,
+        serviceEnabled: true,
+      );
+      return;
+    }
+
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+      await _dispatchNativeLocationResult(
+        permission: true,
+        serviceEnabled: true,
+        position: position,
+      );
+    } catch (_) {
+      await _dispatchNativeLocationResult(
+        permission: true,
+        serviceEnabled: true,
+      );
+    }
+  }
+
   Future<List<String>> _selectFilesForWebPage(FileSelectorParams params) async {
     // Courier verification requires document photos only. Keeping this list
     // image-only prevents an irrelevant PDF picker choice in the Android app.
@@ -260,12 +313,16 @@ class _WebAppShellState extends State<_WebAppShell> {
         await Future<void>.delayed(const Duration(seconds: 2));
       }
       await _dispatchNotificationState();
+    } else if (value == 'notifications:status') {
+      await _dispatchNotificationState();
     } else if (value == 'notifications:disable') {
       // This intentionally stops only this device's OneSignal subscription.
       // Android's global notification permission remains granted; an app
       // cannot revoke an operating-system permission on the user's behalf.
       await OneSignal.User.pushSubscription.optOut();
       await _dispatchNotificationState();
+    } else if (value == 'location:request') {
+      await _requestNativeLocation();
     } else if (value == 'logout') {
       await OneSignal.logout();
     }
