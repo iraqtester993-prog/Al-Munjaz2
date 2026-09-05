@@ -757,31 +757,49 @@ class ChatController extends Controller
     /**
      * A direct order conversation has two real participants. A reply by one
      * participant reaches the other, while an administrator reply reaches
-     * both mobile participants. Support conversations remain private to the
-     * originating user and are never broadcast to every operator.
+     * both mobile participants. A new message from a mobile support chat
+     * wakes active dashboard operators through their own private channels;
+     * it does not create a mobile push notification for those operators.
      */
     private function notifyMessageRecipients(Chat $chat, User $sender, bool $senderIsDashboardOperator = false): array
     {
-        $recipientIds = [];
+        $mobileRecipientIds = [];
+        $dashboardRecipientIds = [];
 
         if ($chat->counterparty_type === 'order_chat') {
-            $recipientIds = [$chat->user_id, $chat->counterparty_id];
+            $mobileRecipientIds = [$chat->user_id, $chat->counterparty_id];
         } elseif (($sender->isAdmin() || $senderIsDashboardOperator) && $chat->user_id && $chat->user_id !== $sender->id) {
-            $recipientIds = [$chat->user_id];
+            $mobileRecipientIds = [$chat->user_id];
+        } elseif (! $sender->isAdmin() && in_array($chat->counterparty_type, ['support', 'order_support'], true)) {
+            // The admin inbox uses a shared read marker, so notify every
+            // active dashboard account that can receive the support alert.
+            // The event carries only ids; the normal chat policy still
+            // protects the message content when an operator opens it.
+            $dashboardRecipientIds = User::withoutGlobalScopes()
+                ->where('role', 'admin')
+                ->where('status', 'active')
+                ->pluck('id')
+                ->all();
         }
 
-        $recipientIds = collect($recipientIds)
+        $mobileRecipientIds = collect($mobileRecipientIds)
             ->filter(fn ($id) => $id && (int) $id !== (int) $sender->id)
             ->map(fn ($id) => (int) $id)
             ->unique()
             ->values();
 
-        if ($recipientIds->isEmpty()) {
+        $dashboardRecipientIds = collect($dashboardRecipientIds)
+            ->filter(fn ($id) => $id && (int) $id !== (int) $sender->id)
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($mobileRecipientIds->isEmpty() && $dashboardRecipientIds->isEmpty()) {
             return [];
         }
 
         User::query()
-            ->whereIn('id', $recipientIds)
+            ->whereIn('id', $mobileRecipientIds)
             ->where('status', 'active')
             ->get()
             ->each(function (User $recipient) use ($chat): void {
@@ -815,7 +833,11 @@ class ChatController extends Controller
                 ]);
             });
 
-        return $recipientIds->all();
+        return $mobileRecipientIds
+            ->merge($dashboardRecipientIds)
+            ->unique()
+            ->values()
+            ->all();
     }
 
     private function presenceKey(Chat $chat, int $userId): string

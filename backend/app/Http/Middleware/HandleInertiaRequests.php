@@ -188,9 +188,10 @@ class HandleInertiaRequests extends Middleware
                         ->count(),
                 ];
             },
-            // The top-bar bell is an operational activity feed for the
-            // platform owner.  Unlike campaign delivery counts, it shows a
-            // readable summary of the action that actually happened.
+            // The dashboard bell is intentionally reserved for support-chat
+            // alerts.  Operational audit records belong in their own pages;
+            // mixing them here makes a real customer message too easy to
+            // miss.
             'dashboardActivityFeed' => function () use ($request): array {
                 $user = $request->user();
 
@@ -198,17 +199,21 @@ class HandleInertiaRequests extends Middleware
                     return [];
                 }
 
-                return ActivityLog::query()
+                return Chat::withoutGlobalScopes()
+                    ->adminSupportInbox()
                     ->with('user:id,name')
-                    ->latest('id')
+                    ->whereNotNull('last_at')
+                    ->whereNull('admin_read_at')
+                    ->latest('last_at')
                     ->limit(8)
                     ->get()
-                    ->map(fn (ActivityLog $activity) => [
-                        'id' => $activity->id,
-                        'title' => $this->activityTitle($activity->action),
-                        'detail' => $this->activityDetail($activity),
-                        'actor' => $activity->user?->name,
-                        'created_at' => $activity->created_at?->diffForHumans(),
+                    ->map(fn (Chat $chat) => [
+                        'id' => $chat->id,
+                        'title' => 'رسالة دعم جديدة',
+                        'detail' => $chat->last_message ?: 'لديك رسالة جديدة تحتاج إلى مراجعة.',
+                        'actor' => $chat->user?->name,
+                        'created_at' => $chat->last_at?->diffForHumans(),
+                        'url' => '/dashboard/chat/'.$chat->id,
                     ])
                     ->all();
             },

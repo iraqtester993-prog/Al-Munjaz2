@@ -159,11 +159,10 @@ function changeBranchFilter(branchId) {
             <div>
                 <p class="eyebrow">{{ t('Communication Center') }}</p>
                 <h2>{{ t('Notifications') }}</h2>
-                <p>أرسل إشعاراً عند الحاجة، وراجع إشعارات النظام والحركات المحفوظة في سجل واحد واضح.</p>
+                <p>أرسل إشعاراً عند الحاجة، وراجع فقط الإشعارات التي أُرسلت من لوحة التحكم.</p>
             </div>
             <div class="notification-totals" aria-label="Notification totals">
-                <span><b>{{ counts.system || 0 }}</b>إشعارات النظام</span>
-                <span class="unread-total"><b>{{ counts.operations || 0 }}</b>آخر العمليات</span>
+                <span><b>{{ counts.sent || 0 }}</b>إشعارات مرسلة</span>
             </div>
         </section>
         <div class="notification-branch-filter">
@@ -247,23 +246,23 @@ function changeBranchFilter(branchId) {
                         <span v-if="form.processing" class="send-spinner" aria-hidden="true" />
                         {{ form.processing ? t('Sending...') : t('Send Notification') }}
                     </button>
-                    <p class="dispatch-note">يحفظ النظام الإشعارات التشغيلية والحركات المهمة في سجل آخر العمليات.</p>
+                    <p class="dispatch-note">يظهر هذا الإشعار في سجل الإشعارات المرسلة من الداشبورد.</p>
                 </div>
             </form>
 
             <section class="history-stack">
                 <article class="panel history-panel system-operations-panel">
-                    <header class="panel-head"><div><h3>إشعارات النظام وآخر العمليات</h3><p>سجل موحّد للرسائل التي ينشئها النظام وللحركات التشغيلية المهمة.</p></div></header>
+                    <header class="panel-head"><div><h3>إشعارات النظام المرسلة</h3><p>سجل الإشعارات التي تم إرسالها من الداشبورد فقط.</p></div></header>
                     <div class="system-operation-list">
                         <article v-for="operation in recentOperations" :key="operation.id" class="system-operation-row">
-                            <span class="system-operation-icon" :class="operation.kind">{{ operation.kind === 'notification' ? '🔔' : '◈' }}</span>
+                            <span class="system-operation-icon">🔔</span>
                             <div>
                                 <b>{{ operation.title }}</b>
                                 <p v-if="operation.detail">{{ operation.detail }}</p>
                                 <small><span v-if="operation.actor">{{ operation.actor }} · </span>{{ operation.created_at }}</small>
                             </div>
                         </article>
-                        <div v-if="!recentOperations.length" class="empty-state">لا توجد إشعارات أو حركات محفوظة حالياً.</div>
+                        <div v-if="!recentOperations.length" class="empty-state">لا توجد إشعارات مرسلة من الداشبورد حالياً.</div>
                     </div>
                 </article>
             </section>

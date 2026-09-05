@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import Flash from './Flash.vue'
+import { subscribeToUserRealtime } from '../Utils/realtimeChat'
 
 const props = defineProps({
     title: { type: String, default: '' },
@@ -14,6 +15,7 @@ const isMenuOpen = ref(false)
 const isSidebarCollapsed = ref(savedSidebarCollapsed())
 const isCompactViewport = ref(false)
 let viewportQuery = null
+let unsubscribeDashboardRealtime = () => {}
 const user = computed(() => page.props.auth?.user)
 const adminBadges = computed(() => page.props.adminBadges || {})
 const dashboardActivityFeed = computed(() => page.props.dashboardActivityFeed || [])
@@ -279,6 +281,7 @@ function active(item) {
 }
 
 const canViewNotifications = computed(() => isSuperAdmin.value || canViewModule('notifications'))
+const canViewChat = computed(() => isSuperAdmin.value || canViewModule('chat'))
 
 function toggleActivityMenu() {
     activityMenuOpen.value = !activityMenuOpen.value
@@ -287,6 +290,21 @@ function toggleActivityMenu() {
 function openNotifications() {
     activityMenuOpen.value = false
     router.visit(route('admin.notifications'))
+}
+
+function openChatNotification(url) {
+    activityMenuOpen.value = false
+    router.visit(url || route('admin.chat'))
+}
+
+function refreshChatNotifications() {
+    if (! canViewChat.value) return
+
+    router.reload({
+        only: ['adminBadges', 'dashboardActivityFeed'],
+        preserveScroll: true,
+        preserveState: true,
+    })
 }
 
 function navigate(url) {
@@ -415,9 +433,18 @@ onMounted(() => {
     viewportQuery = window.matchMedia('(max-width: 980px)')
     syncViewportMode()
     viewportQuery.addEventListener('change', syncViewportMode)
+
+    if (canViewChat.value && user.value?.id) {
+        unsubscribeDashboardRealtime = subscribeToUserRealtime(user.value.id, (event) => {
+            if (event === 'chat.message') refreshChatNotifications()
+        })
+    }
 })
 
-onBeforeUnmount(() => viewportQuery?.removeEventListener('change', syncViewportMode))
+onBeforeUnmount(() => {
+    viewportQuery?.removeEventListener('change', syncViewportMode)
+    unsubscribeDashboardRealtime()
+})
 </script>
 
 <template>
@@ -498,34 +525,34 @@ onBeforeUnmount(() => viewportQuery?.removeEventListener('change', syncViewportM
                 <div class="dashboard-top-spacer" />
                 <span class="dashboard-top-live"><i /> {{ isBranchScopedDashboard ? localized('Live branch data') : t('Live data from app') }}</span>
 
-                <div v-if="canViewNotifications" class="dashboard-notification-wrap">
+                <div v-if="canViewChat" class="dashboard-notification-wrap">
                     <button
                         class="dashboard-icon-button dashboard-notification-button"
                         type="button"
                         :aria-label="t('Notifications')"
                         :aria-expanded="activityMenuOpen"
-                        title="الإشعارات والحركات الأخيرة"
+                        title="رسائل الدعم الجديدة"
                         @click="toggleActivityMenu"
                     >
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
                         </svg>
-                        <b v-if="dashboardActivityFeed.length" class="dashboard-notification-badge">{{ dashboardActivityFeed.length > 9 ? '9+' : dashboardActivityFeed.length }}</b>
+                        <b v-if="adminBadges.chat" class="dashboard-notification-badge">{{ adminBadges.chat > 9 ? '9+' : adminBadges.chat }}</b>
                     </button>
 
-                    <section v-if="activityMenuOpen" class="dashboard-activity-menu" role="dialog" aria-label="الإشعارات والحركات الأخيرة">
+                    <section v-if="activityMenuOpen" class="dashboard-activity-menu" role="dialog" aria-label="إشعارات الدردشة">
                         <header>
-                            <div><small>مركز الإشعارات</small><b>آخر الحركات</b></div>
+                            <div><small>مركز الدردشة</small><b>رسائل الدعم الجديدة</b></div>
                             <button type="button" aria-label="إغلاق" @click="activityMenuOpen = false">×</button>
                         </header>
                         <div v-if="dashboardActivityFeed.length" class="dashboard-activity-list">
-                            <article v-for="activity in dashboardActivityFeed" :key="activity.id" class="dashboard-activity-row">
+                            <button v-for="activity in dashboardActivityFeed" :key="activity.id" type="button" class="dashboard-activity-row" @click="openChatNotification(activity.url)">
                                 <i aria-hidden="true">●</i>
                                 <div><b>{{ activity.title }}</b><p>{{ activity.detail }}</p><small><span v-if="activity.actor">{{ activity.actor }} · </span>{{ activity.created_at }}</small></div>
-                            </article>
+                            </button>
                         </div>
-                        <p v-else class="dashboard-activity-empty">لا توجد حركات جديدة لعرضها حالياً.</p>
-                        <button class="dashboard-activity-all" type="button" @click="openNotifications">عرض سجل الإشعارات</button>
+                        <p v-else class="dashboard-activity-empty">لا توجد رسائل دعم جديدة حالياً.</p>
+                        <button class="dashboard-activity-all" type="button" @click="openChatNotification()">فتح الدردشة</button>
                     </section>
                 </div>
 
@@ -982,7 +1009,7 @@ onBeforeUnmount(() => viewportQuery?.removeEventListener('change', syncViewportM
 .dashboard-activity-menu { position: absolute; z-index: 75; top: calc(100% + 9px); inset-inline-end: 0; width: min(390px, calc(100vw - 26px)); overflow: hidden; border: 1px solid var(--border); border-radius: 14px; color: var(--ink); background: var(--surface); box-shadow: 0 20px 48px rgba(2, 10, 25, .28); }
 .dashboard-activity-menu > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 13px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
 .dashboard-activity-menu header > div { display: grid; gap: 2px; }.dashboard-activity-menu header small { color: var(--primary); font-size: 8.5px; font-weight: 900; }.dashboard-activity-menu header b { font-size: 12px; font-weight: 900; }.dashboard-activity-menu header button { width: 27px; height: 27px; border: 0; border-radius: 8px; color: var(--ink-soft); background: var(--surface); font: 900 19px/1 sans-serif; cursor: pointer; }
-.dashboard-activity-list { max-height: min(54vh, 390px); overflow-y: auto; }.dashboard-activity-row { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 8px; padding: 10px 13px; border-bottom: 1px solid var(--border); }.dashboard-activity-row:last-child { border-bottom: 0; }.dashboard-activity-row > i { padding-top: 4px; color: var(--primary); font-size: 9px; font-style: normal; }.dashboard-activity-row b,.dashboard-activity-row p,.dashboard-activity-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.dashboard-activity-row b { color: var(--ink); font-size: 10.5px; font-weight: 900; }.dashboard-activity-row p { margin: 2px 0; color: var(--ink-soft); font-size: 9.5px; font-weight: 700; }.dashboard-activity-row small { color: var(--ink-faint); font-size: 8.5px; font-weight: 750; }.dashboard-activity-empty { margin: 0; padding: 22px 13px; color: var(--ink-faint); font-size: 10px; font-weight: 750; text-align: center; }.dashboard-activity-all { width: 100%; min-height: 39px; border: 0; border-top: 1px solid var(--border); color: var(--primary-strong); background: var(--surface-2); font: 850 10px var(--font); cursor: pointer; }
+.dashboard-activity-list { max-height: min(54vh, 390px); overflow-y: auto; }.dashboard-activity-row { display: grid; width: 100%; grid-template-columns: 12px minmax(0, 1fr); gap: 8px; padding: 10px 13px; border: 0; border-bottom: 1px solid var(--border); color: inherit; background: transparent; text-align: start; font: inherit; cursor: pointer; }.dashboard-activity-row:hover,.dashboard-activity-row:focus-visible { background: var(--primary-tint); outline: 0; }.dashboard-activity-row:last-child { border-bottom: 0; }.dashboard-activity-row > i { padding-top: 4px; color: var(--primary); font-size: 9px; font-style: normal; }.dashboard-activity-row b,.dashboard-activity-row p,.dashboard-activity-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.dashboard-activity-row b { color: var(--ink); font-size: 10.5px; font-weight: 900; }.dashboard-activity-row p { margin: 2px 0; color: var(--ink-soft); font-size: 9.5px; font-weight: 700; }.dashboard-activity-row small { color: var(--ink-faint); font-size: 8.5px; font-weight: 750; }.dashboard-activity-empty { margin: 0; padding: 22px 13px; color: var(--ink-faint); font-size: 10px; font-weight: 750; text-align: center; }.dashboard-activity-all { width: 100%; min-height: 39px; border: 0; border-top: 1px solid var(--border); color: var(--primary-strong); background: var(--surface-2); font: 850 10px var(--font); cursor: pointer; }
 
 .dashboard-content {
     min-height: 0;
