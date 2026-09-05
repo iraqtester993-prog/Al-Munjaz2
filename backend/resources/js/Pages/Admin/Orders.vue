@@ -1053,8 +1053,8 @@ function provinceName(province) {
 .orders-courier-filter select:focus, .orders-date-filter input:focus, .orders-display-count select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-tint); }
 .orders-search-submit, .orders-clear-filters { min-height: 39px; white-space: nowrap; }
 .orders-search-submit { color: #062033; border-color: transparent; background: var(--primary); }
-.admin-orders-list { display: grid; gap: 12px; padding: 12px; background: linear-gradient(180deg, var(--surface-2), var(--surface)); }
-.admin-order-card { --order-card-accent: var(--primary); --order-card-tint: var(--primary-tint); position: relative; min-width: 0; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--order-card-accent) 32%, var(--border)); border-inline-start: 5px solid var(--order-card-accent); border-radius: 12px; background: linear-gradient(135deg, color-mix(in srgb, var(--order-card-tint) 62%, var(--surface)), var(--surface) 52%); box-shadow: 0 5px 14px rgba(21, 66, 73, .06); cursor: pointer; outline: none; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.admin-orders-list { display: grid; gap: 14px; padding: 14px; background: linear-gradient(180deg, var(--surface-2), var(--surface)); }
+.admin-order-card { --order-card-accent: var(--primary); --order-card-tint: var(--primary-tint); position: relative; min-width: 0; padding: 13px 15px; border: 1px solid color-mix(in srgb, var(--order-card-accent) 35%, var(--border)); border-inline-start: 6px solid var(--order-card-accent); border-radius: 14px; background: linear-gradient(135deg, color-mix(in srgb, var(--order-card-tint) 62%, var(--surface)), var(--surface) 52%); box-shadow: 0 7px 18px rgba(21, 66, 73, .07); cursor: pointer; outline: none; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
 .admin-order-card:hover { border-color: var(--order-card-accent); box-shadow: 0 10px 22px color-mix(in srgb, var(--order-card-accent) 15%, transparent); transform: translateY(-1px); }
 .admin-order-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .order-card-status-pending { --order-card-accent: var(--st-pending); --order-card-tint: var(--st-pending-tint); }
@@ -1065,21 +1065,21 @@ function provinceName(province) {
 .order-card-status-late { --order-card-accent: var(--warning); --order-card-tint: var(--warning-tint); }
 .admin-order-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .admin-order-card-ident { display: flex; align-items: baseline; min-width: 0; gap: 5px; }
-.admin-order-card-ident > span, .admin-order-card-details > div > span { color: var(--ink-faint); font-size: 9px; font-weight: 850; }
-.admin-order-track { color: var(--primary); font-weight: 900; white-space: nowrap; }
-.admin-order-card-details { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: 7px; padding: 7px 8px; border: 1px solid color-mix(in srgb, var(--order-card-accent) 18%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--order-card-tint) 48%, var(--surface)); }
-.admin-order-card-details > div { display: grid; min-width: 0; gap: 2px; padding-inline: 7px; border-inline-start: 1px solid color-mix(in srgb, var(--order-card-accent) 17%, var(--border)); }
+.admin-order-card-ident > span, .admin-order-card-details > div > span { color: var(--ink-faint); font-size: 10px; font-weight: 850; }
+.admin-order-track { color: var(--primary); font-size: 16px; font-weight: 900; white-space: nowrap; }
+.admin-order-card-details { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 10px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--order-card-accent) 20%, var(--border)); border-radius: 11px; background: color-mix(in srgb, var(--order-card-tint) 48%, var(--surface)); }
+.admin-order-card-details > div { display: grid; min-width: 0; gap: 3px; padding-inline: 9px; border-inline-start: 1px solid color-mix(in srgb, var(--order-card-accent) 17%, var(--border)); }
 .admin-order-card-details > div:first-child { padding-inline-start: 0; border-inline-start: 0; }
 .admin-order-card-details > div:last-child { padding-inline-end: 0; }
-.admin-order-card-details b { overflow: hidden; color: var(--ink); font-size: 11px; font-weight: 850; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.admin-order-card-details b { overflow: hidden; color: var(--ink); font-size: 12.5px; font-weight: 900; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .admin-order-card-details > div:nth-child(3) b { color: var(--order-card-accent); }
-.admin-order-card-footer { display: block; margin-top: 7px; padding-top: 7px; border-top: 1px dashed color-mix(in srgb, var(--order-card-accent) 36%, var(--border)); }
+.admin-order-card-footer { display: block; margin-top: 10px; padding-top: 10px; border-top: 1px dashed color-mix(in srgb, var(--order-card-accent) 36%, var(--border)); }
 .admin-order-actions-head { display: flex; align-items: center; gap: 6px; min-width: 0; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
-.admin-order-actions-title { flex: none; margin-inline-end: 2px; color: var(--ink-faint); font-size: 9px; font-weight: 900; }
-.admin-order-actions-head .fbtn, .admin-order-actions-head :deep(.popup-select) { flex: none; min-height: 29px; white-space: nowrap; }
-.admin-view-details { min-height: 29px; padding-inline: 10px; color: #062033; border-color: transparent; background: var(--primary); font-size: 10px; }
+.admin-order-actions-title { flex: none; margin-inline-end: 3px; color: var(--ink-faint); font-size: 10px; font-weight: 900; }
+.admin-order-actions-head .fbtn, .admin-order-actions-head :deep(.popup-select) { flex: none; min-height: 34px; white-space: nowrap; }
+.admin-view-details { min-height: 34px; padding-inline: 13px; color: #062033; border-color: transparent; background: var(--primary); font-size: 11px; }
 .detail-order-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-.admin-order-status-select { width: auto; min-width: 112px; min-height: 31px; padding: 4px 8px; font-size: 10px; }
+.admin-order-status-select { width: auto; min-width: 126px; min-height: 34px; padding: 5px 9px; font-size: 11px; }
 .admin-order-status-select :deep(.popup-select-chevron) { width: 17px; height: 17px; font-size: 14px; }
 .pickup-overdue-action { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); color: #9a5a00; background: var(--warning-tint); }
 .restore-order-action { border-color: color-mix(in srgb, var(--success) 55%, var(--border)); color: var(--success); background: var(--success-tint); }
