@@ -27,14 +27,17 @@ class CourierReturnFlowTest extends TestCase
         $this->seed(DemoSeeder::class);
     }
 
-    public function test_courier_return_requires_a_physical_handback_confirmation_before_posting_its_fee(): void
+    public function test_courier_return_releases_the_product_budget_without_a_second_qi_deduction(): void
     {
         $merchant = User::where('username', 'تاجر')->firstOrFail();
         $courier = User::where('username', 'مندوب')->firstOrFail();
         $province = $merchant->provinces()->firstOrFail();
         $price = 32000;
-        $returnFee = 2500;
+        $deliveryFee = 3000;
+        $adminDeduction = 2000;
         $startingBudget = (int) $courier->wallet->budget;
+        $startingBudgetBalance = (int) $courier->wallet->budget_balance;
+        $startingBalance = (int) $courier->wallet->balance;
 
         $order = Order::withoutGlobalScopes()->create([
             'tenant_id' => $merchant->tenant_id,
@@ -49,8 +52,9 @@ class CourierReturnFlowTest extends TestCase
             'address_en' => 'Baghdad — Karrada',
             'delivery_vehicle' => 'normal',
             'price' => $price,
-            'fee' => 3000,
-            'return_fee' => 3000,
+            'fee' => $deliveryFee,
+            'return_fee' => $deliveryFee,
+            'admin_deduction_applied' => $adminDeduction,
             'status' => 'courier',
             'workflow_stage' => 'out_for_delivery',
             'courier_id' => $courier->id,
@@ -58,7 +62,11 @@ class CourierReturnFlowTest extends TestCase
             'date' => today(),
         ]);
 
-        $courier->wallet->decrement('budget', $price);
+        // This order has already passed acceptance: only product price is
+        // reserved from available budget and the fixed Qi deduction was
+        // charged once at claim time.
+        $courier->wallet->decrement('budget_balance', $price);
+        $courier->wallet->decrement('balance', $adminDeduction);
         Transaction::withoutGlobalScopes()->create([
             'tenant_id' => $courier->tenant_id,
             'user_id' => $courier->id,
@@ -70,6 +78,17 @@ class CourierReturnFlowTest extends TestCase
             'date' => today(),
             'note' => 'حجز اختبار للإرجاع',
         ]);
+        Transaction::withoutGlobalScopes()->create([
+            'tenant_id' => $courier->tenant_id,
+            'user_id' => $courier->id,
+            'type' => 'commission',
+            'amount' => $adminDeduction,
+            'direction' => -1,
+            'ref' => $order->track_no,
+            'order_id' => $order->id,
+            'date' => today(),
+            'note' => 'استقطاع إدارة اختبار عند القبول',
+        ]);
 
         $courier->update([
             'current_latitude' => 33.3152412,
@@ -80,7 +99,7 @@ class CourierReturnFlowTest extends TestCase
         $this->actingAs($courier)
             ->post("/app/orders/{$order->id}/return", [
                 'fee_mode' => 'fee',
-                'return_fee_applied' => $returnFee,
+                'return_reason' => 'تعذر الوصول إلى العميل في عنوان التسليم.',
             ])
             ->assertRedirect();
 
@@ -88,11 +107,22 @@ class CourierReturnFlowTest extends TestCase
         $this->assertSame('returned', $order->status);
         $this->assertSame('return_pending_merchant', $order->workflow_stage);
         $this->assertSame(3000, (int) $order->return_fee);
-        $this->assertSame($returnFee, (int) $order->return_fee_applied);
+        $this->assertSame($deliveryFee, (int) $order->return_fee_applied);
+        $this->assertSame('fee', $order->return_fee_mode);
+        $this->assertSame('تعذر الوصول إلى العميل في عنوان التسليم.', $order->return_reason);
         $this->assertNotNull($order->returned_at);
         $this->assertNull($order->returned_to_merchant_at);
         $this->assertNull($order->return_fee_charged_at);
         $this->assertSame($startingBudget, (int) $courier->wallet->fresh()->budget);
+        $this->assertSame($startingBudgetBalance, (int) $courier->wallet->fresh()->budget_balance);
+        $this->assertSame($startingBalance - $adminDeduction, (int) $courier->wallet->fresh()->balance);
+        $this->assertDatabaseHas('transactions', [
+            'order_id' => $order->id,
+            'user_id' => $courier->id,
+            'type' => 'commission',
+            'amount' => $adminDeduction,
+            'direction' => -1,
+        ]);
         $this->assertSame(0, Transaction::withoutGlobalScopes()
             ->where('order_id', $order->id)
             ->where('type', 'delivery_fee')
@@ -116,14 +146,7 @@ class CourierReturnFlowTest extends TestCase
         $this->assertSame('returned', $order->status);
         $this->assertSame('returned_to_merchant', $order->workflow_stage);
         $this->assertNotNull($order->returned_to_merchant_at);
-        $this->assertNotNull($order->return_fee_charged_at);
-        $this->assertDatabaseHas('transactions', [
-            'order_id' => $order->id,
-            'user_id' => $courier->id,
-            'type' => 'delivery_fee',
-            'amount' => $returnFee,
-            'direction' => -1,
-        ]);
+        $this->assertNull($order->return_fee_charged_at);
         $this->assertDatabaseHas('order_movements', [
             'order_id' => $order->id,
             'stage' => 'returned_to_merchant',
@@ -135,7 +158,8 @@ class CourierReturnFlowTest extends TestCase
             ->where('title_ar', $order->track_no)
             ->count());
 
-        // The second confirmation must not post a duplicate fee transaction.
+        // Confirmation only records the physical handback; it cannot post a
+        // second administration deduction or the selected return fee.
         $this->actingAs($courier)
             ->post("/app/orders/{$order->id}/return-to-merchant")
             ->assertSessionHasErrors('order');
@@ -143,9 +167,87 @@ class CourierReturnFlowTest extends TestCase
         $this->assertSame(1, Transaction::withoutGlobalScopes()
             ->where('order_id', $order->id)
             ->where('user_id', $courier->id)
-            ->where('type', 'delivery_fee')
+            ->where('type', 'commission')
             ->where('direction', -1)
             ->count());
+        $this->assertSame(0, Transaction::withoutGlobalScopes()
+            ->where('order_id', $order->id)
+            ->where('user_id', $courier->id)
+            ->where('type', 'commission_refund')
+            ->count());
+    }
+
+    public function test_free_return_refunds_the_actual_legacy_deduction_when_the_snapshot_is_missing(): void
+    {
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+        $courier = User::where('username', 'مندوب')->firstOrFail();
+        $province = $merchant->provinces()->firstOrFail();
+        $deduction = 2_000;
+        $wallet = $courier->wallet()->firstOrFail();
+        $startingBalance = (int) $wallet->balance;
+
+        // This mirrors an order accepted before admin_deduction_applied was
+        // introduced: the money is present in the immutable ledger, but the
+        // newer snapshot column is null.
+        $order = Order::withoutGlobalScopes()->create([
+            'tenant_id' => $merchant->tenant_id,
+            'merchant_id' => $merchant->id,
+            'created_by' => $merchant->id,
+            'track_no' => 'ALM-RETURN-LEGACY-FREE',
+            'source' => 'merchant',
+            'customer_name_ar' => 'عميل إرجاع مجاني قديم',
+            'customer_name_en' => 'Legacy free return customer',
+            'phone' => '07701112244',
+            'address_ar' => 'بغداد — الكرادة',
+            'address_en' => 'Baghdad — Karrada',
+            'delivery_vehicle' => 'normal',
+            'price' => 20_000,
+            'fee' => 3_000,
+            'return_fee' => 3_000,
+            'admin_deduction_applied' => null,
+            'status' => 'courier',
+            'workflow_stage' => 'out_for_delivery',
+            'courier_id' => $courier->id,
+            'province_id' => $province->id,
+            'date' => today(),
+        ]);
+
+        $wallet->decrement('balance', $deduction);
+        Transaction::withoutGlobalScopes()->create([
+            'tenant_id' => $courier->tenant_id,
+            'user_id' => $courier->id,
+            'type' => 'commission',
+            'amount' => $deduction,
+            'direction' => -1,
+            'ref' => $order->track_no,
+            'order_id' => $order->id,
+            'date' => today(),
+            'note' => 'استقطاع إدارة قديم للاختبار',
+        ]);
+        $courier->update([
+            'current_latitude' => 33.3152412,
+            'current_longitude' => 44.3660731,
+            'location_updated_at' => now(),
+        ]);
+
+        $this->actingAs($courier)
+            ->post("/app/orders/{$order->id}/return", [
+                'fee_mode' => 'none',
+                'return_reason' => 'العميل اعتذر عن الاستلام.',
+            ])
+            ->assertRedirect();
+
+        $this->assertSame('returned', $order->fresh()->status);
+        $this->assertSame('none', $order->fresh()->return_fee_mode);
+        $this->assertSame('العميل اعتذر عن الاستلام.', $order->fresh()->return_reason);
+        $this->assertSame($startingBalance, (int) $wallet->fresh()->balance);
+        $this->assertDatabaseHas('transactions', [
+            'order_id' => $order->id,
+            'user_id' => $courier->id,
+            'type' => 'commission_refund',
+            'amount' => $deduction,
+            'direction' => 1,
+        ]);
     }
 
     public function test_each_non_delivery_terminal_status_releases_a_held_courier_budget_once(): void
@@ -158,6 +260,7 @@ class CourierReturnFlowTest extends TestCase
         foreach (['cancelled', 'damaged', 'rejected'] as $index => $terminalStatus) {
             $wallet = $courier->wallet()->firstOrFail();
             $startingBudget = (int) $wallet->budget;
+            $startingBudgetBalance = (int) $wallet->budget_balance;
             $order = Order::withoutGlobalScopes()->create([
                 'tenant_id' => $merchant->tenant_id,
                 'merchant_id' => $merchant->id,
@@ -179,12 +282,15 @@ class CourierReturnFlowTest extends TestCase
                 'date' => today(),
             ]);
 
-            $wallet->decrement('budget', $price);
+            // Simulate a record reserved by the previous policy. The release
+            // must return the actual ledger amount even though new claims
+            // reserve price only.
+            $wallet->decrement('budget_balance', $price + 3000);
             Transaction::withoutGlobalScopes()->create([
                 'tenant_id' => $courier->tenant_id,
                 'user_id' => $courier->id,
                 'type' => 'paid_order',
-                'amount' => $price,
+                'amount' => $price + 3000,
                 'direction' => -1,
                 'ref' => $order->track_no,
                 'order_id' => $order->id,
@@ -198,6 +304,7 @@ class CourierReturnFlowTest extends TestCase
             $this->assertSame($terminalStatus, $order->fresh()->status);
             $this->assertSame($terminalStatus, $order->fresh()->workflow_stage);
             $this->assertSame($startingBudget, (int) $wallet->fresh()->budget);
+            $this->assertSame($startingBudgetBalance, (int) $wallet->fresh()->budget_balance);
             $this->assertSame(1, Transaction::withoutGlobalScopes()
                 ->where('order_id', $order->id)
                 ->where('user_id', $courier->id)

@@ -14,6 +14,11 @@ const props = defineProps({
     longitude: { type: [String, Number], default: null },
     label: { type: String, default: '' },
     locale: { type: String, default: 'ar' },
+    // The same picker is used when a merchant saves the fixed shop point in
+    // their account.  Keep the order wording as the default, but avoid
+    // telling the merchant that a persistent shop point belongs to one order.
+    purpose: { type: String, default: 'order' },
+    allowClear: { type: Boolean, default: true },
     disabled: { type: Boolean, default: false },
     defaultZoom: { type: Number, default: 15 },
 })
@@ -47,6 +52,13 @@ const COPY = {
         geolocationTimeout: 'استغرق تحديد الموقع وقتاً طويلاً. جرّب مرة أخرى في مكان مفتوح.',
         geolocationFailed: 'تعذر تحديد موقعك حالياً. يمكنك اختيار النقطة يدوياً من الخريطة.',
         coordinates: 'الإحداثيات',
+        merchantSelect: 'تحديد موقع المتجر على الخريطة',
+        merchantSelected: 'تم تحديد موقع المتجر',
+        merchantMissing: 'لم يتم تحديد موقع المتجر بعد',
+        merchantEdit: 'تعديل موقع المتجر',
+        merchantTitle: 'تحديد موقع متجر الاستلام',
+        merchantHelp: 'اختر نقطة استلام المندوبين من متجرك. سيُستخدم هذا الموقع تلقائياً في الطلبات الجديدة.',
+        merchantSave: 'حفظ موقع المتجر',
     },
     en: {
         select: 'Select location on map',
@@ -74,6 +86,13 @@ const COPY = {
         geolocationTimeout: 'Location lookup took too long. Try again in an open area.',
         geolocationFailed: 'Your location could not be found. You can select the pin manually on the map.',
         coordinates: 'Coordinates',
+        merchantSelect: 'Select shop location on map',
+        merchantSelected: 'Shop location selected',
+        merchantMissing: 'No shop location selected yet',
+        merchantEdit: 'Edit shop location',
+        merchantTitle: 'Select shop pickup location',
+        merchantHelp: 'Choose the courier pickup point at your shop. It will be used automatically for new orders.',
+        merchantSave: 'Save shop location',
     },
     ku: {
         select: 'دیاریکردنی شوێن لە نەخشە',
@@ -101,6 +120,13 @@ const COPY = {
         geolocationTimeout: 'دۆزینەوەی شوێن درێژخایەن بوو. لە شوێنێکی کراوەدا دووبارە هەوڵ بدە.',
         geolocationFailed: 'نەتوانرا شوێنت بدۆزرێتەوە. دەتوانیت نیشانەکە بەدەستی لەسەر نەخشە دیاری بکەیت.',
         coordinates: 'کۆئۆردیناتەکان',
+        merchantSelect: 'دیاریکردنی شوێنی فرۆشگا لەسەر نەخشە',
+        merchantSelected: 'شوێنی فرۆشگا دیاری کرا',
+        merchantMissing: 'هێشتا شوێنی فرۆشگا دیاری نەکراوە',
+        merchantEdit: 'دەستکاریکردنی شوێنی فرۆشگا',
+        merchantTitle: 'دیاریکردنی شوێنی وەرگرتنی فرۆشگا',
+        merchantHelp: 'نقطەی وەرگرتنی گەیەنەران لە فرۆشگاکەت دیاری بکە. بۆ داواکارییە نوێکان بەخۆکار بەکاردێت.',
+        merchantSave: 'پاشەکەوتکردنی شوێنی فرۆشگا',
     },
 }
 
@@ -120,7 +146,23 @@ let leafletMarker = null
 let leafletClickHandler = null
 let leafletDragHandler = null
 
-const copy = computed(() => COPY[props.locale] || COPY.ar)
+const isMerchantLocation = computed(() => props.purpose === 'merchant')
+const copy = computed(() => {
+    const base = COPY[props.locale] || COPY.ar
+
+    if (!isMerchantLocation.value) return base
+
+    return {
+        ...base,
+        select: base.merchantSelect,
+        selected: base.merchantSelected,
+        missing: base.merchantMissing,
+        edit: base.merchantEdit,
+        title: base.merchantTitle,
+        help: base.merchantHelp,
+        save: base.merchantSave,
+    }
+})
 const hasValidCoordinates = computed(() => coordinatesAreValid(draftLatitude.value, draftLongitude.value))
 const isSelected = computed(() => coordinatesAreValid(props.latitude, props.longitude))
 const coordinateText = computed(() => isSelected.value
@@ -466,7 +508,7 @@ function loadLeaflet() {
                 <p v-if="error" class="order-map-error" role="alert">{{ error }}</p>
 
                 <footer class="order-map-dialog-footer">
-                    <button v-if="isSelected" type="button" class="order-map-clear" @click="clearLocation">{{ copy.clear }}</button>
+                    <button v-if="isSelected && allowClear" type="button" class="order-map-clear" @click="clearLocation">{{ copy.clear }}</button>
                     <span v-else></span>
                     <span class="order-map-footer-actions">
                         <button type="button" class="order-map-cancel" @click="closePicker">{{ copy.cancel }}</button>

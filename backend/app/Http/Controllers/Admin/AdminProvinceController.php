@@ -69,13 +69,11 @@ class AdminProvinceController extends Controller
         return back()->with('success', __('Governorate status updated successfully.'));
     }
 
-    /** @return array{name_ar:string,name_en:string,name_ku:?string,sort_order?:int} */
+    /** @return array{name_ar:string,name_en:string,name_ku:string} */
     private function validated(Request $request, ?Province $province = null): array
     {
-        foreach (['name_ar', 'name_en', 'name_ku'] as $field) {
-            if (is_string($request->input($field))) {
-                $request->merge([$field => trim((string) $request->input($field))]);
-            }
+        if (is_string($request->input('name_ar'))) {
+            $request->merge(['name_ar' => trim((string) $request->input('name_ar'))]);
         }
 
         $uniqueArabicName = Rule::unique('provinces', 'name_ar')->whereNull('tenant_id');
@@ -86,20 +84,12 @@ class AdminProvinceController extends Controller
 
         $data = $request->validate([
             'name_ar' => ['required', 'string', 'max:80', $uniqueArabicName],
-            // The original schema requires an English value. When an operator
-            // only has an Arabic name, preserve the record by using it as the
-            // English fallback instead of forcing a made-up translation.
-            'name_en' => ['nullable', 'string', 'max:80'],
-            'name_ku' => ['nullable', 'string', 'max:80'],
-            'sort_order' => ['nullable', 'integer', 'min:0', 'max:999999'],
         ]);
 
-        $data['name_en'] = filled($data['name_en'] ?? null)
-            ? $data['name_en']
-            : $data['name_ar'];
-        $data['name_ku'] = filled($data['name_ku'] ?? null)
-            ? $data['name_ku']
-            : null;
+        // A governorate is entered once. City names are proper names, so the
+        // same stored name is a reliable fallback in every dashboard locale.
+        $data['name_en'] = $data['name_ar'];
+        $data['name_ku'] = $data['name_ar'];
 
         return $data;
     }

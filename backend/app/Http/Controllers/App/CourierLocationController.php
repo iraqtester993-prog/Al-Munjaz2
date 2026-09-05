@@ -20,7 +20,7 @@ class CourierLocationController extends Controller
         $courier = $request->user();
 
         abort_unless(
-            $courier?->isCourierRole() && $courier->isActiveUser(),
+            $courier?->role === 'courier' && $courier->isActiveUser(),
             403,
             'مشاركة الموقع متاحة للمندوب النشط فقط.',
         );
@@ -61,7 +61,7 @@ class CourierLocationController extends Controller
         /** @var User|null $courier */
         $courier = $request->user();
 
-        abort_unless($courier?->isCourierRole(), 403, 'مشاركة الموقع متاحة للمندوب فقط.');
+        abort_unless($courier?->role === 'courier', 403, 'مشاركة الموقع متاحة للمندوب فقط.');
 
         $locations->clear($courier);
 

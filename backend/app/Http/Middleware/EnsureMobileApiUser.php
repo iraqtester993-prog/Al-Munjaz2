@@ -24,7 +24,7 @@ class EnsureMobileApiUser
                 // dashboard profiles are web-only until every API endpoint
                 // has an equivalent per-module policy, so only the explicit
                 // super administrator may enter it as an admin.
-                && ($user->isSuperAdmin() || $user->role === 'merchant' || $user->isCourierRole()),
+                && ($user->isSuperAdmin() || $user->role === 'merchant' || $user->role === 'courier'),
             403,
         );
 

@@ -26,12 +26,29 @@ class RoleMiddleware
             return redirect()->away($this->productScheme($request).'://'.config('app.product_admin_host').'/dashboard/login');
         }
 
-        if (in_array(Auth::user()->role, ['owner', 'branch_manager'], true) && in_array('merchant', $roles, true)) {
+        if (Auth::user()->role === 'branch_manager' && in_array('merchant', $roles, true)) {
+            return redirect()->away($this->productScheme($request).'://'.config('app.product_admin_host').'/dashboard');
+        }
+
+        if (Auth::user()->role === 'owner' && in_array('merchant', $roles, true)) {
             return redirect()->away($this->productScheme($request).'://'.config('app.product_admin_host').'/dashboard/branch');
         }
 
-        if (in_array(Auth::user()->role, ['owner', 'branch_manager'], true) && in_array('admin', $roles, true)) {
+        if (Auth::user()->role === 'owner' && in_array('admin', $roles, true)) {
             return redirect()->away($this->productScheme($request).'://'.config('app.product_admin_host').'/dashboard/branch');
+        }
+
+        // Branch managers use the unified dashboard. A bookmarked legacy
+        // owner-portal URL must not bypass their primary branch boundary or
+        // their local permission profile.
+        if (Auth::user()->role === 'branch_manager' && in_array('owner', $roles, true)) {
+            $path = Auth::user()->firstAdminDashboardPath() ?? '/dashboard/access-denied';
+
+            return redirect()->away($this->productScheme($request).'://'.config('app.product_admin_host').$path);
+        }
+
+        if (Auth::user()->role === 'branch_manager' && in_array('admin', $roles, true)) {
+            return redirect()->away($this->productScheme($request).'://'.config('app.product_admin_host').'/dashboard');
         }
 
         if (in_array('admin', $roles, true)) {

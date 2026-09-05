@@ -1,3 +1,4 @@
+// Release: 2026-09-02 merchant-card-flat-r2
 // Compatibility entry point for PWA installations registered before the
 // canonical worker moved to /pwa/worker. Some shared-hosting stacks serve a
 // physical sw.js before applying rewrite rules, so delegate to the versioned

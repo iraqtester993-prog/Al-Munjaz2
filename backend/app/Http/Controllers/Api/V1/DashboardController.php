@@ -21,7 +21,7 @@ class DashboardController extends Controller
         // scoped browser portal and never use the mobile API surface.
         abort_unless(
             $user?->isActiveUser()
-                && ($user->isSuperAdmin() || $user->role === 'merchant' || $user->isCourierRole()),
+                && ($user->isSuperAdmin() || $user->role === 'merchant' || $user->role === 'courier'),
             403,
         );
 
@@ -34,7 +34,7 @@ class DashboardController extends Controller
 
         if ($user->role === 'merchant') {
             $orders->where('tenant_id', $user->tenant_id);
-        } elseif ($user->isCourierRole()) {
+        } elseif ($user->role === 'courier') {
             $orders = app(CourierOrderAccess::class)->assigned($user);
         }
 
@@ -46,6 +46,7 @@ class DashboardController extends Controller
             'delivered_value' => (clone $orders)->where('status', 'delivered')->sum('price'),
             'available_balance' => $user->wallet?->balance ?? 0,
             'budget' => $user->wallet?->budget ?? 0,
+            'budget_balance' => $user->wallet?->budget_balance ?? 0,
             'couriers' => $user->isSuperAdmin()
                 ? User::query()->whereIn('role', User::COURIER_ROLES)->where('status', 'active')->count()
                 : null,
@@ -62,6 +63,7 @@ class DashboardController extends Controller
             'delivered_value' => $totals['delivered_value'],
             'wallet_balance' => $totals['available_balance'],
             'budget' => $totals['budget'],
+            'budget_balance' => $totals['budget_balance'],
             'admin_fee' => $totals['fees'],
             'statuses' => $statusCounts,
         ]]);

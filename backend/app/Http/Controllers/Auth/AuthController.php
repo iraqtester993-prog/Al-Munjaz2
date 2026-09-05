@@ -5,17 +5,19 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\Document;
+use App\Models\Province;
+use App\Models\Setting;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Models\Wallet;
-use App\Models\Province;
+use App\Rules\IraqiMobilePhone;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
-use Illuminate\Support\Collection;
 use Inertia\Inertia;
 
 class AuthController extends Controller
@@ -56,9 +58,10 @@ class AuthController extends Controller
             return back()->withErrors(['phone' => __('auth.failed')]);
         }
 
-        $roleMatches = $credentials['role'] === 'courier'
-            ? $user->isCourierRole()
-            : $user->role === $credentials['role'];
+        // Direct orders use one accountable courier from pickup through
+        // delivery. Legacy specialist/transporter accounts remain in audit
+        // history but cannot start a new mobile session.
+        $roleMatches = $user->role === $credentials['role'];
 
         if (! $roleMatches) {
             return back()->withErrors(['phone' => __('auth.role_mismatch')]);
@@ -123,6 +126,15 @@ class AuthController extends Controller
             return back()->withErrors(['username' => __('auth.pending_review')]);
         }
 
+        // A branch dashboard profile is not a platform administrator. If its
+        // only branch has been paused, reject the sign-in before a session is
+        // created rather than sending it through to an empty portal page.
+        if (in_array($user->role, ['owner', 'branch_manager'], true) && ! $user->hasActiveBranchPortalAccess()) {
+            return back()->withErrors([
+                'username' => 'تم إيقاف هذا الفرع أو لم تعد صلاحية الدخول إليه متاحة.',
+            ]);
+        }
+
         Auth::login($user, true);
         $request->session()->regenerate();
         $request->session()->put('inertia.translations.refresh', true);
@@ -170,7 +182,7 @@ class AuthController extends Controller
         $validator = Validator::make($request->all(), [
             'role' => ['required', 'in:merchant,courier'],
             'name' => ['required', 'string', 'max:120'],
-            'phone' => ['required', 'string', 'max:30', 'unique:users,phone'],
+            'phone' => ['bail', 'required', 'string', new IraqiMobilePhone, 'unique:users,phone'],
             'password' => ['required', 'string', 'min:8', 'confirmed'],
             'shop' => [$isCourier ? 'nullable' : 'required', 'string', 'max:120'],
             'address' => ['required', 'string', 'max:255'],
@@ -216,7 +228,7 @@ class AuthController extends Controller
                 'name' => $isCourier ? ($data['name'].' — مندوب') : $data['shop'],
                 'kind' => $isCourier ? 'courier' : 'merchant',
                 'status' => 'pending',
-                'trial_ends_at' => now()->addDays((int) \App\Models\Setting::get('trial_days', 14)),
+                'trial_ends_at' => now()->addDays((int) Setting::get('trial_days', 14)),
             ]);
 
             $user = User::create([
@@ -228,12 +240,16 @@ class AuthController extends Controller
                 'password' => $data['password'],
                 'role' => $data['role'],
                 'status' => 'pending',
+                // OTP activates the account so the courier can access the
+                // app and see document-review feedback. Operational approval
+                // remains separate and is granted only by administration.
+                'courier_verified' => ! $isCourier,
                 'vehicle' => $isCourier ? ($data['vehicle'] ?? null) : null,
                 'shop_name' => $isCourier ? null : $data['shop'],
                 'address' => $data['address'],
             ]);
 
-            Wallet::create(['user_id' => $user->id, 'balance' => 0, 'budget' => 0]);
+            Wallet::create(['user_id' => $user->id, 'balance' => 0, 'budget' => 0, 'budget_balance' => 0]);
             $user->provinces()->attach($data['province_id'], ['is_primary' => true]);
 
             if ($isCourier) {
@@ -386,7 +402,8 @@ class AuthController extends Controller
     {
         return match ($user->role) {
             'admin' => $user->firstAdminDashboardPath() ?? '/dashboard/access-denied',
-            'owner', 'branch_manager' => '/dashboard/branch',
+            'branch_manager' => $user->firstAdminDashboardPath() ?? '/dashboard/access-denied',
+            'owner' => '/dashboard/branch',
             'merchant', 'courier', 'pickup_courier', 'delivery_courier', 'transporter' => '/app',
             default => '/login',
         };

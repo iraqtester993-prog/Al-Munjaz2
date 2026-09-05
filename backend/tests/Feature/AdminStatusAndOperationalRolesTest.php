@@ -6,6 +6,8 @@ use App\Models\Order;
 use App\Models\Province;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Models\Wallet;
+use App\Services\CourierOrderAccess;
 use App\Tenancy\TenantContext;
 use Database\Seeders\DemoSeeder;
 use Database\Seeders\PlanSeeder;
@@ -98,7 +100,26 @@ class AdminStatusAndOperationalRolesTest extends TestCase
         ]);
     }
 
-    public function test_specialised_courier_roles_are_filterable_assignable_and_notification_targetable(): void
+    public function test_dashboard_order_detail_includes_the_return_reason(): void
+    {
+        $admin = User::where('role', 'admin')->firstOrFail();
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+        $province = $merchant->provinces()->firstOrFail();
+        $order = $this->makeOrder($merchant, $province, 'ALM-ADMIN-RETURN-REASON', 'returned');
+        $order->update([
+            'return_fee_mode' => 'none',
+            'return_reason' => 'العنوان غير صحيح ولم يجب العميل على الاتصال.',
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson("/dashboard/orders?detail={$order->id}")
+            ->assertOk()
+            ->assertJsonPath('order.id', $order->id)
+            ->assertJsonPath('order.return_fee_mode', 'none')
+            ->assertJsonPath('order.return_reason', 'العنوان غير صحيح ولم يجب العميل على الاتصال.');
+    }
+
+    public function test_specialist_accounts_remain_historical_but_are_excluded_from_direct_courier_directories(): void
     {
         $admin = User::where('role', 'admin')->firstOrFail();
         $merchant = User::where('username', 'تاجر')->firstOrFail();
@@ -108,24 +129,41 @@ class AdminStatusAndOperationalRolesTest extends TestCase
         $pickup = $this->makeOperationalUser($courierTenant, $province, 'pickup_courier', 'pickup-ops', '07920000011');
         $delivery = $this->makeOperationalUser($courierTenant, $province, 'delivery_courier', 'delivery-ops', '07920000012');
         $transporter = $this->makeOperationalUser($courierTenant, $province, 'transporter', 'transporter-ops', '07920000013');
+        $courier = $this->makeOperationalUser($courierTenant, $province, 'courier', 'single-courier-ops', '07920000014');
+        Wallet::updateOrCreate(
+            ['user_id' => $courier->id],
+            ['balance' => 100000, 'budget' => 100000, 'budget_balance' => 100000],
+        );
         $order = $this->makeOrder($merchant, $province, 'ALM-ROLE-ASSIGNMENT', 'pending');
 
-        $this->actingAs($admin)->get('/dashboard/couriers?role=pickup_courier')
+        $roster = $this->actingAs($admin)->get('/dashboard/couriers?role=courier')
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Admin/Roster')
-                ->where('selectedRole', 'pickup_courier')
-                ->where('roleFilters.pickup_courier', 1)
-                ->where('rows.0.user.id', $pickup->id)
-                ->where('rows.0.user.role', 'pickup_courier'));
+                ->where('role', 'courier'));
+
+        $rosterRows = collect($roster->inertiaProps('rows'));
+        $this->assertTrue($rosterRows->contains(fn (array $row) => data_get($row, 'user.id') === $courier->id));
+        $this->assertFalse($rosterRows->contains(fn (array $row) => data_get($row, 'user.id') === $pickup->id));
+        $this->assertFalse($rosterRows->contains(fn (array $row) => data_get($row, 'user.id') === $delivery->id));
+        $this->assertFalse($rosterRows->contains(fn (array $row) => data_get($row, 'user.id') === $transporter->id));
 
         Sanctum::actingAs($admin);
+        $directory = $this->getJson('/api/v1/admin/couriers')
+            ->assertOk()
+            ->assertJsonFragment(['id' => $courier->id, 'role' => 'courier']);
+        $directory
+            ->assertJsonMissing(['id' => $pickup->id])
+            ->assertJsonMissing(['id' => $delivery->id])
+            ->assertJsonMissing(['id' => $transporter->id]);
         $this->getJson('/api/v1/admin/couriers?role=delivery_courier')
             ->assertOk()
-            ->assertJsonFragment([
-                'id' => $delivery->id,
-                'role' => 'delivery_courier',
-            ]);
+            ->assertJsonFragment(['id' => $courier->id, 'role' => 'courier'])
+            ->assertJsonMissing(['id' => $delivery->id]);
+
+        // Legacy accounts remain individually discoverable through the full
+        // administrative user directory, rather than disappearing from audit
+        // and branch-transfer history.
         $this->getJson('/api/v1/admin/users?role=transporter')
             ->assertOk()
             ->assertJsonFragment([
@@ -136,35 +174,62 @@ class AdminStatusAndOperationalRolesTest extends TestCase
         $this->actingAs($admin)->post("/dashboard/orders/{$order->id}/courier", [
             'courier_id' => $pickup->id,
             'assignment_role' => 'pickup_courier',
-        ])->assertRedirect();
+        ])->assertRedirect()
+            ->assertSessionHasErrors('assignment_role');
+
+        $this->actingAs($admin)->post("/dashboard/orders/{$order->id}/courier", [
+            'courier_id' => $pickup->id,
+            'assignment_role' => 'courier',
+        ])->assertRedirect()
+            ->assertSessionHasErrors('courier_id');
 
         $this->assertDatabaseHas('orders', [
             'id' => $order->id,
-            'pickup_courier_id' => $pickup->id,
             'status' => 'pending',
-        ]);
-        $this->assertDatabaseHas('order_movements', [
-            'order_id' => $order->id,
-            'stage' => 'pickup_assigned',
-        ]);
-        $this->assertDatabaseHas('notifications', [
-            'user_id' => $pickup->id,
-            'type' => 'order',
+            'courier_id' => null,
+            'pickup_courier_id' => null,
+            'delivery_courier_id' => null,
         ]);
 
         Sanctum::actingAs($admin);
         $this->patchJson("/api/v1/admin/orders/{$order->id}/courier", [
             'courier_id' => $delivery->id,
             'assignment_role' => 'delivery_courier',
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors(['courier_id', 'assignment_role']);
+
+        $assignment = $this->patchJson("/api/v1/admin/orders/{$order->id}/courier", [
+            'courier_id' => $courier->id,
+            'assignment_role' => 'courier',
         ])->assertOk()
-            ->assertJsonPath('data.pickup_courier_id', $pickup->id)
-            ->assertJsonPath('data.delivery_courier_id', $delivery->id)
-            ->assertJsonPath('data.status', 'pending');
+            ->assertJsonPath('data.courier_id', $courier->id)
+            ->assertJsonPath('data.status', 'approved');
+
+        $assignment
+            ->assertJsonMissingPath('data.pickup_courier_id')
+            ->assertJsonMissingPath('data.delivery_courier_id');
+
+        $this->assertTrue(app(CourierOrderAccess::class)->assigned($courier)->whereKey($order->id)->exists());
+        $this->assertFalse(app(CourierOrderAccess::class)->assigned($pickup)->whereKey($order->id)->exists());
+
+        $this->actingAs($pickup)->get('/app/orders?filter=pending')
+            ->assertForbidden();
+        $this->actingAs($pickup)->get('/app')
+            ->assertForbidden();
+        $this->actingAs($pickup)->get('/app/reports')
+            ->assertForbidden();
+        Sanctum::actingAs($pickup);
+        $this->getJson('/api/v1/orders')
+            ->assertForbidden();
+        $this->getJson('/api/v1/dashboard')
+            ->assertForbidden();
 
         // Transporters are available in operations and campaigns, but their
         // direct order assignment is blocked so they can only be used by the
         // dedicated inter-branch transfer workflow.
-        $this->patchJson("/api/v1/admin/orders/{$order->id}/courier", [
+        $unassignedOrder = $this->makeOrder($merchant, $province, 'ALM-TRANSPORTER-ASSIGNMENT', 'pending');
+        Sanctum::actingAs($admin);
+        $this->patchJson("/api/v1/admin/orders/{$unassignedOrder->id}/courier", [
             'courier_id' => $transporter->id,
             'assignment_role' => 'courier',
         ])->assertUnprocessable()

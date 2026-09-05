@@ -58,36 +58,34 @@ class AdminProvinceManagementTest extends TestCase
     public function test_settings_update_operator_can_create_edit_and_toggle_a_governorate(): void
     {
         $operator = $this->operator(['settings' => ['view', 'update']]);
+        $nextStandardOrder = ((int) Province::platform()->max('sort_order')) + 1;
 
         $this->actingAs($operator)
             ->post('/dashboard/settings/provinces', [
                 'name_ar' => '  محافظة الاختبار  ',
-                'name_en' => 'Test Governorate',
-                'name_ku' => 'پارێزگای تاقیکردنەوە',
-                'sort_order' => 99,
             ])
             ->assertRedirect();
 
         $province = Province::platform()->where('name_ar', 'محافظة الاختبار')->firstOrFail();
-        $this->assertSame('Test Governorate', $province->name_en);
-        $this->assertSame('پارێزگای تاقیکردنەوە', $province->name_ku);
-        $this->assertSame(99, $province->sort_order);
+        // The dashboard accepts an Arabic governorate name only. It mirrors
+        // the proper name into the other locales and places it after the
+        // existing standard catalogue automatically.
+        $this->assertSame('محافظة الاختبار', $province->name_en);
+        $this->assertSame('محافظة الاختبار', $province->name_ku);
+        $this->assertSame($nextStandardOrder, $province->sort_order);
         $this->assertTrue($province->is_active);
 
         $this->actingAs($operator)
             ->put("/dashboard/settings/provinces/{$province->id}", [
                 'name_ar' => 'محافظة الاختبار المعدلة',
-                'name_en' => '',
-                'name_ku' => '',
-                'sort_order' => 12,
             ])
             ->assertRedirect();
 
         $province->refresh();
         $this->assertSame('محافظة الاختبار المعدلة', $province->name_ar);
         $this->assertSame('محافظة الاختبار المعدلة', $province->name_en);
-        $this->assertNull($province->name_ku);
-        $this->assertSame(12, $province->sort_order);
+        $this->assertSame('محافظة الاختبار المعدلة', $province->name_ku);
+        $this->assertSame($nextStandardOrder, $province->sort_order);
 
         $this->actingAs($operator)
             ->patch("/dashboard/settings/provinces/{$province->id}/status", ['is_active' => false])
@@ -120,7 +118,10 @@ class AdminProvinceManagementTest extends TestCase
 
     public function test_settings_viewer_can_read_but_cannot_mutate_governorates_or_tenant_specific_records(): void
     {
-        $viewer = $this->operator(['settings' => ['view']]);
+        $viewer = $this->operator([
+            'settings' => ['view'],
+            'provinces' => ['view'],
+        ]);
 
         $response = $this->actingAs($viewer)
             ->get('/dashboard/settings')
@@ -130,6 +131,7 @@ class AdminProvinceManagementTest extends TestCase
         $this->assertTrue($props['canViewProvinces']);
         $this->assertFalse($props['canCreateProvinces']);
         $this->assertFalse($props['canUpdateProvinces']);
+        $this->assertFalse($props['canChangeProvinceStatus']);
         $this->assertNotEmpty($props['provinces']);
 
         $this->actingAs($viewer)

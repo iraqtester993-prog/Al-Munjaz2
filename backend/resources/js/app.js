@@ -4,6 +4,21 @@ import { createApp, h } from 'vue';
 import { createInertiaApp, router } from '@inertiajs/vue3';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import { ZiggyVue } from 'ziggy-js';
+import PopupSelect from './Components/PopupSelect.vue';
+
+// Page modules remain code-split for a light first launch. The mobile shell
+// can warm the module for the tab a user has started to touch, so the screen
+// is ready by the time its Inertia response arrives.
+const pageModules = import.meta.glob('./Pages/**/*.vue');
+window.__almunjazPreloadPage = (name) => {
+    const load = pageModules[`./Pages/${name}.vue`];
+    if (load) load().catch(() => {});
+};
+
+// Changes the entry-file fingerprint on every production release. This lets
+// installed copies fetch the current application shell instead of reusing a
+// previously cached entry bundle.
+document.documentElement.dataset.clientRelease = '2026-09-04-mobile-direct-input-r4';
 
 // The project intentionally keeps the web client independent of a Ziggy PHP
 // package.  Provide the named Laravel routes used by the Vue application here
@@ -34,6 +49,7 @@ const ziggyRoutes = {
     'app.orders.return': { uri: 'app/orders/{order}/return', methods: ['POST'] },
     'app.orders.return-to-merchant': { uri: 'app/orders/{order}/return-to-merchant', methods: ['POST'] },
     'app.orders.recreate': { uri: 'app/orders/{order}/recreate', methods: ['POST'] },
+    'app.orders.archive': { uri: 'app/orders/{order}/archive', methods: ['POST'] },
     'app.orders.republish': { uri: 'app/orders/{order}/republish', methods: ['POST'] },
     'app.orders.claim': { uri: 'app/orders/{order}/claim', methods: ['POST'] },
     'app.duty': { uri: 'app/duty', methods: ['POST'] },
@@ -44,9 +60,12 @@ const ziggyRoutes = {
     'app.wallet.handover': { uri: 'app/wallet/handover', methods: ['POST'] },
     'app.wallet.recharge': { uri: 'app/wallet/recharge', methods: ['POST'] },
     'app.wallet.budget': { uri: 'app/wallet/budget', methods: ['POST'] },
+    'app.wallet.budget.reduce': { uri: 'app/wallet/budget/reduce', methods: ['POST'] },
     'app.chats': { uri: 'app/chats', methods: ['GET', 'HEAD'] },
     'app.chats.show': { uri: 'app/chats/{chat}', methods: ['GET', 'HEAD'] },
     'app.chats.messages': { uri: 'app/chats/{chat}/messages', methods: ['GET', 'HEAD'] },
+    'app.chats.presence': { uri: 'app/chats/{chat}/presence', methods: ['POST'] },
+    'app.chats.unread': { uri: 'app/chats/unread', methods: ['GET', 'HEAD'] },
     'app.chats.send': { uri: 'app/chats/{chat}/send', methods: ['POST'] },
     'app.chats.open': { uri: 'app/chats/open', methods: ['POST'] },
     'app.notifications': { uri: 'app/notifications', methods: ['GET', 'HEAD'] },
@@ -59,6 +78,8 @@ const ziggyRoutes = {
     'app.push.unsubscribe': { uri: 'app/push/subscriptions', methods: ['DELETE'] },
     'admin.dashboard': { uri: 'dashboard', methods: ['GET', 'HEAD'] },
     'admin.orders': { uri: 'dashboard/orders', methods: ['GET', 'HEAD'] },
+    'admin.orders.update': { uri: 'dashboard/orders/{order}', methods: ['PUT'] },
+    'admin.orders.destroy': { uri: 'dashboard/orders/{order}', methods: ['DELETE'] },
     'admin.transfers': { uri: 'dashboard/transfers', methods: ['GET', 'HEAD'] },
     'admin.transfers.store': { uri: 'dashboard/transfers', methods: ['POST'] },
     'admin.transfers.dispatch': { uri: 'dashboard/transfers/{transfer}/dispatch', methods: ['POST'] },
@@ -66,13 +87,10 @@ const ziggyRoutes = {
     'admin.branches': { uri: 'dashboard/branches', methods: ['GET', 'HEAD'] },
     'admin.branches.store': { uri: 'dashboard/branches', methods: ['POST'] },
     'admin.branches.update': { uri: 'dashboard/branches/{branch}', methods: ['PUT'] },
+    'admin.branches.destroy': { uri: 'dashboard/branches/{branch}', methods: ['DELETE'] },
     'admin.branches.status': { uri: 'dashboard/branches/{branch}/status', methods: ['PATCH'] },
     'admin.branches.access.store': { uri: 'dashboard/branches/{branch}/access', methods: ['POST'] },
     'admin.branch.portal': { uri: 'dashboard/branch', methods: ['GET', 'HEAD'] },
-    'admin.branch.content': { uri: 'dashboard/branch/content', methods: ['GET', 'HEAD'] },
-    'admin.branch.content.store': { uri: 'dashboard/branch/content', methods: ['POST'] },
-    'admin.branch.content.update': { uri: 'dashboard/branch/content/{mobileSlide}', methods: ['PUT'] },
-    'admin.branch.content.destroy': { uri: 'dashboard/branch/content/{mobileSlide}', methods: ['DELETE'] },
     'admin.branch.preferences.theme': { uri: 'dashboard/branch/preferences/theme', methods: ['POST'] },
     'admin.branch.preferences.locale': { uri: 'dashboard/branch/preferences/locale', methods: ['POST'] },
     'admin.branch.orders.status': { uri: 'dashboard/branch/orders/{order}/status', methods: ['POST'] },
@@ -94,7 +112,9 @@ const ziggyRoutes = {
     'admin.couriers.locations': { uri: 'dashboard/couriers/locations', methods: ['GET', 'HEAD'] },
     'admin.users.status': { uri: 'dashboard/users/{user}/status', methods: ['POST'] },
     'admin.users.update': { uri: 'dashboard/users/{user}', methods: ['PUT'] },
+    'admin.users.courier-deduction.update': { uri: 'dashboard/users/{user}/courier-deduction', methods: ['PATCH'] },
     'admin.users.merchant-verification': { uri: 'dashboard/users/{user}/merchant-verification', methods: ['POST'] },
+    'admin.users.courier-verification': { uri: 'dashboard/users/{user}/courier-verification', methods: ['POST'] },
     'admin.users.destroy': { uri: 'dashboard/users/{user}', methods: ['DELETE'] },
     'admin.users.documents.show': { uri: 'dashboard/users/{user}/documents/{document}', methods: ['GET', 'HEAD'] },
     'admin.users.documents.review': { uri: 'dashboard/users/{user}/documents/{document}/review', methods: ['POST'] },
@@ -123,6 +143,7 @@ const ziggyRoutes = {
     'admin.platform.invoices.status': { uri: 'dashboard/platform/invoices/{invoice}', methods: ['PATCH'] },
     'admin.platform.invitations.store': { uri: 'dashboard/platform/invitations', methods: ['POST'] },
     'admin.employees': { uri: 'dashboard/employees', methods: ['GET', 'HEAD'] },
+    'admin.employees.store': { uri: 'dashboard/employees', methods: ['POST'] },
     'admin.employees.invitations.store': { uri: 'dashboard/employees/invitations', methods: ['POST'] },
     'admin.employees.update': { uri: 'dashboard/employees/{user}', methods: ['PUT'] },
     'admin.employees.status': { uri: 'dashboard/employees/{user}/status', methods: ['PATCH'] },
@@ -133,13 +154,18 @@ const ziggyRoutes = {
     'admin.notifications.store': { uri: 'dashboard/notifications', methods: ['POST'] },
     'admin.settings': { uri: 'dashboard/settings', methods: ['GET', 'HEAD'] },
     'admin.settings.update': { uri: 'dashboard/settings', methods: ['POST'] },
+    'admin.settings.branding.update': { uri: 'dashboard/settings/branding', methods: ['POST'] },
+    'admin.settings.support.update': { uri: 'dashboard/settings/support', methods: ['POST'] },
+    'admin.settings.financial-defaults.update': { uri: 'dashboard/settings/financial-defaults', methods: ['POST'] },
+    'admin.settings.courier-deduction-default.update': { uri: 'dashboard/settings/courier-deduction-default', methods: ['POST'] },
+    'admin.settings.timing.update': { uri: 'dashboard/settings/timing', methods: ['POST'] },
+    'admin.settings.public-content.update': { uri: 'dashboard/settings/public-content', methods: ['POST'] },
     'admin.provinces.store': { uri: 'dashboard/settings/provinces', methods: ['POST'] },
     'admin.provinces.update': { uri: 'dashboard/settings/provinces/{province}', methods: ['PUT'] },
     'admin.provinces.status': { uri: 'dashboard/settings/provinces/{province}/status', methods: ['PATCH'] },
-    'admin.content': { uri: 'dashboard/content', methods: ['GET', 'HEAD'] },
-    'admin.content.store': { uri: 'dashboard/content', methods: ['POST'] },
-    'admin.content.update': { uri: 'dashboard/content/{mobileSlide}', methods: ['PUT'] },
-    'admin.content.destroy': { uri: 'dashboard/content/{mobileSlide}', methods: ['DELETE'] },
+    'admin.settings.slides.store': { uri: 'dashboard/settings/slides', methods: ['POST'] },
+    'admin.settings.slides.update': { uri: 'dashboard/settings/slides/{mobileSlide}', methods: ['PUT'] },
+    'admin.settings.slides.destroy': { uri: 'dashboard/settings/slides/{mobileSlide}', methods: ['DELETE'] },
     'admin.loyalty': { uri: 'dashboard/loyalty', methods: ['GET', 'HEAD'] },
     'admin.loyalty.settings': { uri: 'dashboard/loyalty/settings', methods: ['POST'] },
     'admin.loyalty.adjust': { uri: 'dashboard/loyalty/adjust', methods: ['POST'] },
@@ -204,7 +230,15 @@ createInertiaApp({
     // Keep the installed experience branded as one product. Role labels belong
     // inside the screens, not in the application/window title.
     title: (title) => (title ? `${title} — المنجز السريع` : 'المنجز السريع'),
-    resolve: (name) => resolvePageComponent(`./Pages/${name}.vue`, import.meta.glob('./Pages/**/*.vue')),
+    resolve: (name) => resolvePageComponent(`./Pages/${name}.vue`, pageModules),
+    // Some Android/PWA browsers animate a visit from the side through the
+    // View Transitions API. It is explicitly disabled for every visit.
+    defaults: {
+        visitOptions: (_href, options) => ({
+            ...options,
+            viewTransition: false,
+        }),
+    },
     setup({ el, App, props, plugin }) {
         translations = props.initialPage.props.translations || translations;
 
@@ -216,7 +250,8 @@ createInertiaApp({
 
         const app = createApp({ render: () => h(App, props) })
             .use(plugin)
-            .use(ZiggyVue, window.Ziggy);
+            .use(ZiggyVue, window.Ziggy)
+            .component('PopupSelect', PopupSelect);
 
         // Vue templates access helpers through the component instance.
         app.config.globalProperties.t = window.t;

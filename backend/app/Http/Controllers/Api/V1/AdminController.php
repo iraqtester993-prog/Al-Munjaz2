@@ -45,19 +45,18 @@ class AdminController extends Controller
     public function couriers(Request $request): JsonResponse
     {
         $this->authorizeAdmin($request);
-        $data = $request->validate([
+        $request->validate([
+            // Accept old cached role filters without ever returning a legacy
+            // specialist in the direct-order courier directory.
             'role' => ['nullable', Rule::in(array_merge(['all'], User::COURIER_ROLES))],
         ]);
 
         $query = User::query()
             ->with('provinces')
-            ->whereIn('role', User::COURIER_ROLES)
+            ->where('role', 'courier')
             ->where('status', 'active')
+            ->where('courier_verified', true)
             ->orderBy('name');
-
-        if (($role = $data['role'] ?? null) && $role !== 'all') {
-            $query->where('role', $role);
-        }
 
         return response()->json(['data' => $query->get()->map(fn (User $user) => $this->userData($user))]);
     }
@@ -74,15 +73,18 @@ class AdminController extends Controller
         $data = $request->validate([
             'courier_id' => ['required', 'integer', Rule::exists('users', 'id')->where(fn ($query) => $query
                 ->whereIn('role', User::DIRECT_ORDER_COURIER_ROLES)
-                ->where('status', 'active'))],
-            'assignment_role' => ['nullable', Rule::in(OrderOperationalAssignmentService::ASSIGNMENT_ROLES)],
+                ->where('status', 'active')
+                ->where('courier_verified', true))],
+            // Direct orders have one courier; pickup/delivery split roles are
+            // not available from the active administration interface.
+            'assignment_role' => ['nullable', Rule::in(['courier'])],
         ]);
         $courier = User::findOrFail($data['courier_id']);
         app(OrderOperationalAssignmentService::class)->assign(
             $order,
             $courier,
             $request->user(),
-            $data['assignment_role'] ?? null,
+            'courier',
             'تم تعيين المندوب من واجهة API للإدارة.',
         );
 
@@ -91,8 +93,6 @@ class AdminController extends Controller
         return response()->json(['data' => [
             'id' => $order->id,
             'courier_id' => $order->courier_id,
-            'pickup_courier_id' => $order->pickup_courier_id,
-            'delivery_courier_id' => $order->delivery_courier_id,
             'status' => $order->status,
             'workflow_stage' => $order->workflow_stage,
         ]]);
@@ -125,6 +125,6 @@ class AdminController extends Controller
 
     private function userData(User $user): array
     {
-        return ['id' => $user->id, 'name' => $user->name, 'username' => $user->username, 'phone' => $user->phone, 'role' => $user->role, 'status' => $user->status, 'vehicle' => $user->vehicle, 'is_online' => $user->is_online, 'assignment_roles' => app(OrderOperationalAssignmentService::class)->modesFor($user), 'provinces' => $user->provinces->map(fn ($province) => ['id' => $province->id, 'name' => $province->name_ar])->values(), 'wallet' => ['balance' => $user->wallet?->balance ?? 0, 'budget' => $user->wallet?->budget ?? 0]];
+        return ['id' => $user->id, 'name' => $user->name, 'username' => $user->username, 'phone' => $user->phone, 'role' => $user->role, 'status' => $user->status, 'vehicle' => $user->vehicle, 'is_online' => $user->is_online, 'courier_verified' => $user->role === 'courier' ? $user->isCourierVerified() : null, 'assignment_roles' => app(OrderOperationalAssignmentService::class)->modesFor($user), 'provinces' => $user->provinces->map(fn ($province) => ['id' => $province->id, 'name' => $province->name_ar])->values(), 'wallet' => ['balance' => $user->wallet?->balance ?? 0, 'budget' => $user->wallet?->budget ?? 0, 'budget_balance' => $user->wallet?->budget_balance ?? 0]];
     }
 }

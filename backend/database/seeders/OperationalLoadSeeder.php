@@ -245,13 +245,14 @@ class OperationalLoadSeeder extends Seeder
     {
         $rows = [];
         foreach ($merchantIds as $offset => $id) {
-            $rows[] = ['user_id' => $id, 'balance' => 100000 + (($offset % 9) * 25000), 'budget' => 0, 'created_at' => $now, 'updated_at' => $now];
+            $rows[] = ['user_id' => $id, 'balance' => 100000 + (($offset % 9) * 25000), 'budget' => 0, 'budget_balance' => 0, 'created_at' => $now, 'updated_at' => $now];
         }
         foreach ($courierIds as $offset => $id) {
-            $rows[] = ['user_id' => $id, 'balance' => 50000 + (($offset % 7) * 15000), 'budget' => 200000 + (($offset % 11) * 30000), 'created_at' => $now, 'updated_at' => $now];
+            $budget = 200000 + (($offset % 11) * 30000);
+            $rows[] = ['user_id' => $id, 'balance' => 50000 + (($offset % 7) * 15000), 'budget' => $budget, 'budget_balance' => $budget, 'created_at' => $now, 'updated_at' => $now];
         }
         foreach (array_chunk($rows, 1000) as $chunk) {
-            DB::table('wallets')->upsert($chunk, ['user_id'], ['balance', 'budget', 'updated_at']);
+            DB::table('wallets')->upsert($chunk, ['user_id'], ['balance', 'budget', 'budget_balance', 'updated_at']);
         }
     }
 

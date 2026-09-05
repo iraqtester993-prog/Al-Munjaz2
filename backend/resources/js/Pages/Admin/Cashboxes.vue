@@ -1,12 +1,17 @@
 <script setup>
 import { computed } from 'vue'
-import { usePage } from '@inertiajs/vue3'
+import { router, usePage } from '@inertiajs/vue3'
+import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
+import BranchFilter from '../../Components/BranchFilter.vue'
 
 const props = defineProps({
     cashboxes: { type: Array, default: () => [] },
     vouchers: { type: Array, default: () => [] },
     summary: { type: Object, default: () => ({}) },
+    canViewCashboxBalances: { type: Boolean, default: false },
+    canViewCashboxLedger: { type: Boolean, default: false },
+    branchFilter: { type: Object, default: () => ({}) },
 })
 
 const page = usePage()
@@ -61,11 +66,23 @@ function movementLabel(type) {
     return type === 'transfer_in' ? l('transferIn') : type === 'transfer_out' ? l('transferOut') : l('handover')
 }
 
+function fmt(value) {
+    return new Intl.NumberFormat(locale.value === 'en' ? 'en-US' : 'ar-IQ').format(Number(value || 0))
+}
+
 const collectionCashboxes = computed(() => props.cashboxes.filter((box) => ['branch', 'vault', 'bank'].includes(box.kind)))
 const branchCashboxes = computed(() => collectionCashboxes.value.filter((box) => box.kind === 'branch'))
 const collectionVouchers = computed(() => props.vouchers.filter((voucher) => ['courier_handover', 'transfer_in', 'transfer_out'].includes(voucher.type)))
 const activeCashboxes = computed(() => collectionCashboxes.value.filter((box) => box.is_active).length)
 const collectionBalance = computed(() => Number(props.summary.delivery_collections ?? props.summary.balance ?? 0) || 0)
+
+function changeBranchFilter(branchId) {
+    const query = Object.fromEntries(new URLSearchParams(window.location.search).entries())
+    if (branchId) query.branch_id = String(branchId)
+    else delete query.branch_id
+
+    router.get(route('admin.cashboxes'), query, { preserveScroll: true, preserveState: false, replace: true })
+}
 </script>
 
 <template>
@@ -76,10 +93,11 @@ const collectionBalance = computed(() => Number(props.summary.delivery_collectio
                 <h2>{{ l('title') }}</h2>
                 <span>{{ l('subtitle') }}</span>
             </div>
+            <BranchFilter v-if="branchFilter?.enabled" :filter="branchFilter" @change="changeBranchFilter" />
         </header>
 
         <section class="kpi-grid">
-            <article class="kpi kpi-primary">
+            <article v-if="canViewCashboxBalances" class="kpi kpi-primary">
                 <span class="ki">↧</span>
                 <span><strong class="kval mono">{{ fmt(collectionBalance) }}</strong><small>{{ l('currency') }}</small><b class="klab">{{ l('total') }}</b></span>
             </article>
@@ -91,7 +109,7 @@ const collectionBalance = computed(() => Number(props.summary.delivery_collectio
                 <span class="ki">●</span>
                 <span><strong class="kval mono">{{ activeCashboxes }}</strong><b class="klab">{{ l('active') }}</b></span>
             </article>
-            <article class="kpi">
+            <article v-if="canViewCashboxLedger" class="kpi">
                 <span class="ki">≡</span>
                 <span><strong class="kval mono">{{ collectionVouchers.length }}</strong><b class="klab">{{ l('entries') }}</b></span>
             </article>
@@ -106,7 +124,7 @@ const collectionBalance = computed(() => Number(props.summary.delivery_collectio
                         <p>{{ box.branch ? `${box.branch.city} · ${l('branch')}` : kindLabel(box.kind) }}</p>
                     </div>
                 </header>
-                <div class="box-balance">
+                <div v-if="canViewCashboxBalances" class="box-balance">
                     <span>{{ l('balance') }}</span>
                     <b class="mono">{{ fmt(box.balance) }} <small>{{ l('currency') }}</small></b>
                 </div>
@@ -118,7 +136,7 @@ const collectionBalance = computed(() => Number(props.summary.delivery_collectio
             <div v-if="!collectionCashboxes.length" class="empty-card">{{ l('noCollections') }}</div>
         </section>
 
-        <section class="panel ledger">
+        <section v-if="canViewCashboxLedger" class="panel ledger">
             <header class="panel-head">
                 <span><h3>{{ l('ledger') }}</h3><p>{{ l('ledgerSubtitle') }}</p></span>
             </header>

@@ -16,7 +16,7 @@ class Branch extends Model
 
     protected $fillable = [
         'tenant_id', 'is_platform_managed', 'code', 'name_ar', 'name_en', 'name_ku', 'city', 'phone',
-        'province_id', 'address', 'cash_balance', 'is_active',
+        'email', 'province_id', 'address', 'cash_balance', 'is_active',
     ];
 
     protected function casts(): array
@@ -65,6 +65,16 @@ class Branch extends Model
         return $this->hasMany(BranchMembership::class);
     }
 
+    /**
+     * Dashboard memberships that are the one primary assignment for their
+     * account. A branch can have several local employees, but each account
+     * can use only one branch as its dashboard boundary.
+     */
+    public function primaryMemberships(): HasMany
+    {
+        return $this->memberships()->where('is_primary', true);
+    }
+
     public function originOrders(): HasMany
     {
         return $this->hasMany(Order::class, 'origin_branch_id');
@@ -102,5 +112,42 @@ class Branch extends Model
                     ->where('is_platform_managed', true)
                     ->orWhere('tenant_id', $tenantId);
             });
+    }
+
+    /**
+     * Whether this branch is the live, platform-owned operational endpoint
+     * for its governorate. A tenant-owned merchant branch can never claim
+     * this status even if it happens to use the same province id.
+     */
+    public function isOperationalPlatformBranch(): bool
+    {
+        return (bool) $this->is_platform_managed
+            && (bool) $this->is_active
+            && $this->province_id !== null
+            && (int) $this->tenant_id === (int) Tenant::platform()->id;
+    }
+
+    protected static function booted(): void
+    {
+        static::saving(function (self $branch): void {
+            // MySQL does not offer portable partial unique indexes. This
+            // nullable derived key gives SQLite/MySQL the same guarantee:
+            // only one active platform branch may claim a province, while
+            // inactive and tenant-owned historical branches remain valid.
+            $branch->active_platform_province_id = $branch->isOperationalPlatformBranch()
+                ? $branch->province_id
+                : null;
+        });
+
+        static::deleting(function (self $branch): void {
+            if ($branch->isForceDeleting() || $branch->active_platform_province_id === null) {
+                return;
+            }
+
+            // Soft-deleted branches must release their operational province
+            // before their deleted_at timestamp is written; otherwise the
+            // unique key would prevent creating a replacement branch.
+            $branch->forceFill(['active_platform_province_id' => null])->saveQuietly();
+        });
     }
 }

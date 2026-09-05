@@ -73,7 +73,7 @@ class CashboxService
     }
 
     /**
-     * @param iterable<int, Cashbox> $cashboxes
+     * @param  iterable<int, Cashbox>  $cashboxes
      * @return array<int, int>
      */
     public function collectionBalances(iterable $cashboxes): array
@@ -112,8 +112,7 @@ class CashboxService
         int $amount,
         int $availableCollections,
         ?string $note = null,
-    ): CashboxVoucher
-    {
+    ): CashboxVoucher {
         $platform = Tenant::platform();
         $this->assertEligibleHandover($branch, $courier, $request, $amount, $availableCollections, $platform);
 
@@ -156,7 +155,7 @@ class CashboxService
         Cashbox $cashbox,
         int $amount,
         User $actor,
-        ?string $note = null,
+        ?string $note,
         FinanceRequest $request,
         int $availableCollections,
     ): CashboxVoucher {
@@ -308,6 +307,10 @@ class CashboxService
             && (int) $request->approved_amount === $amount
             && (int) $request->user_id === (int) $courier->id
             && (int) $request->branch_id === (int) $branch->id
+            // The cashbox is the final custody boundary. Keep this check
+            // here as well as in FinanceRequestService so a crafted call
+            // cannot deposit one courier's cash into another branch.
+            && (int) $courier->branch_id === (int) $branch->id
             && (bool) $branch->is_platform_managed
             && (int) $branch->tenant_id === (int) $platform->id;
 

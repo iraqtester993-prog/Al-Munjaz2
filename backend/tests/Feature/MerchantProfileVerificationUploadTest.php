@@ -70,7 +70,7 @@ class MerchantProfileVerificationUploadTest extends TestCase
             ->post('/profile/verification', [
                 'name' => $merchant->name,
                 'address' => 'Baghdad — Karrada',
-                'phone' => '07900007771',
+                'phone' => '07700007771',
                 'identity_number' => 'MERCHANT-UPLOAD-LIMIT-1',
                 'id_front_document' => UploadedFile::fake()->create('id-front.pdf', 450, 'application/pdf'),
                 'id_back_document' => UploadedFile::fake()->create('id-back.pdf', 450, 'application/pdf'),
@@ -81,6 +81,22 @@ class MerchantProfileVerificationUploadTest extends TestCase
             ->assertSessionHasErrors('documents');
 
         $this->assertSame($documentCountBeforeAttempt, Document::query()->where('user_id', $merchant->id)->count());
+    }
+
+    public function test_merchant_verification_rejects_an_invalid_account_phone_number(): void
+    {
+        $merchant = User::where('role', 'merchant')->firstOrFail();
+
+        $this->actingAs($merchant)
+            ->post('/profile/verification', [
+                'name' => $merchant->name,
+                'address' => 'Baghdad — Karrada',
+                'phone' => '07900007772',
+                'identity_number' => 'MERCHANT-PHONE-RULE',
+            ])
+            ->assertSessionHasErrors('phone');
+
+        $this->assertSame($merchant->phone, $merchant->fresh()->phone);
     }
 
     private function postMaxSizeBytes(): int

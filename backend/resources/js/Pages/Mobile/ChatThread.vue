@@ -4,6 +4,7 @@ import axios from 'axios'
 import { route } from 'ziggy-js'
 import { usePage } from '@inertiajs/vue3'
 import AppShell from '../../Components/AppShell.vue'
+import { subscribeToChat } from '../../Utils/realtimeChat'
 
 const props = defineProps({
     chat: { type: Object, required: true },
@@ -32,6 +33,13 @@ let disposed = false
 let resumeAfterRefresh = false
 let failureCount = 0
 let recentActivityUntil = 0
+let unsubscribeRealtime = () => {}
+let presenceTimer = null
+
+function keepPresence() {
+    if (!isForeground()) return
+    axios.post(route('app.chats.presence', props.chat.id)).catch(() => {})
+}
 
 async function send() {
     const value = text.value.trim()
@@ -167,6 +175,7 @@ watch(() => props.messages, (messages) => mergeMessages(messages), { deep: true 
 watch(() => props.chat?.id, () => {
     replaceMessages(props.messages)
     requestRefresh()
+    keepPresence()
 })
 
 function handleVisibilityChange() {
@@ -200,6 +209,8 @@ onMounted(() => {
     // sessions do not keep waking the shared server every few seconds.
     markConversationActive()
     requestRefresh()
+    unsubscribeRealtime = subscribeToChat(props.chat.id, () => requestRefresh())
+    presenceTimer = window.setInterval(keepPresence, 30_000)
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('blur', handleWindowBlur)
     window.addEventListener('focus', handleWindowFocus)
@@ -209,6 +220,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
     disposed = true
     clearPollTimer()
+    unsubscribeRealtime()
+    if (presenceTimer) window.clearInterval(presenceTimer)
     document.removeEventListener('visibilitychange', handleVisibilityChange)
     window.removeEventListener('blur', handleWindowBlur)
     window.removeEventListener('focus', handleWindowFocus)

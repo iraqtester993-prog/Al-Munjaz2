@@ -2,6 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\User;
+use App\Services\BranchDashboardAuthorization;
+use App\Services\BranchDashboardContext;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -13,10 +16,31 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class DashboardPermissionMiddleware
 {
+    public function __construct(
+        private readonly BranchDashboardContext $branchContext,
+        private readonly BranchDashboardAuthorization $branchAuthorization,
+    ) {
+    }
+
     public function handle(Request $request, Closure $next, string $moduleAndAction, ?string $action = null): Response
     {
         [$module, $resolvedAction] = $this->parsePermission($moduleAndAction, $action);
         $user = $request->user();
+
+        if ($user instanceof User) {
+            $scope = $this->branchContext->fromRequest($request);
+
+            if ($scope->requiresBranchScope()) {
+                abort_unless(
+                    $user->isActiveUser()
+                        && $scope->hasBranchScope()
+                        && $this->branchAuthorization->allows($user, $scope, $module, $resolvedAction),
+                    403,
+                );
+
+                return $next($request);
+            }
+        }
 
         abort_unless(
             $user

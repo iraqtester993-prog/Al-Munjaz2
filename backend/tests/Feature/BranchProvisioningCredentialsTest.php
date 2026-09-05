@@ -82,6 +82,7 @@ class BranchProvisioningCredentialsTest extends TestCase
         $this->assertSame('branch_manager', $manager->role);
         $this->assertSame($branch->id, (int) $manager->branch_id);
         $this->assertSame($credentials['email'], $manager->email);
+        $this->assertSame($credentials['email'], $branch->email);
         $this->assertTrue(Hash::check($credentials['password'], $manager->password));
         $this->assertNotSame($credentials['password'], $manager->password);
         $this->assertSame(1, BranchMembership::query()->where('user_id', $manager->id)->count());
@@ -89,6 +90,8 @@ class BranchProvisioningCredentialsTest extends TestCase
             'branch_id' => $branch->id,
             'user_id' => $manager->id,
             'access_role' => BranchMembership::MANAGER,
+            'is_primary' => true,
+            'primary_user_id' => $manager->id,
         ]);
 
         $this->order($merchantTenant, 'CRED-VISIBLE', $branch, $basra);
@@ -113,29 +116,27 @@ class BranchProvisioningCredentialsTest extends TestCase
         $this->post('/dashboard/login', [
             'username' => $credentials['email'],
             'password' => $credentials['password'],
-        ])->assertRedirect('/dashboard/branch');
+        ])->assertRedirect('/dashboard');
 
-        // Membership, rather than a request-supplied province or branch id,
-        // keeps the generated manager inside its one operating governorate.
+        // The generated manager lands in the same dashboard URL as the
+        // super administrator, but the server keeps its data within the one
+        // membership-derived governorate.
         $this->inertia()
-            ->get('/dashboard/branch')
+            ->get('/dashboard')
             ->assertOk()
-            ->assertJsonPath('component', 'Admin/BranchPortal')
-            ->assertJsonCount(1, 'props.branches')
-            ->assertJsonPath('props.branches.0.id', $branch->id)
-            ->assertJsonPath('props.branches.0.province.id', $basra->id);
+            ->assertJsonPath('component', 'Admin/Dashboard')
+            ->assertJsonPath('props.branchDashboard.active', true)
+            ->assertJsonPath('props.branchDashboard.branch.id', $branch->id)
+            ->assertJsonPath('props.recentOrders.0.track_no', 'CRED-VISIBLE')
+            ->assertJsonMissing(['track_no' => 'CRED-HIDDEN']);
 
-        // The branch overview no longer serialises a full operational list.
-        // Ask Inertia for that optional prop explicitly, exactly as the
-        // portal does once its Orders tab is opened.
+        // The full Orders module is the same route used by the platform, and
+        // retains the identical server-owned branch boundary.
         $this->inertia()
-            ->withHeaders([
-                'X-Inertia-Partial-Component' => 'Admin/BranchPortal',
-                'X-Inertia-Partial-Data' => 'orders',
-            ])
-            ->get('/dashboard/branch')
+            ->get('/dashboard/orders')
             ->assertOk()
-            ->assertJsonPath('props.orders.0.track_no', 'CRED-VISIBLE')
+            ->assertJsonPath('component', 'Admin/Orders')
+            ->assertJsonPath('props.orders.data.0.track_no', 'CRED-VISIBLE')
             ->assertJsonMissing(['track_no' => 'CRED-HIDDEN']);
     }
 
@@ -157,6 +158,73 @@ class BranchProvisioningCredentialsTest extends TestCase
 
         $this->assertDatabaseMissing('branches', ['code' => 'DISABLED-PROVINCE']);
         $this->assertDatabaseMissing('users', ['username' => 'branch-disabled-province']);
+    }
+
+    public function test_a_paused_branch_account_cannot_create_a_dashboard_session(): void
+    {
+        $platform = Tenant::platform();
+        $province = $this->province('بغداد', 'Baghdad', 1);
+        $branch = Branch::withoutGlobalScope(TenantScope::class)->create([
+            'tenant_id' => $platform->id,
+            'is_platform_managed' => true,
+            'code' => 'BGD-PAUSED-LOGIN',
+            'name_ar' => 'فرع بغداد الموقوف',
+            'city' => 'بغداد',
+            'province_id' => $province->id,
+            'is_active' => false,
+        ]);
+        $manager = User::create([
+            'tenant_id' => $platform->id,
+            'branch_id' => $branch->id,
+            'name' => 'مدير فرع موقوف',
+            'username' => 'paused-branch-login',
+            'email' => 'paused-branch-login@example.test',
+            'phone' => '07999990002',
+            'password' => 'StrongPassword123!',
+            'role' => 'branch_manager',
+            'status' => 'active',
+        ]);
+        $branch->members()->attach($manager->id, ['access_role' => BranchMembership::MANAGER]);
+
+        $this->post('/dashboard/login', [
+            'username' => $manager->username,
+            'password' => 'StrongPassword123!',
+        ])
+            ->assertRedirect()
+            ->assertSessionHasErrors('username');
+
+        $this->assertGuest();
+    }
+
+    public function test_reactivating_a_historical_branch_cannot_create_a_second_live_branch_for_one_province(): void
+    {
+        $platform = Tenant::platform();
+        $admin = $this->superAdmin($platform);
+        $province = $this->province('واسط', 'Wasit', 1);
+        $active = Branch::withoutGlobalScope(TenantScope::class)->create([
+            'tenant_id' => $platform->id,
+            'is_platform_managed' => true,
+            'code' => 'WAS-ACTIVE',
+            'name_ar' => 'فرع واسط النشط',
+            'province_id' => $province->id,
+            'is_active' => true,
+        ]);
+        $historical = Branch::withoutGlobalScope(TenantScope::class)->create([
+            'tenant_id' => $platform->id,
+            'is_platform_managed' => true,
+            'code' => 'WAS-HISTORY',
+            'name_ar' => 'فرع واسط السابق',
+            'province_id' => $province->id,
+            'is_active' => false,
+        ]);
+
+        $this->actingAs($admin)
+            ->patch("/dashboard/branches/{$historical->id}/status", ['is_active' => true])
+            ->assertRedirect()
+            ->assertSessionHasErrors('is_active');
+
+        $this->assertTrue($active->fresh()->is_active);
+        $this->assertFalse($historical->fresh()->is_active);
     }
 
     private function superAdmin(Tenant $platform): User

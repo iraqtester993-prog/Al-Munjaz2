@@ -122,6 +122,7 @@ class AdminUserManagementTest extends TestCase
     {
         $admin = User::where('role', 'admin')->firstOrFail();
         $courier = User::where('role', 'courier')->firstOrFail();
+        $courier->update(['admin_deduction_per_order' => 1_250]);
 
         $this->actingAs($admin)
             ->put('/dashboard/users/'.$courier->id, [
@@ -132,6 +133,9 @@ class AdminUserManagementTest extends TestCase
                 'shop_name' => 'must-not-be-used',
                 'address' => 'بغداد — الكرادة',
                 'vehicle' => 'sedan',
+                // This field is intentionally ignored by the generic profile
+                // endpoint; it has its own audited, permission-scoped route.
+                'admin_deduction_per_order' => 9_999,
             ])
             ->assertRedirect();
 
@@ -143,6 +147,7 @@ class AdminUserManagementTest extends TestCase
             'phone' => '07919990112',
             'address' => 'بغداد — الكرادة',
             'vehicle' => 'sedan',
+            'admin_deduction_per_order' => 1_250,
             'role' => 'courier',
         ]);
         $this->assertDatabaseHas('activity_logs', [
@@ -184,6 +189,10 @@ class AdminUserManagementTest extends TestCase
             'password' => 'Password123!',
             'role' => 'courier',
             'status' => 'pending',
+            // New registrations explicitly begin under operational review.
+            // The database default keeps legacy active couriers working, so
+            // this fixture must opt into the newly registered-account state.
+            'courier_verified' => false,
             'vehicle' => 'sedan',
             'address' => 'بغداد — الكرادة',
             'identity_number' => 'IQ-TEST-COURIER-001',

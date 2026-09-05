@@ -6,12 +6,13 @@ use App\Models\ActivityLog;
 use App\Models\Branch;
 use App\Models\FinanceRequest;
 use App\Models\Notification;
+use App\Models\Order;
 use App\Models\Scopes\TenantScope;
 use App\Models\Tenant;
-use App\Models\Order;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Models\Wallet;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -32,13 +33,15 @@ class FinanceRequestService
         ?int $branchId = null,
         ?string $note = null,
         ?string $externalReference = null,
-    ): FinanceRequest
-    {
+    ): FinanceRequest {
         $this->ensure(in_array($type, FinanceRequest::TYPES, true), 'نوع العملية المالية غير صالح.');
         $this->ensure($amount >= 1000, 'الحد الأدنى للعملية هو 1,000 د.ع.');
 
         if (in_array($type, [FinanceRequest::CASH_HANDOVER, FinanceRequest::BUDGET_RECHARGE, FinanceRequest::QI_TOPUP], true)) {
-            $this->ensure($user->isCourierRole(), 'هذه العملية متاحة للمندوب فقط.');
+            // A direct order has one accountable courier. Retired pickup,
+            // delivery, and transporter accounts remain visible in audit
+            // history but cannot start new wallet operations.
+            $this->ensure($this->isDirectCourier($user), 'هذه العملية متاحة للمندوب فقط.');
         }
 
         if ($type === FinanceRequest::MERCHANT_PAYOUT) {
@@ -55,7 +58,17 @@ class FinanceRequestService
             );
         }
 
-        if ($branchId) {
+        if ($type === FinanceRequest::CASH_HANDOVER) {
+            // A cash handover is physical custody, not a courier-selected
+            // destination. Resolve the one active operational branch from
+            // the server-owned courier assignment and persist only that id.
+            $operationalBranch = $this->requireCourierOperationalBranch($user);
+            $this->ensure(
+                $branchId === null || $branchId === (int) $operationalBranch->id,
+                'لا يمكن تسليم النقدية إلا إلى فرع المندوب التشغيلي.'
+            );
+            $branchId = (int) $operationalBranch->id;
+        } elseif ($branchId) {
             $this->activeBranch($branchId);
         }
 
@@ -105,7 +118,7 @@ class FinanceRequestService
      */
     public function declareCourierBudget(User $user, int $amount, ?string $note = null): Transaction
     {
-        $this->ensure($user->isCourierRole(), 'إضافة الميزانية متاحة للمندوب فقط.');
+        $this->ensure($this->isDirectCourier($user), 'إضافة الميزانية متاحة للمندوب فقط.');
         $this->ensure($amount >= 1000, 'الحد الأدنى للعملية هو 1,000 د.ع.');
 
         return DB::transaction(function () use ($user, $amount, $note): Transaction {
@@ -114,10 +127,15 @@ class FinanceRequestService
                 ->findOrFail($user->id);
             $wallet = $this->walletFor($courier->id, true);
             $budgetBefore = (int) $wallet->budget;
+            $budgetBalanceBefore = (int) $wallet->budget_balance;
             $reference = $this->reference('BUD');
             $ledgerNote = trim((string) $note);
 
+            // Adding real cash increases both the declared budget ceiling
+            // and the portion currently available for new orders. Order
+            // assignment itself changes only budget_balance.
             $wallet->increment('budget', $amount);
+            $wallet->increment('budget_balance', $amount);
 
             $transaction = Transaction::create([
                 'tenant_id' => $courier->tenant_id,
@@ -144,6 +162,8 @@ class FinanceRequestService
                     'amount' => $amount,
                     'budget_before' => $budgetBefore,
                     'budget_after' => $budgetBefore + $amount,
+                    'budget_balance_before' => $budgetBalanceBefore,
+                    'budget_balance_after' => $budgetBalanceBefore + $amount,
                     'transaction_id' => $transaction->id,
                     'reference' => $reference,
                     'source' => 'courier_declaration',
@@ -153,6 +173,86 @@ class FinanceRequestService
 
             return $transaction;
         });
+    }
+
+    /**
+     * Remove only cash that is not currently reserved for an active order.
+     * Both budget figures move together, so the declared cash ceiling never
+     * becomes lower than funds already held for an order.
+     */
+    public function reduceCourierBudget(User $user, int $amount, ?string $note = null): Transaction
+    {
+        $this->ensure($this->isDirectCourier($user), 'إنقاص الميزانية متاح للمندوب فقط.');
+        $this->ensure($amount >= 1000, 'الحد الأدنى للعملية هو 1,000 د.ع.');
+
+        return DB::transaction(function () use ($user, $amount, $note): Transaction {
+            $courier = User::withoutGlobalScopes()
+                ->lockForUpdate()
+                ->findOrFail($user->id);
+            $wallet = $this->walletFor($courier->id, true);
+            $budgetBefore = (int) $wallet->budget;
+            $budgetBalanceBefore = (int) $wallet->budget_balance;
+
+            $this->ensure(
+                $amount <= $budgetBefore && $amount <= $budgetBalanceBefore,
+                'لا يمكن إنقاص مبلغ محجوز لطلب نشط أو أكبر من الميزانية المتاحة.'
+            );
+
+            $wallet->decrement('budget', $amount);
+            $wallet->decrement('budget_balance', $amount);
+            $reference = $this->reference('BUD');
+            $ledgerNote = trim((string) $note);
+
+            $transaction = Transaction::create([
+                'tenant_id' => $courier->tenant_id,
+                'user_id' => $courier->id,
+                'type' => 'budget_deduct',
+                'amount' => $amount,
+                'direction' => -1,
+                'ref' => $reference,
+                'date' => today(),
+                'note' => mb_substr(
+                    $ledgerNote !== '' ? $ledgerNote : 'إنقاص ميزانية نقدية من المندوب',
+                    0,
+                    255,
+                ),
+            ]);
+
+            ActivityLog::create([
+                'tenant_id' => $courier->tenant_id,
+                'user_id' => $courier->id,
+                'action' => 'wallet.courier_budget_reduced',
+                'subject_type' => 'wallet',
+                'subject_id' => $wallet->id,
+                'data' => [
+                    'amount' => $amount,
+                    'budget_before' => $budgetBefore,
+                    'budget_after' => $budgetBefore - $amount,
+                    'budget_balance_before' => $budgetBalanceBefore,
+                    'budget_balance_after' => $budgetBalanceBefore - $amount,
+                    'transaction_id' => $transaction->id,
+                    'reference' => $reference,
+                    'source' => 'courier_declaration',
+                ],
+                'ip' => request()->ip(),
+            ]);
+
+            return $transaction;
+        });
+    }
+
+    /**
+     * The wallet UI may expose this one branch as the handover destination.
+     * A null return deliberately means the courier has no valid operational
+     * assignment, rather than falling back to a browser-selected branch.
+     */
+    public function operationalBranchForCourier(User $courier): ?Branch
+    {
+        if (! $this->isDirectCourier($courier) || (int) $courier->branch_id <= 0) {
+            return null;
+        }
+
+        return $this->operationalBranchQuery($courier)->first();
     }
 
     /**
@@ -195,7 +295,7 @@ class FinanceRequestService
         return app(CourierOrderAccess::class)
             ->assigned($courier)
             ->where('status', 'delivered')
-            ->get(['price', 'fee'])
+            ->get(['fee', 'admin_deduction_applied'])
             ->sum(fn (Order $order): int => self::netCollectionForOrder($order));
     }
 
@@ -224,6 +324,27 @@ class FinanceRequestService
             // the wallet itself.
             $wallet = $this->walletFor($user->id, true);
             $effectiveBranchId = $branchId ?: $request->branch_id;
+
+            if ($request->type === FinanceRequest::CASH_HANDOVER) {
+                $operationalBranch = $this->requireCourierOperationalBranch($user, true);
+                $expectedBranchId = (int) $operationalBranch->id;
+
+                // A historical request without a branch may be repaired by
+                // approval, but a request already tied to another branch is
+                // malformed and must never move cash into that cashbox.
+                $this->ensure(
+                    $request->branch_id === null || (int) $request->branch_id === $expectedBranchId,
+                    'طلب تسليم النقدية لا يطابق فرع المندوب التشغيلي.'
+                );
+                $this->ensure(
+                    $effectiveBranchId === null || (int) $effectiveBranchId === $expectedBranchId,
+                    'لا يمكن اعتماد التسليم النقدي في فرع مختلف عن فرع المندوب.'
+                );
+
+                $effectiveBranchId = $expectedBranchId;
+            }
+
+            $this->assertBranchOperatorCanProcess($admin, $request, $user, $effectiveBranchId);
 
             // Mark the request approved before it can enter the restricted
             // cashbox path.  This all runs inside the same transaction, so a
@@ -275,6 +396,9 @@ class FinanceRequestService
                 ->findOrFail($requestId);
             $this->ensure($request->isPending(), 'تمت معالجة هذا الطلب مسبقاً.');
 
+            $user = User::withoutGlobalScopes()->lockForUpdate()->findOrFail($request->user_id);
+            $this->assertBranchOperatorCanProcess($admin, $request, $user, $request->branch_id ? (int) $request->branch_id : null);
+
             $request->forceFill([
                 'status' => FinanceRequest::REJECTED,
                 'decision_note' => $note,
@@ -292,10 +416,7 @@ class FinanceRequestService
                 'ip' => request()->ip(),
             ]);
 
-            $user = User::withoutGlobalScopes()->find($request->user_id);
-            if ($user) {
-                $this->notify($request, $user, false, $request->amount, $note);
-            }
+            $this->notify($request, $user, false, $request->amount, $note);
 
             return $request->fresh(['user', 'branch', 'processor']);
         });
@@ -303,9 +424,10 @@ class FinanceRequestService
 
     private function approveCashHandover(FinanceRequest $request, User $user, Wallet $wallet, int $amount, ?int $branchId): Transaction
     {
-        $this->ensure($user->isCourierRole(), 'تسليم النقدية متاح للمندوب فقط.');
+        $this->ensure($this->isDirectCourier($user), 'تسليم النقدية متاح للمندوب فقط.');
         $this->ensure($branchId !== null, 'اختر الفرع الذي استلم النقدية.');
-        $branch = $this->activeBranch($branchId, true);
+        $branch = $this->requireCourierOperationalBranch($user, true);
+        $this->ensure((int) $branch->id === $branchId, 'لا يمكن اعتماد التسليم النقدي في فرع مختلف عن فرع المندوب.');
         $availableCollections = $this->cashOnHand($user->id);
         $this->ensure($amount <= $availableCollections, 'مبلغ التسليم أكبر من النقدية التي يحملها المندوب.');
 
@@ -330,6 +452,7 @@ class FinanceRequestService
         $this->ensure($user->isCourierRole(), 'إضافة الميزانية متاحة للمندوب فقط.');
 
         $wallet->increment('budget', $amount);
+        $wallet->increment('budget_balance', $amount);
 
         return $this->ledger($request, $user, FinanceRequest::BUDGET_RECHARGE, $amount, 1, 'إضافة نقدية إلى ميزانية المندوب بعد اعتماد الإدارة');
     }
@@ -391,7 +514,7 @@ class FinanceRequestService
             return $wallet;
         }
 
-        Wallet::firstOrCreate(['user_id' => $userId], ['balance' => 0, 'budget' => 0]);
+        Wallet::firstOrCreate(['user_id' => $userId], ['balance' => 0, 'budget' => 0, 'budget_balance' => 0]);
 
         return Wallet::query()
             ->where('user_id', $userId)
@@ -429,6 +552,65 @@ class FinanceRequestService
         return $query->firstOrFail();
     }
 
+    /**
+     * @return Builder<Branch>
+     */
+    private function operationalBranchQuery(User $courier): Builder
+    {
+        return Branch::withoutGlobalScope(TenantScope::class)
+            ->whereKey((int) $courier->branch_id)
+            ->where('tenant_id', Tenant::platform()->id)
+            ->where('is_platform_managed', true)
+            ->where('is_active', true)
+            ->whereNotNull('province_id')
+            ->whereColumn('active_platform_province_id', 'province_id')
+            ->whereHas('province', fn (Builder $province) => $province->platform()->active());
+    }
+
+    private function requireCourierOperationalBranch(User $courier, bool $lock = false): Branch
+    {
+        $query = $this->operationalBranchQuery($courier);
+
+        if ($lock) {
+            $query->lockForUpdate();
+        }
+
+        $branch = $query->first();
+        $this->ensure($branch !== null, 'المندوب غير مرتبط بفرع تشغيلي نشط.');
+
+        return $branch;
+    }
+
+    /**
+     * A branch dashboard can process only its own operational accounts.
+     * This is repeated in the service so a direct service call, queue job,
+     * or malformed legacy request cannot bypass the controller query scope.
+     */
+    private function assertBranchOperatorCanProcess(User $admin, FinanceRequest $request, User $account, ?int $effectiveBranchId): void
+    {
+        $scope = app(BranchDashboardContext::class)->scopeFor($admin);
+
+        if (! $scope->requiresBranchScope()) {
+            return;
+        }
+
+        $this->ensure($scope->hasBranchScope(), 'حساب مدير الفرع غير مرتبط بفرع تشغيلي نشط.');
+        $branchId = (int) $scope->branchId();
+
+        $this->ensure(
+            (int) $account->branch_id === $branchId,
+            'لا يمكن لمدير الفرع معالجة طلب تابع لمندوب أو تاجر من فرع آخر.'
+        );
+        $this->ensure(
+            $request->branch_id === null || (int) $request->branch_id === $branchId,
+            'لا يمكن لمدير الفرع معالجة طلب مرتبط بفرع آخر.'
+        );
+        $this->ensure(
+            $effectiveBranchId === null || (int) $effectiveBranchId === $branchId,
+            'لا يمكن لمدير الفرع تحويل العملية إلى فرع آخر.'
+        );
+    }
+
     private function notify(FinanceRequest $request, User $user, bool $approved, int $amount, ?string $note): void
     {
         $labels = [
@@ -464,6 +646,11 @@ class FinanceRequestService
     private function reference(string $prefix = 'FIN'): string
     {
         return $prefix.'-'.now()->format('ymdHis').'-'.str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT);
+    }
+
+    private function isDirectCourier(User $user): bool
+    {
+        return $user->role === 'courier';
     }
 
     private function ensure(bool $condition, string $message): void

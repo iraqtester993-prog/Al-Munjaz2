@@ -1,18 +1,43 @@
 <?php
 
+use App\Http\Middleware\ActiveUserMiddleware;
+use App\Http\Middleware\DashboardPermissionMiddleware;
+use App\Http\Middleware\DashboardSettingsAccessMiddleware;
+use App\Http\Middleware\DashboardSuperAdminMiddleware;
+use App\Http\Middleware\DashboardUserPermissionMiddleware;
+use App\Http\Middleware\EnsureActiveBranchPortalAccess;
+use App\Http\Middleware\EnsureDashboardHost;
+use App\Http\Middleware\HandleInertiaRequests;
+use App\Http\Middleware\ResolveBranchDashboardScope;
+use App\Http\Middleware\RoleMiddleware;
+use App\Http\Middleware\SetTenantContext;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Exceptions\PostTooLargeException;
 use Illuminate\Http\Request;
-use App\Http\Middleware\ActiveUserMiddleware;
-use App\Http\Middleware\DashboardPermissionMiddleware;
-use App\Http\Middleware\DashboardSuperAdminMiddleware;
-use App\Http\Middleware\DashboardUserPermissionMiddleware;
-use App\Http\Middleware\EnsureDashboardHost;
-use App\Http\Middleware\HandleInertiaRequests;
-use App\Http\Middleware\RoleMiddleware;
-use App\Http\Middleware\SetTenantContext;
+
+// Releases on the shared cPanel host use one Composer dependency directory.
+// Its optimized class map resolves App classes relative to the release that
+// originally installed vendor, so register this release before Composer can
+// resolve a controller, service, job, or model from an older release.
+spl_autoload_register(
+    static function (string $class): void {
+        $prefix = 'App\\';
+
+        if (! str_starts_with($class, $prefix)) {
+            return;
+        }
+
+        $path = dirname(__DIR__).'/app/'.str_replace('\\', '/', substr($class, strlen($prefix))).'.php';
+
+        if (is_file($path)) {
+            require_once $path;
+        }
+    },
+    true,
+    true,
+);
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -39,7 +64,8 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->redirectUsersTo(fn ($request) => match ($request->user()?->role) {
             'admin' => $request->user()->firstAdminDashboardPath() ?? '/dashboard/access-denied',
-            'owner', 'branch_manager' => '/dashboard/branch',
+            'branch_manager' => $request->user()->firstAdminDashboardPath() ?? '/dashboard/access-denied',
+            'owner' => '/dashboard/branch',
             default => '/app',
         });
 
@@ -61,8 +87,11 @@ return Application::configure(basePath: dirname(__DIR__))
             'active' => ActiveUserMiddleware::class,
             'dashboard.host' => EnsureDashboardHost::class,
             'dashboard.permission' => DashboardPermissionMiddleware::class,
+            'dashboard.settings-access' => DashboardSettingsAccessMiddleware::class,
             'dashboard.super-admin' => DashboardSuperAdminMiddleware::class,
             'dashboard.user-permission' => DashboardUserPermissionMiddleware::class,
+            'branch.portal.active' => EnsureActiveBranchPortalAccess::class,
+            'branch.dashboard.scope' => ResolveBranchDashboardScope::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

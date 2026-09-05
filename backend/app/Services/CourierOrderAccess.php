@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use App\Models\Order;
 use App\Models\Branch;
+use App\Models\Order;
 use App\Models\Scopes\TenantScope;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
@@ -20,38 +20,47 @@ class CourierOrderAccess
 {
     public function assigned(User $courier): Builder
     {
-        return match ($courier->role) {
-            // A general courier can deliberately be assigned to either leg
-            // from the dashboard, so show every explicit assignment.
-            'courier' => $this->base()->where(function (Builder $query) use ($courier): void {
-                $query->where('courier_id', $courier->id)
-                    ->orWhere('pickup_courier_id', $courier->id)
-                    ->orWhere('delivery_courier_id', $courier->id);
-            }),
-            'pickup_courier' => $this->base()->where('pickup_courier_id', $courier->id),
-            'delivery_courier' => $this->base()->where('delivery_courier_id', $courier->id),
-            // A transporter works from the inter-branch transfer console;
-            // it must never see an arbitrary direct-order queue.
-            default => $this->base()->whereRaw('1 = 0'),
-        };
+        // New and active direct orders have one accountable courier. The
+        // pickup/delivery columns are retained for legacy history only and do
+        // not grant operational visibility or mutation rights.
+        if ($courier->role !== 'courier') {
+            return $this->base()->whereRaw('1 = 0');
+        }
+
+        return $this->base()->where('courier_id', $courier->id);
     }
 
     public function available(User $courier): Builder
     {
-        if ($courier->role !== 'courier') {
+        if ($courier->role !== 'courier' || ! $courier->isCourierVerified()) {
             return $this->base()->whereRaw('1 = 0');
         }
 
         $provinceIds = $this->provinceIds($courier);
         $branchId = $this->operatingBranchId($courier);
+        $registeredAt = $courier->created_at;
 
         $orders = $this->base()
             ->where('status', 'pending')
             ->whereNull('courier_id')
             ->whereNotNull('province_id')
-            ->where(function (Builder $query): void {
+            ->where(function (Builder $query) use ($registeredAt): void {
                 $query->whereNull('pickup_deadline_at')
                     ->orWhere('pickup_deadline_at', '>', now());
+
+                // A courier who was not registered when an offer was
+                // published must receive the still-unassigned backlog as
+                // soon as administration verifies the account. The normal
+                // expiry continues to protect couriers who were already
+                // eligible when the offer was published.
+                if ($registeredAt) {
+                    $query->orWhere(function (Builder $historicalOffers) use ($registeredAt): void {
+                        $historicalOffers
+                            ->whereNotNull('pickup_deadline_at')
+                            ->whereNotNull('offer_opened_at')
+                            ->where('offer_opened_at', '<=', $registeredAt);
+                    });
+                }
             });
 
         if ($branchId) {
@@ -67,7 +76,16 @@ class CourierOrderAccess
 
     public function canClaim(Order $order, User $courier): bool
     {
-        if ($courier->role !== 'courier' || $order->status !== 'pending' || $order->courier_id !== null || ! $order->province_id) {
+        if (! $courier->isCourierVerified() || $order->status !== 'pending' || $order->courier_id !== null || ! $order->province_id) {
+            return false;
+        }
+
+        // `available()` allows an expired offer only when it was published
+        // before this courier registered. Re-check that rule after locking
+        // the order so an old detail sheet cannot bypass the live policy.
+        if ($order->pickup_deadline_at
+            && $order->pickup_deadline_at->lessThanOrEqualTo(now())
+            && ! $this->wasPublishedBeforeCourierRegistration($order, $courier)) {
             return false;
         }
 
@@ -106,6 +124,19 @@ class CourierOrderAccess
             ->where('is_platform_managed', true)
             ->where('is_active', true)
             ->exists() ? $branchId : null;
+    }
+
+    private function wasPublishedBeforeCourierRegistration(Order $order, User $courier): bool
+    {
+        if (! $courier->created_at) {
+            return false;
+        }
+
+        // An explicit offer timestamp is required. Legacy pending records
+        // without one continue to use the normal expiry safeguard.
+        $publishedAt = $order->offer_opened_at;
+
+        return $publishedAt !== null && $publishedAt->lessThanOrEqualTo($courier->created_at);
     }
 
     protected function base(): Builder

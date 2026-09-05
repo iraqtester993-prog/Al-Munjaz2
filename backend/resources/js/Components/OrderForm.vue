@@ -1,9 +1,10 @@
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useForm, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import SheetModal from './SheetModal.vue'
 import OrderMapPicker from './OrderMapPicker.vue'
+import { isIraqiMobilePhone, normalizeIraqiMobilePhone } from '../Utils/iraqiPhone'
 
 const props = defineProps({
     open: { type: Boolean, default: false },
@@ -19,13 +20,67 @@ const pickupLocationMessage = ref('')
 const pickupLocationError = ref('')
 const page = usePage()
 const locale = computed(() => page.props.locale || 'ar')
+const isCreatingOrder = computed(() => !props.order)
+
+function validPickupCoordinates(latitudeValue, longitudeValue) {
+    if (String(latitudeValue ?? '').trim() === '' || String(longitudeValue ?? '').trim() === '') {
+        return false
+    }
+
+    const latitude = Number(latitudeValue)
+    const longitude = Number(longitudeValue)
+
+    return Number.isFinite(latitude)
+        && Number.isFinite(longitude)
+        && latitude >= -90
+        && latitude <= 90
+        && longitude >= -180
+        && longitude <= 180
+}
+
+const savedMerchantPickup = computed(() => {
+    const merchant = page.props.auth?.user || {}
+    const latitude = merchant.merchant_pickup_latitude
+    const longitude = merchant.merchant_pickup_longitude
+    const label = String(merchant.merchant_pickup_location_label || '').trim()
+
+    if (!validPickupCoordinates(latitude, longitude) || !label) return null
+
+    return {
+        latitude: Number(Number(latitude).toFixed(7)),
+        longitude: Number(Number(longitude).toFixed(7)),
+        label,
+    }
+})
+
+const merchantPickupCopy = computed(() => ({
+    ar: {
+        help: 'موقع المتجر المحفوظ هو الموقع الافتراضي لهذا الطلب. يمكنك تغييره لهذا الطلب فقط.',
+        restore: 'استخدام موقع المتجر',
+        restored: 'تمت إعادة موقع المتجر المحفوظ لهذا الطلب.',
+    },
+    en: {
+        help: 'Your saved shop location is the default for this order. You can change it for this order only.',
+        restore: 'Use shop location',
+        restored: 'The saved shop location was restored for this order.',
+    },
+    ku: {
+        help: 'شوێنی پاشەکەوتکراوی فرۆشگاکەت شوێنی بنەڕەتیی ئەم داواکارییەیە. تەنها بۆ ئەم داواکارییە دەتوانیت بیگۆڕیت.',
+        restore: 'بەکارهێنانی شوێنی فرۆشگا',
+        restored: 'شوێنی پاشەکەوتکراوی فرۆشگا بۆ ئەم داواکارییە گەڕێندرایەوە.',
+    },
+}[locale.value] || {
+    help: 'موقع المتجر المحفوظ هو الموقع الافتراضي لهذا الطلب. يمكنك تغييره لهذا الطلب فقط.',
+    restore: 'استخدام موقع المتجر',
+    restored: 'تمت إعادة موقع المتجر المحفوظ لهذا الطلب.',
+}))
 
 const vehicleOptions = computed(() => [
     { value: 'normal', label: t('Regular Delivery'), helper: t('Normal order by default'), icon: 'box' },
     { value: 'bike', label: t('Motorcycle'), helper: t('Suitable for light parcels'), icon: 'bike' },
-    { value: 'sedan', label: t('Car'), helper: t('Suitable for standard parcels'), icon: 'car' },
+    { value: 'sedan', label: t('Sedan'), helper: t('Suitable for standard parcels'), icon: 'car' },
     { value: 'suv', label: t('SUV'), helper: t('Suitable for large parcels'), icon: 'suv' },
-    { value: 'truck', label: t('Truck'), helper: t('Suitable for heavy parcels'), icon: 'truck' },
+    { value: 'truck', label: t('Van / Truck'), helper: t('Suitable for heavy parcels'), icon: 'truck' },
 ])
 
 const selectedVehicle = computed(() => vehicleOptions.value.find((vehicle) => vehicle.value === form.delivery_vehicle) || vehicleOptions.value[0])
@@ -59,6 +114,18 @@ const form = useForm({
     date: '',
 })
 
+const isUsingSavedMerchantPickup = computed(() => {
+    const pickup = savedMerchantPickup.value
+
+    if (!isCreatingOrder.value || !pickup || !validPickupCoordinates(form.pickup_latitude, form.pickup_longitude)) {
+        return false
+    }
+
+    return Math.abs(Number(form.pickup_latitude) - pickup.latitude) < 0.00000005
+        && Math.abs(Number(form.pickup_longitude) - pickup.longitude) < 0.00000005
+        && String(form.pickup_location_label || '').trim() === pickup.label
+})
+
 const customerName = computed({
     get: () => locale.value === 'en'
         ? (form.customer_name_en || form.customer_name_ar)
@@ -80,19 +147,7 @@ const customerAddress = computed({
 })
 
 const hasPickupCoordinates = computed(() => {
-    if (String(form.pickup_latitude ?? '').trim() === '' || String(form.pickup_longitude ?? '').trim() === '') {
-        return false
-    }
-
-    const latitude = Number(form.pickup_latitude)
-    const longitude = Number(form.pickup_longitude)
-
-    return Number.isFinite(latitude)
-        && Number.isFinite(longitude)
-        && latitude >= -90
-        && latitude <= 90
-        && longitude >= -180
-        && longitude <= 180
+    return validPickupCoordinates(form.pickup_latitude, form.pickup_longitude)
 })
 
 const pickupCoordinates = computed(() => {
@@ -113,6 +168,8 @@ const priceInput = computed({
 })
 
 function editableOrderPayload(order = null) {
+    const merchantPickup = order ? null : savedMerchantPickup.value
+
     return {
         customer_name_ar: order?.customer_name_ar || '',
         customer_name_en: order?.customer_name_en || '',
@@ -120,9 +177,11 @@ function editableOrderPayload(order = null) {
         phone2: order?.phone2 || '',
         address_ar: order?.address_ar || '',
         address_en: order?.address_en || '',
-        pickup_latitude: order?.pickup_latitude ?? '',
-        pickup_longitude: order?.pickup_longitude ?? '',
-        pickup_location_label: order?.pickup_location_label || '',
+        // Existing orders keep their immutable pickup snapshot. A new order
+        // starts with the merchant's approved shop location when one exists.
+        pickup_latitude: order?.pickup_latitude ?? merchantPickup?.latitude ?? '',
+        pickup_longitude: order?.pickup_longitude ?? merchantPickup?.longitude ?? '',
+        pickup_location_label: order?.pickup_location_label || merchantPickup?.label || '',
         order_type: order?.order_type || '',
         delivery_vehicle: order?.delivery_vehicle || 'normal',
         weight_grams: order?.weight_grams ?? '',
@@ -195,12 +254,18 @@ function capturePickupLocation() {
         return
     }
 
+    // A fresh device point must not inherit the shop label from the default
+    // value. The label should remain meaningful when this one order is picked
+    // up from somewhere else.
+    const replacingSavedShopPoint = isUsingSavedMerchantPickup.value
     pickupLocationBusy.value = true
     navigator.geolocation.getCurrentPosition(
         (position) => {
             form.pickup_latitude = Number(position.coords.latitude.toFixed(7))
             form.pickup_longitude = Number(position.coords.longitude.toFixed(7))
-            form.pickup_location_label = String(form.pickup_location_label || '').trim() || defaultPickupLabel()
+            form.pickup_location_label = replacingSavedShopPoint || !String(form.pickup_location_label || '').trim()
+                ? defaultPickupLabel()
+                : String(form.pickup_location_label).trim()
             form.clearErrors('pickup_latitude', 'pickup_longitude', 'pickup_location_label')
             pickupLocationMessage.value = t('Pickup location captured. You can edit its label before saving.')
             pickupLocationBusy.value = false
@@ -227,15 +292,59 @@ function clearPickupLocation() {
 }
 
 function selectPickupFromMap(location) {
+    const savedPickup = savedMerchantPickup.value
+    const selectedIsSavedShopPoint = savedPickup
+        && Math.abs(Number(location.latitude) - savedPickup.latitude) < 0.00000005
+        && Math.abs(Number(location.longitude) - savedPickup.longitude) < 0.00000005
+    const selectedLabel = String(location.label || '').trim()
+
     form.pickup_latitude = Number(location.latitude).toFixed(7)
     form.pickup_longitude = Number(location.longitude).toFixed(7)
-    form.pickup_location_label = String(location.label || '').trim() || defaultPickupLabel()
+    form.pickup_location_label = selectedIsSavedShopPoint
+        ? savedPickup.label
+        : (selectedLabel && selectedLabel !== savedPickup?.label ? selectedLabel : defaultPickupLabel())
     form.clearErrors('pickup_latitude', 'pickup_longitude', 'pickup_location_label')
     pickupLocationError.value = ''
     pickupLocationMessage.value = t('Pickup location selected on the map. You can edit its label before saving.')
 }
 
+function restoreSavedMerchantPickup() {
+    const pickup = savedMerchantPickup.value
+    if (!pickup) return
+
+    form.pickup_latitude = pickup.latitude
+    form.pickup_longitude = pickup.longitude
+    form.pickup_location_label = pickup.label
+    form.clearErrors('pickup_latitude', 'pickup_longitude', 'pickup_location_label')
+    pickupLocationError.value = ''
+    pickupLocationMessage.value = merchantPickupCopy.value.restored
+}
+
+function normalizeOrderPhone(field) {
+    form[field] = normalizeIraqiMobilePhone(form[field])
+    form.clearErrors(field)
+}
+
+function validateOrderPhones() {
+    form.phone = normalizeIraqiMobilePhone(form.phone)
+    form.phone2 = normalizeIraqiMobilePhone(form.phone2)
+    form.clearErrors('phone', 'phone2')
+
+    const errors = {}
+    const message = t('The phone number must be exactly 11 digits and start with 077 or 078.')
+
+    if (form.phone && !isIraqiMobilePhone(form.phone)) errors.phone = message
+    if (form.phone2 && !isIraqiMobilePhone(form.phone2)) errors.phone2 = message
+
+    if (!Object.keys(errors).length) return true
+
+    form.setError(errors)
+    return false
+}
+
 function submit() {
+    if (!validateOrderPhones()) return
+
     if (!form.customer_name_ar || !form.phone || !form.address_ar || !form.price || !hasPickupCoordinates.value || !String(form.pickup_location_label || '').trim()) {
         form.setError({
             customer_name_ar: !form.customer_name_ar ? t('This field is required') : '',
@@ -298,7 +407,7 @@ function submit() {
 <template>
     <SheetModal :open="open" :title="order ? t('Edit') + ' — ' + order.track_no : t('New Order')" @close="emit('close')">
         <form @submit.prevent="submit">
-            <div class="order-track-card">
+            <div v-if="order" class="order-track-card">
                 <span class="order-track-icon" aria-hidden="true">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8ZM3 8l9 5 9-5M12 13v8" /></svg>
                 </span>
@@ -306,7 +415,6 @@ function submit() {
                     <small>{{ t('Tracking Number') }}</small>
                     <strong class="mono">{{ trackingNumber }}</strong>
                 </span>
-                <small v-if="!order" class="order-track-hint">{{ trackingHint }}</small>
             </div>
             <div class="field" :class="{ 'has-error': form.errors.customer_name_ar }">
                 <label>{{ t('Customer') }}</label>
@@ -315,12 +423,13 @@ function submit() {
             </div>
             <div class="field" :class="{ 'has-error': form.errors.phone }">
                 <label>{{ t('Phone') }}</label>
-                <input v-model="form.phone" dir="ltr" :placeholder="t('Phone')" />
+                <input v-model="form.phone" type="tel" inputmode="numeric" autocomplete="tel" minlength="11" maxlength="11" pattern="(?:077|078)[0-9]{8}" dir="ltr" placeholder="077xxxxxxxx" @input="normalizeOrderPhone('phone')" />
                 <span v-if="form.errors.phone" class="field-error">{{ form.errors.phone }}</span>
             </div>
-            <div class="field">
+            <div class="field" :class="{ 'has-error': form.errors.phone2 }">
                 <label>{{ t('Phone 2') }}</label>
-                <input v-model="form.phone2" dir="ltr" :placeholder="t('Phone 2')" />
+                <input v-model="form.phone2" type="tel" inputmode="numeric" autocomplete="tel" minlength="11" maxlength="11" pattern="(?:077|078)[0-9]{8}" dir="ltr" placeholder="077xxxxxxxx" @input="normalizeOrderPhone('phone2')" />
+                <span v-if="form.errors.phone2" class="field-error">{{ form.errors.phone2 }}</span>
             </div>
             <div class="field" :class="{ 'has-error': form.errors.address_ar }">
                 <label>{{ t('Address') }}</label>
@@ -339,8 +448,16 @@ function submit() {
                     </span>
                     <button type="button" class="pickup-location-action" :disabled="pickupLocationBusy" @click="capturePickupLocation">
                         <span v-if="pickupLocationBusy" class="loader"></span>
-                        <span v-else>{{ hasPickupCoordinates ? t('Update location') : t('Use current location') }}</span>
+                        <span v-else>{{ isCreatingOrder ? t('Use current location') : (hasPickupCoordinates ? t('Update location') : t('Use current location')) }}</span>
                     </button>
+                </div>
+
+                <div v-if="isCreatingOrder && savedMerchantPickup" class="pickup-location-default" :class="{ active: isUsingSavedMerchantPickup }">
+                    <span>
+                        <b>{{ savedMerchantPickup.label }}</b>
+                    <small>{{ merchantPickupCopy.help }}</small>
+                    </span>
+                    <button v-if="!isUsingSavedMerchantPickup" type="button" @click="restoreSavedMerchantPickup">{{ merchantPickupCopy.restore }}</button>
                 </div>
 
                 <div v-if="hasPickupCoordinates" class="pickup-location-details">
@@ -417,5 +534,6 @@ function submit() {
 <style scoped>
 .order-track-card{display:flex;align-items:center;gap:9px;margin-bottom:14px;padding:10px 12px;border-radius:11px;background:var(--primary-tint);color:var(--primary-strong)}.order-track-icon{display:grid;width:29px;height:29px;place-items:center;flex:none;border-radius:8px;background:var(--primary);color:#fff}.order-track-copy{display:grid;gap:2px;min-width:0}.order-track-copy small{color:var(--ink-soft);font-size:10px;font-weight:700}.order-track-copy strong{font-size:13px;font-weight:900;letter-spacing:.3px}.order-track-hint{margin-inline-start:auto;max-width:122px;color:var(--ink-soft);font-size:9px;font-weight:700;line-height:1.45;text-align:end}
 .pickup-location-picker{display:grid;gap:10px;margin:12px 0;padding:12px;border:1.5px solid color-mix(in srgb,var(--primary) 26%,var(--border));border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--primary-tint) 68%,var(--surface)),var(--surface));transition:border-color .18s,background .18s}.pickup-location-picker.captured{border-color:color-mix(in srgb,var(--success) 50%,var(--border));background:linear-gradient(135deg,color-mix(in srgb,var(--success-tint) 64%,var(--surface)),var(--surface))}.pickup-location-picker.has-error{border-color:var(--danger)}.pickup-location-head{display:flex;align-items:center;gap:9px}.pickup-location-icon{display:grid;place-items:center;width:38px;height:38px;flex:none;border-radius:11px;background:var(--primary);color:#fff}.pickup-location-picker.captured .pickup-location-icon{background:var(--success)}.pickup-location-copy{display:grid;min-width:0;flex:1;gap:2px}.pickup-location-copy b{color:var(--ink);font-size:11.5px;font-weight:900}.pickup-location-copy small{color:var(--ink-soft);font-size:9.5px;font-weight:700;line-height:1.45}.pickup-location-action{min-height:35px;display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:none;padding:8px 10px;border:0;border-radius:9px;background:var(--primary);color:#fff;font:inherit;font-size:9.5px;font-weight:900;cursor:pointer}.pickup-location-action:disabled{cursor:wait;opacity:.72}.pickup-location-action .loader{width:13px;height:13px;border-width:2px}.pickup-location-details{display:flex;align-items:end;gap:9px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--primary) 18%,var(--border))}.pickup-location-label-field{flex:1;margin:0}.pickup-location-label-field input{min-height:39px}.pickup-location-clear,.pickup-location-manual{border:0;color:var(--primary-strong);background:transparent;font:inherit;font-size:9.5px;font-weight:850;cursor:pointer}.pickup-location-clear{min-height:39px;padding:0 2px;color:var(--danger)}.pickup-location-manual{justify-self:start;padding:0;text-decoration:underline;text-underline-offset:3px}.pickup-coordinate-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pickup-coordinate-grid .field{margin:0}.pickup-coordinate-grid input{min-height:39px}.pickup-location-message{display:block;margin-top:-3px;font-size:9.5px;font-weight:750;line-height:1.55}.pickup-location-message.success{color:var(--success)}.pickup-location-message.error{color:var(--danger)}
+.pickup-location-default{display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid color-mix(in srgb,var(--primary) 20%,var(--border));border-radius:10px;background:color-mix(in srgb,var(--primary-tint) 52%,var(--surface))}.pickup-location-default.active{border-color:color-mix(in srgb,var(--success) 38%,var(--border));background:color-mix(in srgb,var(--success-tint) 62%,var(--surface))}.pickup-location-default>span{display:grid;min-width:0;flex:1;gap:2px}.pickup-location-default b{color:var(--ink);font-size:10.5px;font-weight:900;overflow-wrap:anywhere}.pickup-location-default small{color:var(--ink-soft);font-size:9px;font-weight:750;line-height:1.5}.pickup-location-default button{min-height:33px;flex:none;padding:7px 9px;border:0;border-radius:8px;background:var(--primary);color:#fff;font:inherit;font-size:9px;font-weight:900;cursor:pointer}
 .delivery-vehicle-picker{position:relative}.delivery-vehicle-trigger{width:100%;display:flex;align-items:center;gap:11px;padding:12px;border:1.5px solid var(--primary);border-radius:13px;background:var(--primary-tint);color:var(--ink);font:inherit;text-align:start;cursor:pointer;transition:.18s ease}.delivery-vehicle-trigger.open{background:var(--surface);box-shadow:0 5px 16px rgba(11,110,104,.14)}.vehicle-choice-icon{width:38px;height:38px;border-radius:11px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;flex:none}.vehicle-choice-copy{flex:1;min-width:0}.vehicle-choice-copy small{display:block;margin-bottom:3px;color:var(--ink-soft);font-size:10px;font-weight:700}.vehicle-choice-copy strong{display:block;color:var(--primary-strong);font-size:15px;font-weight:900}.vehicle-choice-chev{color:var(--primary-strong);display:flex;transition:transform .18s}.delivery-vehicle-trigger.open .vehicle-choice-chev{transform:rotate(180deg)}.delivery-vehicle-menu{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:0;opacity:0;overflow:hidden;margin-top:0;transition:max-height .25s ease,opacity .18s ease,margin-top .25s ease}.delivery-vehicle-menu.open{max-height:300px;opacity:1;margin-top:9px}.delivery-vehicle-option{display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border);border-radius:11px;background:var(--surface);color:var(--ink);font:inherit;text-align:start;cursor:pointer;transition:.15s ease}.delivery-vehicle-option:hover,.delivery-vehicle-option.selected{border-color:var(--primary);background:var(--primary-tint);box-shadow:0 3px 10px rgba(11,110,104,.1)}.option-icon{width:29px;height:29px;border-radius:9px;background:var(--surface-2);color:var(--primary-strong);display:flex;align-items:center;justify-content:center;flex:none}.delivery-vehicle-option.selected .option-icon{background:var(--primary);color:#fff}.delivery-vehicle-option span:last-child{font-size:12px;font-weight:800}@media(max-width:360px){.delivery-vehicle-menu{grid-template-columns:1fr}.delivery-vehicle-menu.open{max-height:360px}}
 </style>

@@ -132,7 +132,7 @@ onMounted(() => focusDigit(0))
 </template>
 
 <style scoped>
-.otp-reference{min-height:100dvh;display:grid;place-items:center;padding:24px 18px;color:#fff;background:linear-gradient(175deg,var(--primary-strong),var(--primary) 59%,var(--accent));}
+.otp-reference{min-height:100dvh;display:grid;place-items:center;padding:24px 18px;color:#fff;background:linear-gradient(175deg,var(--primary-strong),var(--primary) 59%,var(--accent));writing-mode:horizontal-tb;text-orientation:mixed;rotate:none;scale:1;transform:none!important;isolation:isolate;}
 .otp-card{width:min(100%,390px);padding:28px 22px;text-align:center;border:1px solid rgba(255,255,255,.28);border-radius:22px;background:rgba(255,255,255,.12);box-shadow:0 24px 46px -24px rgba(0,0,0,.45);backdrop-filter:blur(9px);}
 .otp-icon{width:64px;height:64px;display:grid;place-items:center;margin:0 auto 13px;border:1px solid rgba(255,255,255,.3);border-radius:50%;background:rgba(255,255,255,.14);}
 .otp-role{display:inline-block;padding:4px 11px;border:1px solid rgba(255,255,255,.25);border-radius:20px;background:rgba(255,255,255,.12);font-size:10px;font-weight:800;}

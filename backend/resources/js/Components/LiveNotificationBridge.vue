@@ -1,6 +1,6 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { usePage } from '@inertiajs/vue3'
+import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 
 const page = usePage()
@@ -26,6 +26,15 @@ function userCanReceive() {
 
 function dismiss(id) {
     notifications.value = notifications.value.filter((notification) => notification.id !== id)
+}
+
+function openNotification(notification) {
+    dismiss(notification.id)
+    const target = notification.target_url || route('app.notifications', { open: notification.id })
+    router.get(target, {}, {
+        preserveScroll: false,
+        preserveState: false,
+    })
 }
 
 function unlockTone() {
@@ -192,6 +201,7 @@ onMounted(() => {
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('blur', handleWindowBlur)
     window.addEventListener('focus', handleWindowFocus)
+    window.addEventListener('almunjaz:notification-realtime', requestPoll)
     // The feed is incremental (`after`). Keep it responsive while the app is
     // open, but avoid a permanent five-second request loop on shared hosting.
     requestPoll()
@@ -205,13 +215,14 @@ onBeforeUnmount(() => {
     document.removeEventListener('visibilitychange', handleVisibilityChange)
     window.removeEventListener('blur', handleWindowBlur)
     window.removeEventListener('focus', handleWindowFocus)
+    window.removeEventListener('almunjaz:notification-realtime', requestPoll)
 })
 </script>
 
 <template>
     <aside v-if="notifications.length" class="live-notification-stack" aria-live="polite" aria-atomic="false">
         <TransitionGroup name="live-notification">
-            <button v-for="notification in notifications" :key="notification.id" type="button" class="live-notification" @click="dismiss(notification.id)">
+            <button v-for="notification in notifications" :key="notification.id" type="button" class="live-notification" @click="openNotification(notification)">
                 <span class="live-notification-dot" />
                 <span class="live-notification-copy">
                     <b>{{ notification.title }}</b>

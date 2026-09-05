@@ -89,6 +89,13 @@ export async function prepareCourierDocument(file, { maxFileBytes, targetImageBy
         return { file: toJpegFile(file, best), optimized: true }
     } catch (error) {
         if (error instanceof CourierDocumentError) throw error
+
+        // Some older mobile WebViews can select a valid JPEG/PNG but cannot
+        // decode it with ImageBitmap or encode it with canvas. A file that is
+        // already within the server's safe per-document limit can still be
+        // sent untouched, rather than making the courier unable to register.
+        if (file.size <= maxFileBytes) return { file, optimized: false }
+
         throw new CourierDocumentError('cannot_process')
     } finally {
         // ImageBitmap owns native image memory on modern browsers. Releasing
@@ -98,19 +105,13 @@ export async function prepareCourierDocument(file, { maxFileBytes, targetImageBy
 }
 
 async function loadImage(file) {
-    if ('createImageBitmap' in window) {
-        try {
-            return await window.createImageBitmap(file, { imageOrientation: 'from-image' })
-        } catch {
-            // Older Android WebViews can expose createImageBitmap but reject
-            // the imageOrientation option.  The Image fallback still lets the
-            // user complete registration instead of failing silently.
-        }
-    }
-
+    // Some installed Android WebViews expose createImageBitmap but fail after
+    // the image picker closes. The native Image decoder works on every target
+    // browser and prevents a selected camera image from remaining stuck.
     return await new Promise((resolve, reject) => {
         const image = new Image()
         const objectUrl = URL.createObjectURL(file)
+        image.decoding = 'async'
         image.onload = () => {
             URL.revokeObjectURL(objectUrl)
             resolve(image)
@@ -137,6 +138,21 @@ function drawToCanvas(image, width, height) {
 
 function canvasToBlob(canvas, quality) {
     return new Promise((resolve, reject) => {
+        if (typeof canvas.toBlob !== 'function') {
+            try {
+                const dataUrl = canvas.toDataURL('image/jpeg', quality)
+                const binary = atob(dataUrl.split(',')[1])
+                const bytes = new Uint8Array(binary.length)
+
+                for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+
+                resolve(new Blob([bytes], { type: 'image/jpeg' }))
+            } catch (error) {
+                reject(error)
+            }
+            return
+        }
+
         canvas.toBlob((blob) => {
             if (blob) resolve(blob)
             else reject(new Error('Image could not be encoded'))

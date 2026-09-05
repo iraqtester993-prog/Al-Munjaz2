@@ -31,7 +31,10 @@ const statusItems = computed(() => [
     { label: t('Returned'), value: props.stats.returned, color: 'var(--st-returned)' },
 ])
 
-const greeting = computed(() => t('Good to see you'))
+const merchantName = computed(() => user.value?.name || t('Merchant Account'))
+const shopName = computed(() => user.value?.shop_name || tenant.value?.name || '')
+const merchantSubtitle = computed(() => shopName.value && shopName.value !== merchantName.value ? shopName.value : '')
+const greeting = computed(() => `${t('Welcome')}، ${merchantName.value}`)
 
 function localizedOrderValue(order, key) {
     const preferred = locale.value === 'en' ? 'en' : locale.value === 'ku' ? 'ku' : 'ar'
@@ -49,9 +52,9 @@ function customerName(order) {
 function vehicleLabel(vehicle) {
     return {
         bike: t('Motorcycle'),
-        sedan: t('Car'),
+        sedan: t('Sedan'),
         suv: t('SUV'),
-        truck: t('Truck'),
+        truck: t('Van / Truck'),
         normal: t('Regular Delivery'),
     }[vehicle] || vehicle || ''
 }
@@ -88,11 +91,7 @@ onUnmounted(() => window.clearInterval(ticker))
 </script>
 
 <template>
-    <AppShell :title="greeting" :subtitle="user?.name">
-        <template #title>
-            {{ greeting }}
-            <span class="tb-sub">{{ tenant?.name || user?.name || t('Merchant Account') }}</span>
-        </template>
+    <AppShell :title="greeting" :subtitle="merchantSubtitle">
 
         <HeroSlider :slides="heroSlides" />
 

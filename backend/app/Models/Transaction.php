@@ -4,8 +4,8 @@ namespace App\Models;
 
 use App\Models\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Transaction extends Model
 {
@@ -13,7 +13,7 @@ class Transaction extends Model
 
     public const MERCHANT_TX = ['settlement', 'delivery_fee', 'withdrawal'];
 
-    public const COURIER_TX = ['collected', 'returned', 'cash_added', 'paid_order', 'commission'];
+    public const COURIER_TX = ['collected', 'returned', 'cash_added', 'paid_order', 'commission', 'commission_refund'];
 
     protected $fillable = [
         'finance_request_id', 'tenant_id', 'user_id', 'type', 'amount', 'direction',

@@ -7,6 +7,7 @@ import LiveNotificationBridge from './LiveNotificationBridge.vue'
 import CourierLocationTracker from './CourierLocationTracker.vue'
 import CourierLocationInstallGate from './CourierLocationInstallGate.vue'
 import PwaInstallBanner from './PwaInstallBanner.vue'
+import { subscribeToUserRealtime } from '../Utils/realtimeChat'
 
 const props = defineProps({
     title: { type: String, default: '' },
@@ -34,6 +35,8 @@ const pullDistance = ref(0)
 const isPulling = ref(false)
 const isRefreshing = ref(false)
 const liveNotificationUnread = ref(Number(page.props.notificationUnread || 0))
+const liveChatUnread = ref(Number(props.notifBadge || 0))
+let unsubscribeUserRealtime = () => {}
 const notificationUnread = computed(() => {
     const override = props.notificationBadge
     if (Number.isFinite(override)) return Math.max(0, override)
@@ -43,13 +46,13 @@ const notificationUnread = computed(() => {
 
 const tabs = computed(() => {
     const base = [
-        { label: t('Home'), icon: 'home', route: 'app' },
-        { label: isCourier.value ? t('My Deliveries') : t('My Orders'), icon: 'box', route: 'app.orders' },
+        { label: t('Home'), icon: 'home', route: 'app', page: isCourier.value ? 'Mobile/CourierHome' : 'Mobile/MerchantHome' },
+        { label: isCourier.value ? t('My Deliveries') : t('My Orders'), icon: 'box', route: 'app.orders', page: 'Mobile/Orders' },
         isCourier.value
-            ? { label: t('Wallet'), icon: 'wallet', route: 'app.wallet' }
-            : { label: t('Archive'), icon: 'archive', route: 'app.reports' },
-        { label: t('Chat'), icon: 'chat', route: 'app.chats' },
-        { label: t('Profile'), icon: 'user', route: 'app.profile' },
+            ? { label: t('Wallet'), icon: 'wallet', route: 'app.wallet', page: 'Mobile/Wallet' }
+            : { label: t('Archive'), icon: 'archive', route: 'app.reports', page: 'Mobile/Reports' },
+        { label: t('Chat'), icon: 'chat', route: 'app.chats', page: 'Mobile/Chats' },
+        { label: t('Profile'), icon: 'user', route: 'app.profile', page: 'Mobile/Profile' },
     ]
     return base.map((x) => ({ ...x, url: route(x.route) }))
 })
@@ -66,18 +69,32 @@ function applyTheme(value) {
 }
 
 function toggleTheme() {
-    theme.value = theme.value === 'dark' ? 'light' : 'dark'
-    applyTheme(theme.value)
-    router.post(route('profile.theme'), { theme: theme.value }, { preserveScroll: true, preserveState: true })
+    const previous = theme.value
+    const next = previous === 'dark' ? 'light' : 'dark'
+
+    // Theme is a visual preference, not a page action.  Saving it through an
+    // Inertia visit caused the active screen to be requested and rendered
+    // again, which looked like a page reload on mobile.  Persist it quietly
+    // while the already-rendered shell updates immediately.
+    theme.value = next
+    applyTheme(next)
+
+    window.axios.post(route('profile.theme'), { theme: next }).catch(() => {
+        // Do not let an older failed request undo a newer user selection.
+        if (theme.value !== next) return
+
+        theme.value = previous
+        applyTheme(previous)
+    })
 }
 
 function goBack() {
     if (props.backUrl) {
-        router.visit(props.backUrl)
+        visitMobileRoute(props.backUrl)
         return
     }
 
-    router.visit(route('app'))
+    visitMobileRoute(route('app'), isCourier.value ? 'Mobile/CourierHome' : 'Mobile/MerchantHome')
 }
 
 // Mobile browsers do not provide a reliable native refresh gesture inside an
@@ -124,24 +141,65 @@ function onContentTouchEnd() {
     router.reload({
         preserveScroll: true,
         preserveState: true,
+        viewTransition: false,
         onFinish: () => {
             isRefreshing.value = false
         },
     })
 }
 
+const warmedRoutes = new Set()
+
+function warmRoute(url, pageName = '') {
+    if (!url || warmedRoutes.has(url)) return
+
+    warmedRoutes.add(url)
+    window.__almunjazPreloadPage?.(pageName)
+    router.prefetch(url, { viewTransition: false }, { cacheFor: '10s' })
+}
+
+function visitMobileRoute(url, pageName = '') {
+    warmRoute(url, pageName)
+    router.visit(url, {
+        preserveScroll: false,
+        preserveState: false,
+        viewTransition: false,
+    })
+}
+
 function visitTab(tab) {
     if (active(tab)) return
 
+    warmRoute(tab.url, tab.page)
     router.visit(tab.url, {
-        preserveScroll: true,
-        preserveState: true,
+        // Each tab is a fresh operational screen. Keeping the previous
+        // component state made some phones replay an old screen while the
+        // next one arrived, which looked like a slow side-slide transition.
+        preserveScroll: false,
+        preserveState: false,
+        replace: true,
+        viewTransition: false,
     })
 }
 
 function syncLiveNotificationCount(event) {
     const unread = Number(event.detail?.unread)
     if (Number.isFinite(unread)) liveNotificationUnread.value = Math.max(0, unread)
+}
+
+async function refreshChatBadge() {
+    try {
+        const { data } = await window.axios.get(route('app.chats.unread'))
+        liveChatUnread.value = Math.max(0, Number(data?.unread || 0))
+    } catch (_) {}
+}
+
+function handleRealtime(kind) {
+    if (kind === 'chat.message') {
+        refreshChatBadge()
+        return
+    }
+    window.dispatchEvent(new Event('almunjaz:notification-realtime'))
 }
 
 // Android Chrome and installed PWAs do not always resize `100dvh` while the
@@ -162,6 +220,8 @@ function syncVisualViewport() {
 onMounted(() => {
     applyTheme(theme.value)
     window.addEventListener('almunjaz:notification-count', syncLiveNotificationCount)
+    if (user.value?.id) unsubscribeUserRealtime = subscribeToUserRealtime(user.value.id, handleRealtime)
+    refreshChatBadge()
     syncVisualViewport()
     window.visualViewport?.addEventListener('resize', syncVisualViewport)
     window.visualViewport?.addEventListener('scroll', syncVisualViewport)
@@ -169,6 +229,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
     window.removeEventListener('almunjaz:notification-count', syncLiveNotificationCount)
+    unsubscribeUserRealtime()
     window.visualViewport?.removeEventListener('resize', syncVisualViewport)
     window.visualViewport?.removeEventListener('scroll', syncVisualViewport)
 })
@@ -220,12 +281,12 @@ function icon(name) {
                     <span v-if="subtitle" class="tb-sub">{{ subtitle }}</span>
                 </div>
                 <div class="tb-actions">
-                    <a v-if="showNotif" class="tb-icon-btn" :href="route('app.notifications')" :aria-label="t('Notifications')">
+                    <button v-if="showNotif" class="tb-icon-btn" type="button" :aria-label="t('Notifications')" @pointerdown="warmRoute(route('app.notifications'), 'Mobile/Notifications')" @mouseenter="warmRoute(route('app.notifications'), 'Mobile/Notifications')" @click="visitMobileRoute(route('app.notifications'), 'Mobile/Notifications')">
                         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                             <path :d="icon('bell')" />
                         </svg>
                         <span v-if="notificationUnread > 0" class="notif-badge">{{ notificationUnread > 99 ? '99+' : notificationUnread }}</span>
-                    </a>
+                    </button>
                     <button class="tb-icon-btn" type="button" :aria-label="theme === 'dark' ? t('Enable light mode') : t('Enable dark mode')" @click="toggleTheme">
                         <svg v-if="theme !== 'dark'" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                             <circle cx="12" cy="12" r="4.5" /><path d="M12 1.5v2.5M12 20v2.5M4.2 4.2 6 6M18 18l1.8 1.8M1.5 12H4M20 12h2.5M4.2 19.8 6 18M18 6l1.8-1.8" />
@@ -267,12 +328,12 @@ function icon(name) {
             <slot name="fab" />
 
             <nav v-if="!hideTabs" class="bottom-tabs">
-                <button v-for="tab in tabs" :key="tab.route" class="tab-btn" :class="{ active: active(tab) }" @click="visitTab(tab)">
+                <button v-for="tab in tabs" :key="tab.route" class="tab-btn" :class="{ active: active(tab) }" @pointerdown="warmRoute(tab.url, tab.page)" @mouseenter="warmRoute(tab.url, tab.page)" @click="visitTab(tab)">
                     <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                         <path :d="icon(tab.icon)" />
                     </svg>
                     <span class="tlabel">{{ tab.label }}</span>
-                    <span v-if="tab.route === 'app.chats' && notifBadge > 0" class="tdot">{{ notifBadge }}</span>
+                    <span v-if="tab.route === 'app.chats' && Math.max(notifBadge, liveChatUnread) > 0" class="tdot">{{ Math.max(notifBadge, liveChatUnread) }}</span>
                 </button>
             </nav>
         </div>

@@ -5,10 +5,12 @@ namespace App\Http\Controllers\App;
 use App\Http\Controllers\Controller;
 use App\Models\Document;
 use App\Models\Setting;
+use App\Rules\IraqiMobilePhone;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 
 class AppProfileController extends Controller
@@ -37,9 +39,12 @@ class AppProfileController extends Controller
         $wallet = $user->wallet;
         $province = $user->provinces()->orderByDesc('province_user.is_primary')->first();
         $documents = $user->documents()->orderBy('type')->get(['id', 'type', 'path', 'status', 'created_at']);
-        $verificationStatus = $user->isMerchantVerified()
-            ? 'verified'
-            : ($documents->contains('status', 'rejected') ? 'rejected' : ($documents->isNotEmpty() ? 'pending' : 'unsubmitted'));
+        $isCourier = $user->role === 'courier';
+        $verificationStatus = $isCourier
+            ? ($user->isCourierVerified() ? 'verified' : 'pending')
+            : ($user->isMerchantVerified()
+                ? 'verified'
+                : ($documents->contains('status', 'rejected') ? 'rejected' : ($documents->isNotEmpty() ? 'pending' : 'unsubmitted')));
 
         return Inertia::render('Mobile/Profile', [
             'vehicles' => [
@@ -50,6 +55,7 @@ class AppProfileController extends Controller
             ],
             'walletBalance' => $wallet?->balance ?? 0,
             'walletBudget' => $wallet?->budget ?? 0,
+            'walletBudgetBalance' => $wallet?->budget_balance ?? 0,
             'courierUploadLimits' => $this->courierDocumentUploadLimits(),
             'merchantUploadLimits' => $this->merchantVerificationDocumentUploadLimits(),
             // Legal copy is loaded only on the profile page, where the user
@@ -63,6 +69,15 @@ class AppProfileController extends Controller
                 'role' => $user->role,
                 'shop_name' => $user->shop_name,
                 'address' => $user->address,
+                // A merchant's shop point is a fixed business location, not
+                // the courier's consented live-location feed. Keep it scoped
+                // to the account owner on this profile-only response.
+                'merchant_pickup_location' => $user->role === 'merchant' ? [
+                    'latitude' => $user->merchant_pickup_latitude === null ? null : (float) $user->merchant_pickup_latitude,
+                    'longitude' => $user->merchant_pickup_longitude === null ? null : (float) $user->merchant_pickup_longitude,
+                    'label' => $user->merchant_pickup_location_label,
+                    'updated_at' => $user->merchant_pickup_location_updated_at?->toIso8601String(),
+                ] : null,
                 'vehicle' => $user->vehicle,
                 'province' => $province ? [
                     'name_ar' => $province->name_ar,
@@ -78,14 +93,17 @@ class AppProfileController extends Controller
                         'url' => route('profile.documents.show', $document),
                         'submitted_at' => $document->created_at?->toIso8601String(),
                     ])->values(),
-                // Only merchants can receive this public-facing mark. A
-                // courier's compliance documents remain visible to them and
-                // to administration, but they never create a public badge.
+                // Merchant verification is a public-facing mark. Courier
+                // verification is operational: it gives the courier access
+                // to new order offers after administration has reviewed the
+                // required documents.
                 'verification' => [
                     'eligible' => $user->role === 'merchant',
                     'status' => $verificationStatus,
-                    'verified' => $user->isMerchantVerified(),
-                    'verified_at' => $user->merchant_verified_at?->toIso8601String(),
+                    'verified' => $isCourier ? $user->isCourierVerified() : $user->isMerchantVerified(),
+                    'verified_at' => $isCourier
+                        ? $user->courier_verified_at?->toIso8601String()
+                        : $user->merchant_verified_at?->toIso8601String(),
                 ],
                 'joined_at' => $user->created_at?->toDateString(),
             ],
@@ -95,17 +113,52 @@ class AppProfileController extends Controller
     public function update(Request $request)
     {
         $user = $request->user();
+        $merchantPickupFields = [
+            'merchant_pickup_latitude',
+            'merchant_pickup_longitude',
+            'merchant_pickup_location_label',
+        ];
+        $isUpdatingMerchantPickup = collect($merchantPickupFields)
+            ->contains(fn (string $field): bool => $request->exists($field));
+
+        // The normal profile form is deliberately compatible with already
+        // installed clients that do not yet submit merchant pickup values.
+        // A submitted location must, however, always be the complete tuple.
+        if ($isUpdatingMerchantPickup && $user->role !== 'merchant') {
+            abort(403, 'تحديد موقع المتجر متاح للتاجر فقط.');
+        }
 
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
-            'phone' => ['required', 'string', 'max:30', Rule::unique('users', 'phone')->ignore($user->id)],
+            'phone' => ['bail', 'required', 'string', new IraqiMobilePhone, Rule::unique('users', 'phone')->ignore($user->id)],
             'shop_name' => ['nullable', 'string', 'max:120'],
             'address' => ['nullable', 'string', 'max:255'],
             'vehicle' => ['nullable', Rule::in(['bike', 'sedan', 'suv', 'truck'])],
         ]);
 
+        $merchantPickup = [];
+        if ($isUpdatingMerchantPickup) {
+            $merchantPickup = $request->validate([
+                'merchant_pickup_latitude' => ['required', 'numeric', 'between:-90,90'],
+                'merchant_pickup_longitude' => ['required', 'numeric', 'between:-180,180'],
+                'merchant_pickup_location_label' => ['required', 'string', 'max:255'],
+            ]);
+
+            $merchantPickup['merchant_pickup_location_label'] = trim($merchantPickup['merchant_pickup_location_label']);
+            if ($merchantPickup['merchant_pickup_location_label'] === '') {
+                throw ValidationException::withMessages([
+                    'merchant_pickup_location_label' => 'أدخل وصفاً واضحاً لموقع المتجر.',
+                ]);
+            }
+
+            $merchantPickup['merchant_pickup_latitude'] = round((float) $merchantPickup['merchant_pickup_latitude'], 7);
+            $merchantPickup['merchant_pickup_longitude'] = round((float) $merchantPickup['merchant_pickup_longitude'], 7);
+            $merchantPickup['merchant_pickup_location_updated_at'] = now();
+        }
+
         $user->update([
             ...$data,
+            ...$merchantPickup,
             'shop_name' => $user->role === 'merchant' ? ($data['shop_name'] ?: $user->shop_name) : null,
             'vehicle' => $user->isCourierRole() ? (($data['vehicle'] ?? null) ?: $user->vehicle) : null,
         ]);
@@ -118,6 +171,13 @@ class AppProfileController extends Controller
         $request->validate(['theme' => ['required', 'in:light,dark']]);
 
         $request->user()->update(['theme' => $request->input('theme')]);
+
+        // The app shell persists a theme change with a background XHR.  A
+        // 204 keeps that request free of a redirected Inertia page payload;
+        // regular form callers retain the established redirect behaviour.
+        if ($request->expectsJson()) {
+            return response()->noContent();
+        }
 
         return back();
     }
@@ -170,12 +230,29 @@ class AppProfileController extends Controller
 
         $path = $data['file']->store("documents/{$user->id}", 'public');
 
+        $wasOperationallyVerified = $user->isCourierVerified();
+
         $document->update([
             'path' => $path,
             'status' => 'pending',
         ]);
 
-        return back()->with('success', __('profile.updated'));
+        // A replacement means the reviewed file is no longer the file that
+        // administration approved. Stop new assignments until the new file
+        // is reviewed and the dashboard verifies the account again. Existing
+        // assigned work remains visible and can still be completed.
+        if ($wasOperationallyVerified) {
+            $user->forceFill([
+                'courier_verified' => false,
+                'courier_verified_at' => null,
+                'courier_verified_by' => null,
+                'is_online' => false,
+            ])->save();
+        }
+
+        return back()->with('success', $wasOperationallyVerified
+            ? 'تم تحديث المستمسك. لا يمكنك استلام طلبات جديدة حتى تعتمد الإدارة الملف وتوثق الحساب من جديد.'
+            : __('profile.updated'));
     }
 
     /**
@@ -231,7 +308,7 @@ class AppProfileController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => ['required', 'string', 'max:120'],
             'address' => ['required', 'string', 'max:255'],
-            'phone' => ['required', 'string', 'max:30', Rule::unique('users', 'phone')->ignore($user->id)],
+            'phone' => ['bail', 'required', 'string', new IraqiMobilePhone, Rule::unique('users', 'phone')->ignore($user->id)],
             'identity_number' => ['required', 'string', 'max:100'],
             'id_front_document' => $documentRules,
             'id_back_document' => $documentRules,

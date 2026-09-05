@@ -63,6 +63,7 @@ class DemoSeeder extends Seeder
         Wallet::updateOrCreate(['user_id' => $merchant->id], [
             'balance' => 245000,
             'budget' => 0,
+            'budget_balance' => 0,
         ]);
 
         $courierTenant = Tenant::updateOrCreate(
@@ -93,6 +94,7 @@ class DemoSeeder extends Seeder
         Wallet::updateOrCreate(['user_id' => $courier->id], [
             'balance' => 150000,
             'budget' => 500000,
+            'budget_balance' => 500000,
         ]);
 
         // Demo accounts use Baghdad so the real courier visibility policy can

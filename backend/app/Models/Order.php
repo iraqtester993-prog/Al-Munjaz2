@@ -27,17 +27,20 @@ class Order extends Model
     /** @var array<int, string> */
     public const TERMINAL_STATUSES = ['delivered', 'returned', 'cancelled', 'damaged', 'rejected'];
 
+    /** @var array<int, string> */
+    public const ARCHIVABLE_STATUSES = ['delivered', 'returned'];
+
     public const WORKFLOW_STAGES = ['created', 'awaiting_pickup', 'pickup_assigned', 'picked_up', 'at_origin_branch', 'sorting', 'awaiting_transfer', 'in_transfer', 'at_destination_branch', 'delivery_assigned', 'out_for_delivery', 'delivered', 'return_pending_merchant', 'returned_to_merchant', 'returned', 'cancelled', 'damaged', 'rejected', 'financially_closed'];
 
     protected $fillable = [
         'tenant_id', 'track_no', 'source',
         'customer_name_ar', 'customer_name_en', 'phone', 'phone2',
         'address_ar', 'address_en', 'pickup_latitude', 'pickup_longitude', 'pickup_location_label',
-        'order_type', 'delivery_vehicle', 'vehicle_note', 'weight_grams', 'price', 'fee', 'admin_deduction_applied', 'return_fee', 'return_fee_applied', 'pricing_rule_id',
+        'order_type', 'delivery_vehicle', 'vehicle_note', 'weight_grams', 'price', 'fee', 'admin_deduction_applied', 'return_fee', 'return_fee_applied', 'return_fee_mode', 'return_reason', 'pricing_rule_id',
         'status', 'workflow_stage', 'courier_id', 'branch_id', 'origin_branch_id', 'destination_branch_id',
         'merchant_id', 'pickup_courier_id', 'delivery_courier_id', 'province_id',
         'date', 'notes', 'created_by',
-        'accepted_at', 'picked_at', 'delivered_at', 'returned_at', 'returned_to_merchant_at', 'return_fee_charged_at', 'pickup_deadline_at',
+        'accepted_at', 'picked_at', 'delivered_at', 'returned_at', 'returned_to_merchant_at', 'return_fee_charged_at', 'archived_at', 'pickup_deadline_at', 'offer_opened_at',
     ];
 
     protected function casts(): array
@@ -50,7 +53,9 @@ class Order extends Model
             'returned_at' => 'datetime',
             'returned_to_merchant_at' => 'datetime',
             'return_fee_charged_at' => 'datetime',
+            'archived_at' => 'datetime',
             'pickup_deadline_at' => 'datetime',
+            'offer_opened_at' => 'datetime',
             'pickup_latitude' => 'decimal:7',
             'pickup_longitude' => 'decimal:7',
         ];

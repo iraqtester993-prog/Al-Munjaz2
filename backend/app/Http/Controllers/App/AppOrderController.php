@@ -9,13 +9,15 @@ use App\Models\Order;
 use App\Models\OrderMovement;
 use App\Models\OrderStatusLog;
 use App\Models\Scopes\TenantScope;
-use App\Models\Setting;
 use App\Models\Tenant;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Rules\IraqiMobilePhone;
+use App\Services\BranchSettingsResolver;
 use App\Services\CourierLocationService;
 use App\Services\CourierOrderAccess;
 use App\Services\CourierOrderAssignmentService;
+use App\Services\OrderNumberService;
 use App\Services\OrderWorkflowService;
 use App\Services\PricingService;
 use App\Tenancy\TenantContext;
@@ -25,6 +27,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 
 class AppOrderController extends Controller
@@ -47,10 +50,22 @@ class AppOrderController extends Controller
             // route while ensuring the exact same tenant/courier scope is
             // applied before an order sheet is opened.
             'detail' => ['nullable', 'integer', 'min:1'],
+            // An archive detail is still fetched through the same authorised
+            // endpoint, but it must not leak into normal active queues.
+            'archive' => ['nullable', 'boolean'],
+            // A courier may inspect an unassigned pending offer before
+            // claiming it. The same availability scope is enforced below.
+            'pending' => ['nullable', 'boolean'],
         ]);
 
         $viewer = $request->user();
-        $isCourier = $viewer->isCourierRole();
+        // Direct orders have only two participating account types: the
+        // merchant and the one courier who receives and delivers the parcel.
+        // Legacy specialist accounts remain preserved in user history but no
+        // longer receive an operational order queue.
+        abort_unless(in_array($viewer->role, ['merchant', 'courier'], true), 403);
+        $isCourier = $viewer->role === 'courier';
+        $filter = $request->input('filter', 'all');
 
         $baseQuery = $isCourier
             ? app(CourierOrderAccess::class)->assigned($viewer)
@@ -59,18 +74,44 @@ class AppOrderController extends Controller
         if ($request->filled('detail')) {
             abort_unless($request->expectsJson(), 406);
 
+            $detailQuery = $isCourier && $request->boolean('pending')
+                ? app(CourierOrderAccess::class)->available($viewer)
+                : clone $baseQuery;
+            if ($request->boolean('archive')) {
+                $this->scopeArchiveHistory($detailQuery);
+            } else {
+                $detailQuery->whereNull('archived_at');
+            }
+
             return response()->json([
                 'order' => $this->detailPayloadFor(
-                    (clone $baseQuery)->whereKey($request->integer('detail'))->firstOrFail(),
+                    $detailQuery->whereKey($request->integer('detail'))->firstOrFail(),
                     $viewer,
                     $isCourier,
                 ),
             ]);
         }
 
-        $query = clone $baseQuery;
+        // A delivered or returned order remains in its status card until it
+        // is archived manually or by the nightly archive task. A status
+        // change by itself must never make work disappear from the mobile
+        // application.
+        // A new order is not assigned yet, so it is deliberately absent from
+        // the courier's personal history.  It must nevertheless be visible
+        // under the courier's “Pending” queue as well as on the home offer
+        // screen, otherwise the status card opens an empty list.
+        $listBaseQuery = $isCourier && $filter === 'pending'
+            ? app(CourierOrderAccess::class)->available($viewer)
+            : $baseQuery;
 
-        $filter = $request->input('filter', 'all');
+        $query = clone $listBaseQuery;
+
+        if ($request->boolean('archive')) {
+            $this->scopeArchiveHistory($query);
+        } else {
+            $query->whereNull('archived_at');
+        }
+
         $q = $request->input('q');
 
         if ($filter !== 'all') {
@@ -110,7 +151,11 @@ class AppOrderController extends Controller
         $pagination = [
             'next_cursor' => null,
             'has_more' => false,
-            'per_page' => 20,
+            // Ten compact cards are enough for a phone viewport. Keeping the
+            // first cursor page small avoids a visible pause when a courier
+            // has thousands of historical assignments; the client appends
+            // the next ten only after the user chooses "Show more".
+            'per_page' => 10,
         ];
 
         if ($shouldLoadSummaries) {
@@ -125,6 +170,7 @@ class AppOrderController extends Controller
                     // summary, unlike the history and relationship graph
                     // which remain on-demand in the order sheet.
                     'phone',
+                    'phone2',
                     'address_ar',
                     'address_en',
                     'order_type',
@@ -134,9 +180,18 @@ class AppOrderController extends Controller
                     'fee',
                     'status',
                     'pickup_deadline_at',
+                    // Cursor pagination must include every ordered column.
+                    // Omitting this compact scalar encoded a null created_at
+                    // into the next cursor and made page two fail at runtime.
+                    'created_at',
                 ])
+                // The list is a live operational queue: show the most
+                // recently created order first.  Keep `id` as a stable
+                // tie-breaker for cursor pagination when two orders share a
+                // database timestamp.
+                ->latest('created_at')
                 ->latest('id')
-                ->cursorPaginate(20, ['*'], 'cursor', $request->input('cursor'));
+                ->cursorPaginate(10, ['*'], 'cursor', $request->input('cursor'));
 
             // List cards receive only data needed to paint a card. Expensive
             // relationship graphs and complete operational timelines are now
@@ -147,11 +202,21 @@ class AppOrderController extends Controller
             $pagination = [
                 'next_cursor' => $paginator->nextCursor()?->encode(),
                 'has_more' => $paginator->nextCursor() !== null,
-                'per_page' => 20,
+                'per_page' => 10,
             ];
         }
 
-        $counts = $this->countsFor($baseQuery);
+        // Keep the status cards and the queue they open in exactly the same
+        // active scope. Delivered and returned work stays visible until its
+        // merchant or courier archives it manually or the nightly task runs.
+        $counts = $this->countsFor((clone $baseQuery)->whereNull('archived_at'));
+
+        if ($isCourier) {
+            $counts['pending'] = app(CourierOrderAccess::class)
+                ->available($viewer)
+                ->whereNull('archived_at')
+                ->count();
+        }
 
         $payload = [
             'orders' => $orders,
@@ -161,7 +226,13 @@ class AppOrderController extends Controller
             'q' => $q,
             'list' => $request->boolean('list'),
             'openOrderId' => $request->integer('open') ?: null,
+            'archive' => $request->boolean('archive'),
             'isCourier' => $isCourier,
+            'canAcceptOrders' => ! $isCourier || $viewer->isCourierVerified(),
+            // The pending-offer screen needs the live duty state so it can
+            // explain why a courier cannot accept a job before sending a
+            // claim request that the server will reject.
+            'onDuty' => $isCourier && $viewer->isCourierVerified() && (bool) $viewer->is_online,
             'wallet' => $this->walletData($viewer),
         ];
 
@@ -178,17 +249,24 @@ class AppOrderController extends Controller
     {
         $user = $request->user();
         abort_unless($user?->role === 'merchant', 403, 'إنشاء الطلبات متاح للتاجر فقط.');
+        $merchantPickup = $this->merchantPickupSnapshot($user);
+        $hasSubmittedPickup = $this->hasSubmittedPickupLocation($request);
+        $pickupIsRequired = $hasSubmittedPickup || ! $merchantPickup;
 
         $data = $request->validate([
             'customer_name_ar' => ['required', 'string', 'max:120'],
-            'phone' => ['required', 'string', 'max:30'],
-            'phone2' => ['nullable', 'string', 'max:30'],
+            // Customer contact numbers use the same Iraqi mobile format as
+            // newly created accounts.  Keep this server-side so a stale PWA
+            // or a handcrafted request cannot bypass the form constraint.
+            'phone' => ['bail', 'required', 'string', new IraqiMobilePhone],
+            'phone2' => ['bail', 'nullable', 'string', new IraqiMobilePhone],
             'address_ar' => ['required', 'string', 'max:255'],
-            // A courier must always know where to collect a merchant order.
-            // Require the whole pickup tuple server-side, not just in the UI.
-            'pickup_latitude' => ['required', 'numeric', 'between:-90,90'],
-            'pickup_longitude' => ['required', 'numeric', 'between:-180,180'],
-            'pickup_location_label' => ['required', 'string', 'max:255'],
+            // A saved shop point is the default, not a lock. A complete
+            // per-order location is allowed to replace it for this order;
+            // partial coordinates must never silently fall back to the shop.
+            'pickup_latitude' => [$pickupIsRequired ? 'required' : 'nullable', 'numeric', 'between:-90,90'],
+            'pickup_longitude' => [$pickupIsRequired ? 'required' : 'nullable', 'numeric', 'between:-180,180'],
+            'pickup_location_label' => [$pickupIsRequired ? 'required' : 'nullable', 'string', 'max:255'],
             'order_type' => ['nullable', 'string', 'max:60'],
             'delivery_vehicle' => ['required', Rule::in(['normal', 'bike', 'sedan', 'suv', 'truck'])],
             'weight_grams' => ['nullable', 'integer', 'min:0', 'max:1000000'],
@@ -197,26 +275,38 @@ class AppOrderController extends Controller
             'notes' => ['nullable', 'string', 'max:255'],
         ]);
 
+        // Each order keeps an immutable pickup snapshot. If the client does
+        // not send a tuple, use the merchant's saved shop point; otherwise
+        // preserve the explicit point selected for this one order.
+        $data = [...$data, ...$this->resolvedPickupLocation($request, $data, $merchantPickup)];
+
         $tenant = TenantContext::tenant();
 
         $provinceId = $this->operatingProvinceForUser($user);
         abort_unless($provinceId, 422, 'هذا الحساب غير مرتبط بمحافظة تشغيل مفعّلة.');
         $operatingBranch = $this->operatingBranchForUser($user, $provinceId);
-        abort_unless($operatingBranch, 422, 'هذا الحساب غير مرتبط بفرع نشط.');
+        // The platform's main merchant accounts can operate before branches
+        // are configured. A branch-owned account remains strictly isolated
+        // and must still have its assigned active branch.
+        if ((int) $user->branch_id > 0 && ! $operatingBranch) {
+            throw ValidationException::withMessages([
+                'branch' => 'هذا الحساب غير مرتبط بفرع نشط.',
+            ]);
+        }
 
         $order = new Order($data);
         $order->tenant_id = $tenant->id;
         $order->source = 'merchant';
         $order->customer_name_en = $request->input('customer_name_en') ?: $data['customer_name_ar'];
         $order->address_en = $request->input('address_en') ?: $data['address_ar'];
-        $order->track_no = 'ALM-'.mt_rand(100000, 999999);
+        $order->track_no = app(OrderNumberService::class)->next();
         $order->date = $request->input('date') ?: today();
         $order->status = 'pending';
         $order->workflow_stage = 'created';
         $order->province_id = $provinceId;
         // These operational defaults are controlled from the dashboard.  A
         // merchant can never override them in a browser request.
-        $availabilityMinutes = max(1, min((int) Setting::get('order_expiry_minutes', 30), 1440));
+        $availabilityMinutes = max(1, min((int) $this->settingForBranch($operatingBranch, 'order_expiry_minutes', 30), 1440));
         // Cached clients created before the weight field existed do not send
         // it on edit. Calculate the new quote using the exact same effective
         // value that will be persisted below; otherwise a no-op edit could
@@ -231,17 +321,19 @@ class AppOrderController extends Controller
             $data['order_type'] ?? null,
             $data['delivery_vehicle'],
             $effectiveWeightGrams,
-            max(0, min((int) Setting::get('delivery_fee', 0), 1_000_000)),
+            max(0, min((int) $this->settingForBranch($operatingBranch, 'delivery_fee', 0), 1_000_000)),
         );
         $order->weight_grams = (int) ($data['weight_grams'] ?? 0);
         $order->fee = $quote['fee'];
         $order->return_fee = $quote['return_fee'];
         $order->pricing_rule_id = $quote['rule']?->id;
-        $order->pickup_deadline_at = now()->addMinutes($availabilityMinutes);
+        $offerOpenedAt = now();
+        $order->offer_opened_at = $offerOpenedAt;
+        $order->pickup_deadline_at = $offerOpenedAt->copy()->addMinutes($availabilityMinutes);
         $order->merchant_id = $user->id;
         $order->created_by = $user->id;
-        $order->branch_id = $operatingBranch->id;
-        $order->origin_branch_id = $operatingBranch->id;
+        $order->branch_id = $operatingBranch?->id;
+        $order->origin_branch_id = $operatingBranch?->id;
         $order->save();
 
         OrderStatusLog::create([
@@ -265,6 +357,79 @@ class AppOrderController extends Controller
         return back()->with('success', __('orders.created', ['track' => $order->track_no]));
     }
 
+    /**
+     * @return array{pickup_latitude: float, pickup_longitude: float, pickup_location_label: string}|null
+     */
+    private function merchantPickupSnapshot(User $merchant): ?array
+    {
+        if (
+            $merchant->merchant_pickup_latitude === null
+            || $merchant->merchant_pickup_longitude === null
+        ) {
+            return null;
+        }
+
+        $label = trim((string) $merchant->merchant_pickup_location_label);
+        if ($label === '') {
+            return null;
+        }
+
+        return [
+            'pickup_latitude' => round((float) $merchant->merchant_pickup_latitude, 7),
+            'pickup_longitude' => round((float) $merchant->merchant_pickup_longitude, 7),
+            'pickup_location_label' => $label,
+        ];
+    }
+
+    private function hasSubmittedPickupLocation(Request $request): bool
+    {
+        foreach (['pickup_latitude', 'pickup_longitude', 'pickup_location_label'] as $field) {
+            // `exists` deliberately treats a blank input as submitted. A
+            // malformed explicit point should receive a validation error,
+            // never be replaced invisibly by the saved shop location.
+            if ($request->exists($field)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @param  array{pickup_latitude: float, pickup_longitude: float, pickup_location_label: string}|null  $merchantPickup
+     * @return array{pickup_latitude: float, pickup_longitude: float, pickup_location_label: string}
+     */
+    private function resolvedPickupLocation(Request $request, array $data, ?array $merchantPickup): array
+    {
+        if (! $this->hasSubmittedPickupLocation($request)) {
+            if ($merchantPickup) {
+                return $merchantPickup;
+            }
+
+            // The validator normally handles this branch. Keep this guard so
+            // a future rule change cannot create an order without a pickup.
+            throw ValidationException::withMessages([
+                'pickup_latitude' => 'حدّد موقع استلام الطلب قبل الحفظ.',
+                'pickup_longitude' => 'حدّد موقع استلام الطلب قبل الحفظ.',
+                'pickup_location_label' => 'أدخل وصفاً واضحاً لموقع الاستلام.',
+            ]);
+        }
+
+        $label = trim((string) ($data['pickup_location_label'] ?? ''));
+        if ($label === '') {
+            throw ValidationException::withMessages([
+                'pickup_location_label' => 'أدخل وصفاً واضحاً لموقع الاستلام.',
+            ]);
+        }
+
+        return [
+            'pickup_latitude' => round((float) $data['pickup_latitude'], 7),
+            'pickup_longitude' => round((float) $data['pickup_longitude'], 7),
+            'pickup_location_label' => $label,
+        ];
+    }
+
     public function update(Request $request, Order $order)
     {
         $this->authorizeOrder($order, $request);
@@ -272,8 +437,8 @@ class AppOrderController extends Controller
 
         $data = $request->validate([
             'customer_name_ar' => ['required', 'string', 'max:120'],
-            'phone' => ['required', 'string', 'max:30'],
-            'phone2' => ['nullable', 'string', 'max:30'],
+            'phone' => ['bail', 'required', 'string', new IraqiMobilePhone],
+            'phone2' => ['bail', 'nullable', 'string', new IraqiMobilePhone],
             'address_ar' => ['required', 'string', 'max:255'],
             'pickup_latitude' => ['required', 'numeric', 'between:-90,90'],
             'pickup_longitude' => ['required', 'numeric', 'between:-180,180'],
@@ -289,7 +454,11 @@ class AppOrderController extends Controller
         $provinceId = $this->operatingProvinceForUser($request->user());
         abort_unless($provinceId, 422, 'هذا الحساب غير مرتبط بمحافظة تشغيل مفعّلة.');
         $operatingBranch = $this->operatingBranchForUser($request->user(), $provinceId);
-        abort_unless($operatingBranch, 422, 'هذا الحساب غير مرتبط بفرع نشط.');
+        if ((int) $request->user()->branch_id > 0 && ! $operatingBranch) {
+            throw ValidationException::withMessages([
+                'branch' => 'هذا الحساب غير مرتبط بفرع نشط.',
+            ]);
+        }
 
         // Older installed clients did not submit this field when editing an
         // order. Keep its persisted value instead of silently repricing the
@@ -305,7 +474,7 @@ class AppOrderController extends Controller
             $data['order_type'] ?? null,
             $data['delivery_vehicle'],
             $effectiveWeightGrams,
-            max(0, min((int) Setting::get('delivery_fee', 0), 1_000_000)),
+            max(0, min((int) $this->settingForBranch($operatingBranch, 'delivery_fee', 0), 1_000_000)),
         );
 
         $order->update([
@@ -319,8 +488,8 @@ class AppOrderController extends Controller
             'return_fee' => $quote['return_fee'],
             'pricing_rule_id' => $quote['rule']?->id,
             'province_id' => $provinceId,
-            'branch_id' => $operatingBranch->id,
-            'origin_branch_id' => $operatingBranch->id,
+            'branch_id' => $operatingBranch?->id,
+            'origin_branch_id' => $operatingBranch?->id,
         ]);
 
         return back()->with('success', __('orders.updated', ['track' => $order->track_no]));
@@ -403,24 +572,26 @@ class AppOrderController extends Controller
 
         abort_if($user->role === 'merchant', 403, 'لا يمكن للتاجر تغيير مرحلة التوصيل.');
 
-        if ($user->isCourierRole()) {
+        if ($user->role === 'courier') {
             app(CourierLocationService::class)->requireFreshOperationalLocation($user);
 
-            $allowed = match ($user->role) {
-                'courier' => match ($order->status) {
-                    'approved' => ['courier'],
-                    // Returns are deliberately handled by the two-step
-                    // endpoint below so a fee and physical handback cannot
-                    // be skipped with a generic status post.
-                    'courier' => ['delivered'],
-                    default => [],
-                },
-                'pickup_courier' => $order->status === 'approved' ? ['courier'] : [],
-                'delivery_courier' => $order->status === 'courier' ? ['delivered'] : [],
+            $allowed = match ($order->status) {
+                'approved' => ['courier'],
+                // Returns are deliberately handled by the two-step endpoint
+                // below so a fee and physical handback cannot be skipped.
+                'courier' => ['delivered'],
                 default => [],
             };
 
-            abort_unless(in_array($to, $allowed, true), 422, 'انتقال حالة الطلب غير مسموح.');
+            if (! in_array($to, $allowed, true)) {
+                // A courier can legitimately tap an action after another
+                // request has already advanced the order. Keep this as a
+                // normal Inertia form error so the installed app can show the
+                // reason instead of receiving an opaque 422 error page.
+                throw ValidationException::withMessages([
+                    'order' => ['انتقال حالة الطلب غير مسموح.'],
+                ]);
+            }
         }
 
         app(OrderWorkflowService::class)->changeStatus($order, $to, $user, $request->input('note'));
@@ -437,15 +608,14 @@ class AppOrderController extends Controller
 
         $data = $request->validate([
             'fee_mode' => ['required', Rule::in(['none', 'fee'])],
-            'return_fee_applied' => ['nullable', 'integer', 'min:1', 'max:1000000', Rule::requiredIf($request->input('fee_mode') === 'fee')],
-            'note' => ['nullable', 'string', 'max:255'],
+            'return_reason' => ['required', 'string', 'max:255'],
         ]);
 
         app(OrderWorkflowService::class)->startCourierReturn(
             $order,
             $courier,
-            $data['fee_mode'] === 'fee' ? (int) $data['return_fee_applied'] : 0,
-            $data['note'] ?? null,
+            $data['fee_mode'],
+            $data['return_reason'],
         );
 
         return back()->with('success', 'تم تسجيل الإرجاع. أكّد تسليم الطلب إلى التاجر بعد إتمامه فعلياً.');
@@ -472,74 +642,15 @@ class AppOrderController extends Controller
     }
 
     /**
-     * A returned parcel remains historical evidence.  The merchant can start
-     * a new delivery from it, but never mutate the completed return back into
-     * an active order.  This keeps both the archive and financial trail
-     * truthful while sparing the merchant from retyping the order details.
+     * This endpoint is retained for clients on an older installed release.
+     * Returned orders are final from the merchant's perspective and may not
+     * be offered to couriers again.
      */
     public function recreate(Request $request, Order $order)
     {
         $this->authorizeOrder($order, $request);
         abort_unless($request->user()->role === 'merchant', 403, 'إعادة إنشاء الطلب متاحة للتاجر فقط.');
-        abort_unless($order->status === 'returned', 422, 'يمكن إعادة إنشاء الطلبات المرتجعة فقط.');
-
-        $newOrder = DB::transaction(function () use ($order, $request): Order {
-            $new = $order->replicate([
-                'track_no', 'status', 'workflow_stage', 'courier_id',
-                'pickup_courier_id', 'delivery_courier_id', 'branch_id',
-                'origin_branch_id', 'destination_branch_id', 'accepted_at',
-                'picked_at', 'delivered_at', 'returned_at',
-                'returned_to_merchant_at', 'return_fee_applied',
-                'return_fee_charged_at', 'pickup_deadline_at',
-            ]);
-
-            $new->forceFill([
-                'track_no' => 'ALM-'.mt_rand(100000, 999999),
-                'merchant_id' => $request->user()->id,
-                'created_by' => $request->user()->id,
-                'status' => 'pending',
-                'workflow_stage' => 'created',
-                'courier_id' => null,
-                'pickup_courier_id' => null,
-                'delivery_courier_id' => null,
-                'branch_id' => null,
-                'origin_branch_id' => null,
-                'destination_branch_id' => null,
-                'date' => today(),
-                'accepted_at' => null,
-                'picked_at' => null,
-                'delivered_at' => null,
-                'returned_at' => null,
-                'returned_to_merchant_at' => null,
-                'return_fee_applied' => 0,
-                'return_fee_charged_at' => null,
-                'pickup_deadline_at' => now()->addMinutes(max(1, min((int) Setting::get('order_expiry_minutes', 30), 1440))),
-            ]);
-            $new->save();
-
-            OrderStatusLog::create([
-                'tenant_id' => $new->tenant_id,
-                'order_id' => $new->id,
-                'from_status' => null,
-                'to_status' => 'pending',
-                'user_id' => $request->user()->id,
-                'note' => 'إعادة إنشاء من الطلب المرتجع '.$order->track_no,
-            ]);
-
-            return $new;
-        });
-
-        ActivityLog::create([
-            'tenant_id' => $newOrder->tenant_id,
-            'user_id' => $request->user()->id,
-            'action' => 'order.recreated_from_return',
-            'subject_type' => 'order',
-            'subject_id' => $newOrder->id,
-            'data' => ['source_order_id' => $order->id, 'source_track_no' => $order->track_no],
-            'ip' => $request->ip(),
-        ]);
-
-        return back()->with('success', 'تم إنشاء طلب جديد من الطلب المرتجع: '.$newOrder->track_no);
+        abort(422, 'لا يمكن للتاجر إعادة نشر الطلب الراجع.');
     }
 
     /** Re-open an unclaimed pending order for a fresh courier offer window. */
@@ -554,8 +665,12 @@ class AppOrderController extends Controller
             'لا يمكن إعادة نشر الطلب قبل انتهاء وقت عرضه للمندوبين.'
         );
 
-        $minutes = max(1, min((int) Setting::get('order_expiry_minutes', 30), 1440));
-        $order->forceFill(['pickup_deadline_at' => now()->addMinutes($minutes)])->save();
+        $minutes = max(1, min((int) $this->settingForOrder($order, 'order_expiry_minutes', 30), 1440));
+        $offerOpenedAt = now();
+        $order->forceFill([
+            'offer_opened_at' => $offerOpenedAt,
+            'pickup_deadline_at' => $offerOpenedAt->copy()->addMinutes($minutes),
+        ])->save();
 
         ActivityLog::create([
             'tenant_id' => $order->tenant_id,
@@ -584,7 +699,61 @@ class AppOrderController extends Controller
             requireOnDuty: true,
         );
 
-        return back()->with('success', 'تم قبول الطلب وخصم قيمته من ميزانية المندوب.');
+        return back()->with('success', 'تم قبول الطلب: حُجز سعر المنتج من رصيد الميزانية واستُقطع مبلغ الإدارة من رصيد Qi.');
+    }
+
+    public function archive(Request $request, Order $order)
+    {
+        $this->authorizeOrder($order, $request);
+        $actor = $request->user();
+
+        abort_unless(
+            in_array($actor->role, ['merchant', 'courier'], true),
+            403,
+            'أرشفة الطلب متاحة للتاجر أو المندوب فقط.'
+        );
+        if ($actor->role === 'merchant') {
+            // Merchant order lists are tenant-wide for company visibility,
+            // but a manual archive is an irreversible operational action.
+            // Limit it to the merchant who created that individual order.
+            abort_unless($this->canMerchantArchive($order, $actor), 403);
+        }
+        abort_unless(
+            in_array($order->status, Order::ARCHIVABLE_STATUSES, true),
+            422,
+            'يمكن أرشفة الطلب في حالتي تم التسليم أو راجع فقط.'
+        );
+
+        if ($order->archived_at) {
+            return back()->with('success', 'هذا الطلب موجود بالفعل في الأرشيف.');
+        }
+
+        $order->forceFill(['archived_at' => now()])->save();
+
+        ActivityLog::create([
+            'tenant_id' => $order->tenant_id,
+            'user_id' => $actor->id,
+            'action' => $actor->role === 'courier'
+                ? 'order.archived_by_courier'
+                : 'order.archived_by_merchant',
+            'subject_type' => 'order',
+            'subject_id' => $order->id,
+            'data' => ['track_no' => $order->track_no, 'status' => $order->status],
+            'ip' => $request->ip(),
+        ]);
+
+        return back()->with('success', 'تم نقل الطلب إلى الأرشيف.');
+    }
+
+    /**
+     * The archive contains only final orders that were archived manually or
+     * by the nightly task. It never becomes a second active-order queue.
+     */
+    private function scopeArchiveHistory(Builder $orders): Builder
+    {
+        return $orders
+            ->whereIn('status', Order::ARCHIVABLE_STATUSES)
+            ->whereNotNull('archived_at');
     }
 
     protected function authorizeOrder(Order $order, Request $request): void
@@ -593,7 +762,7 @@ class AppOrderController extends Controller
             return;
         }
 
-        if ($request->user()->isCourierRole()) {
+        if ($request->user()->role === 'courier') {
             abort_unless(
                 app(CourierOrderAccess::class)
                     ->assigned($request->user())
@@ -601,11 +770,31 @@ class AppOrderController extends Controller
                     ->exists(),
                 403,
             );
+
+            return;
         }
 
         if ($request->user()->role === 'merchant') {
             abort_unless($order->tenant_id === $request->user()->tenant_id, 403);
+
+            return;
         }
+
+        abort(403);
+    }
+
+    /**
+     * A merchant may archive only their own final order. Older imported
+     * records can lack `merchant_id`, so `created_by` is a safe legacy
+     * fallback only when that primary owner column is null.
+     */
+    private function canMerchantArchive(Order $order, User $merchant): bool
+    {
+        $ownerId = $order->merchant_id ?? $order->created_by;
+
+        return $merchant->role === 'merchant'
+            && (int) $order->tenant_id === (int) $merchant->tenant_id
+            && (int) $ownerId === (int) $merchant->id;
     }
 
     /**
@@ -688,6 +877,10 @@ class AppOrderController extends Controller
             'customer_name_ar' => $order->customer_name_ar,
             'customer_name_en' => $order->customer_name_en,
             'phone' => $order->phone,
+            // Retain the alternate delivery contact in the compact payload
+            // too, so the detail sheet always shows it while its full
+            // on-demand request is still loading.
+            'phone2' => $order->phone2,
             'phone_revealed' => true,
             'address_ar' => $order->address_ar,
             'address_en' => $order->address_en,
@@ -699,6 +892,10 @@ class AppOrderController extends Controller
             // existing Inertia prop contract for older installed clients.
             'fee' => $order->fee,
             'status' => $order->status,
+            // The client keeps this value so a restored/appended response
+            // can retain the same newest-first order without guessing from
+            // the tracking number.
+            'created_at' => $order->created_at?->toIso8601String(),
             'pickup_deadline_at' => $order->pickup_deadline_at?->toIso8601String(),
         ];
     }
@@ -740,6 +937,8 @@ class AppOrderController extends Controller
             // separately selected amount only after a courier chooses it.
             'return_fee' => (int) ($order->return_fee ?? 0),
             'return_fee_applied' => (int) ($order->return_fee_applied ?? 0),
+            'return_fee_mode' => $order->return_fee_mode,
+            'return_reason' => $order->return_reason,
             'pricing_rule_id' => $order->pricing_rule_id,
             'status' => $order->status,
             'workflow_stage' => $order->workflow_stage,
@@ -749,14 +948,12 @@ class AppOrderController extends Controller
             'returned_at' => $this->timestamp($order->returned_at),
             'returned_to_merchant_at' => $this->timestamp($order->returned_to_merchant_at),
             'return_fee_charged_at' => $this->timestamp($order->return_fee_charged_at),
+            'archived_at' => $this->timestamp($order->archived_at),
             'notes' => $order->notes,
             'pickup_deadline_at' => $order->pickup_deadline_at?->toIso8601String(),
-            // `courier` remains the primary assignment for compatibility.
-            // Merchant-facing UI consumes `assigned_courier`, which resolves
-            // the proper pickup/delivery assignee for specialist workflows.
-            'courier' => $order->courier
-                ? ['name' => $order->courier->name, 'phone' => $order->courier->phone, 'vehicle' => $order->courier->vehicle]
-                : null,
+            // `courier` is the sole operational assignment. `assigned_courier`
+            // retains a legacy fallback only when reading an old record.
+            'courier' => $this->assignedCourierPayload($order),
             'assigned_courier' => $this->assignedCourierPayload($order),
             'merchant' => $order->merchant
                 ? [
@@ -768,8 +965,6 @@ class AppOrderController extends Controller
                 ]
                 : ($order->tenant ? ['name' => $order->tenant->name, 'phone' => null, 'address' => null] : null),
             'courier_id' => $order->courier_id,
-            'pickup_courier_id' => $order->pickup_courier_id,
-            'delivery_courier_id' => $order->delivery_courier_id,
             'merchant_id' => $order->merchant_id,
             'can_delete_by_merchant' => ! $isCourier
                 && $viewer->role === 'merchant'
@@ -779,6 +974,10 @@ class AppOrderController extends Controller
                 && ! $order->pickup_courier_id
                 && ! $order->delivery_courier_id
                 && ! $hasFinancialPosting,
+            'can_archive' => ($viewer->role === 'courier'
+                    || $this->canMerchantArchive($order, $viewer))
+                && in_array($order->status, Order::ARCHIVABLE_STATUSES, true)
+                && $order->archived_at === null,
             'origin_branch' => $order->originBranch
                 ? $this->branchPayload($order->originBranch)
                 : null,
@@ -797,6 +996,9 @@ class AppOrderController extends Controller
             ->where('tenant_id', Tenant::platform()->id)
             ->where('is_platform_managed', true)
             ->where('is_active', true)
+            // withoutGlobalScopes() also removes SoftDeletes, so deleted
+            // branches must never become an operational fallback.
+            ->whereNull('deleted_at')
             ->where('province_id', $provinceId)
             ->whereHas('province', fn ($province) => $province->platform()->active());
 
@@ -810,6 +1012,20 @@ class AppOrderController extends Controller
         return $branches->orderBy('name_ar')->first();
     }
 
+    private function settingForBranch(?Branch $branch, string $key, mixed $default): mixed
+    {
+        return app(BranchSettingsResolver::class)
+            ->getForOperationalBranch($branch, $key, $default);
+    }
+
+    private function settingForOrder(Order $order, string $key, mixed $default): mixed
+    {
+        $branchId = (int) ($order->branch_id ?: $order->origin_branch_id);
+
+        return app(BranchSettingsResolver::class)
+            ->getForOperationalBranch($branchId > 0 ? $branchId : null, $key, $default);
+    }
+
     private function operatingProvinceForUser(User $user): ?int
     {
         $provinceId = $user->provinces()->active()->value('provinces.id');
@@ -819,7 +1035,10 @@ class AppOrderController extends Controller
         }
 
         return $user->branch_id
-            ? Branch::withoutGlobalScopes()->whereKey($user->branch_id)->value('province_id')
+            ? Branch::withoutGlobalScopes()
+                ->whereKey($user->branch_id)
+                ->whereNull('deleted_at')
+                ->value('province_id')
             : null;
     }
 
@@ -899,18 +1118,13 @@ class AppOrderController extends Controller
     }
 
     /**
-     * The application has one counterparty card per order.  A direct
-     * courier assignment, a pickup assignment, and a delivery assignment
-     * are all valid operational models; resolving that choice server-side
-     * keeps a merchant from seeing their own profile as the courier.
+     * The application has one courier card per order. `courier_id` is the
+     * operational source of truth; fallback relations are only for historical
+     * records created before the one-courier model.
      */
     private function assignedCourierPayload(Order $order): ?array
     {
-        $courier = match ($order->status) {
-            'approved' => $order->pickupCourier ?: $order->courier ?: $order->deliveryCourier,
-            'courier' => $order->deliveryCourier ?: $order->courier ?: $order->pickupCourier,
-            default => $order->courier ?: $order->pickupCourier ?: $order->deliveryCourier,
-        };
+        $courier = $order->courier ?: $order->deliveryCourier ?: $order->pickupCourier;
 
         return $courier ? [
             'id' => $courier->id,
@@ -978,6 +1192,7 @@ class AppOrderController extends Controller
         return [
             'balance' => $wallet?->balance ?? 0,
             'budget' => $wallet?->budget ?? 0,
+            'budget_balance' => $wallet?->budget_balance ?? 0,
         ];
     }
 }

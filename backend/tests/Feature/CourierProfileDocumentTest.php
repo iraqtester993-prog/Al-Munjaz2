@@ -113,6 +113,23 @@ class CourierProfileDocumentTest extends TestCase
         ]);
     }
 
+    public function test_courier_cannot_save_an_account_phone_outside_077_or_078(): void
+    {
+        $courier = User::query()->where('role', 'courier')->firstOrFail();
+        $originalPhone = $courier->phone;
+
+        $this->actingAs($courier)
+            ->post(route('profile.update'), [
+                'name' => $courier->name,
+                'phone' => '07912345678',
+                'address' => $courier->address,
+                'vehicle' => $courier->vehicle,
+            ])
+            ->assertSessionHasErrors('phone');
+
+        $this->assertSame($originalPhone, $courier->fresh()->phone);
+    }
+
     public function test_courier_cannot_replace_an_unrecognised_document_type(): void
     {
         $courier = User::query()->where('role', 'courier')->firstOrFail();

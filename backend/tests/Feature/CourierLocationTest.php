@@ -189,7 +189,7 @@ class CourierLocationTest extends TestCase
             'email' => 'courier-without-location@example.test',
             'phone' => '07720000009',
             'password' => 'Password123!',
-            'role' => 'pickup_courier',
+            'role' => 'courier',
             'status' => 'active',
             'is_online' => false,
         ]);

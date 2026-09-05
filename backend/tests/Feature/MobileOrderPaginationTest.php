@@ -45,9 +45,9 @@ class MobileOrderPaginationTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Mobile/Orders')
-                ->has('orders', 20)
+                ->has('orders', 10)
                 ->where('pagination.has_more', true)
-                ->where('pagination.per_page', 20)
+                ->where('pagination.per_page', 10)
                 ->missing('orders.0.timeline')
                 ->missing('orders.0.merchant')
                 // Customer phone is intentionally available in every order state;
@@ -64,10 +64,10 @@ class MobileOrderPaginationTest extends TestCase
 
         $nextPage
             ->assertOk()
-            ->assertJsonPath('pagination.per_page', 20);
+            ->assertJsonPath('pagination.per_page', 10);
 
         $this->assertNotEmpty($nextPage->json('orders'));
-        $this->assertLessThanOrEqual(20, count($nextPage->json('orders')));
+        $this->assertLessThanOrEqual(10, count($nextPage->json('orders')));
 
         $firstPageIds = collect($firstPage['orders'])->pluck('id')->all();
         $nextPageIds = collect($nextPage->json('orders'))->pluck('id')->all();
@@ -84,6 +84,7 @@ class MobileOrderPaginationTest extends TestCase
             ->assertJsonStructure([
                 'order' => [
                     'phone',
+                    'phone2',
                     'timeline',
                     'origin_branch',
                     'destination_branch',

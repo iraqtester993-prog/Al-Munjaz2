@@ -61,17 +61,18 @@ class WebPushNotificationService
                 $locale = in_array($subscription->locale, array_keys(config('app.locales')), true)
                     ? $subscription->locale
                     : 'ar';
+                $targetUrl = $this->targetUrl($notification);
 
                 $payload = json_encode([
                     'title' => $notification->titleFor($locale),
                     'body' => $notification->bodyFor($locale),
                     'tag' => 'notification-'.$notification->id,
-                    'url' => data_get($notification->data, 'url', '/app/notifications'),
+                    'url' => $targetUrl,
                     'icon' => '/assets/icon-192.png',
                     'badge' => '/assets/icon-192.png',
                     'data' => [
                         'notificationId' => $notification->id,
-                        'url' => data_get($notification->data, 'url', '/app/notifications'),
+                        'url' => $targetUrl,
                     ],
                 ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
@@ -100,6 +101,7 @@ class WebPushNotificationService
 
                 if ($report->isSubscriptionExpired()) {
                     PushSubscription::query()->where('endpoint', $report->getEndpoint())->delete();
+
                     continue;
                 }
 
@@ -117,5 +119,27 @@ class WebPushNotificationService
                 'reason' => $exception->getMessage(),
             ]);
         }
+    }
+
+    private function targetUrl(Notification $notification): string
+    {
+        $data = is_array($notification->data) ? $notification->data : [];
+        $explicitUrl = $data['url'] ?? null;
+
+        if (is_string($explicitUrl) && str_starts_with($explicitUrl, '/app/') && ! str_contains($explicitUrl, '//')) {
+            return $explicitUrl;
+        }
+
+        $chatId = filter_var($data['chat_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($chatId) {
+            return '/app/chats/'.$chatId;
+        }
+
+        $orderId = filter_var($data['order_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($orderId) {
+            return '/app/orders?open='.$orderId.'&list=1';
+        }
+
+        return '/app/notifications?open='.$notification->id;
     }
 }

@@ -47,6 +47,11 @@
   --radius-s:8px; --radius-m:14px; --radius-l:20px;
   --font:'Cairo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Tahoma, sans-serif;
 }
+/* Cairo's subset does not shape every Sorani Kurdish glyph consistently.
+   Prefer the platform Arabic-capable fonts whenever Kurdish is selected. */
+html[lang="ku"]{
+  --font:Tahoma, 'Segoe UI', Arial, sans-serif;
+}
 [data-theme="dark"]{
   --bg:#0A1211; --surface:#101B1A; --surface-2:#162321; --surface-3:#1D2C29;
   --ink:#EAF2F0; --ink-soft:#8FA6A3; --ink-faint:#5E7573;
@@ -66,11 +71,17 @@
 
 *{box-sizing:border-box; margin:0; padding:0;}
 html{min-height:100%; background:var(--bg); overscroll-behavior:none;}
-html,body{height:100%;}
+/* Do not lock document roots to one viewport. Guest registration is taller
+   than a phone screen; Chromium can paint its lower fields after scrolling
+   while hit-testing them against the fixed body, which makes file/select
+   controls look visible but impossible to tap. The app shell pins its own
+   viewport explicitly, so document roots must be allowed to grow. */
+html,body{min-height:100%;}
 body{
   min-height:100dvh; font-family:var(--font); background:var(--bg); color:var(--ink);
   font-size:14.5px; line-height:1.6; -webkit-font-smoothing:antialiased; overscroll-behavior:none;
 }
+#app{min-height:100dvh;}
 button{font-family:inherit; cursor:pointer; border:none; background:none; color:inherit; -webkit-tap-highlight-color:transparent; touch-action:manipulation;}
 input,textarea,select{font-family:inherit;}
 a{color:inherit; text-decoration:none; -webkit-tap-highlight-color:transparent; touch-action:manipulation;}
@@ -113,6 +124,40 @@ svg{display:block; flex-shrink:0;}
   width:min(100%,412px); height:874px; max-height:92dvh; min-height:0; position:relative;
   background:var(--bg); display:flex; flex-direction:column; overflow:hidden; border:9px solid var(--ink);
   border-radius:38px; box-shadow:0 22px 48px rgba(15,27,26,.22);
+}
+
+/* Keep the mobile shell upright even when an older cached stylesheet was
+   previously applied by a browser or installed PWA.  Only the app roots are
+   reset here, so intentional icon animations remain unaffected. */
+html,body,#app,.app-stage,.app-shell{
+  writing-mode:horizontal-tb;
+  rotate:none;
+  scale:1;
+  transform:none !important;
+}
+.app-shell{flex-direction:column !important;}
+.app-topbar{order:0;}
+.app-content{order:1;}
+.bottom-tabs{order:3;}
+
+/* Navigation is handled by Inertia and should replace the page immediately.
+   Explicitly opt out of browser View Transitions as some mobile browsers can
+   otherwise animate a new document from the side when opening a route. */
+@view-transition { navigation: none; }
+::view-transition-group(root),
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none !important;
+}
+
+/* The mobile app deliberately changes screens without a slide, fade, or
+   browser-managed document transition.  This also neutralises a transition
+   retained by an older installed copy while its new entry bundle loads. */
+html, :root { view-transition-name: none !important; }
+.app-stage, .app-shell, .app-content, .bottom-tabs,
+.app-content > *, .app-content > *::before, .app-content > *::after {
+  animation: none !important;
+  transition: none !important;
 }
 
 /* Top bar */
@@ -319,13 +364,18 @@ svg{display:block; flex-shrink:0;}
 /* Sheet modal */
 .overlay{position:fixed; inset:0; background:rgba(10,18,17,.5); z-index:120; display:none; align-items:flex-end; justify-content:center;}
 .overlay.open{display:flex;}
+.overlay.centered{align-items:center;padding:20px;}
 .sheet-modal{box-sizing:border-box;display:flex;flex-direction:column;background:var(--surface);width:100%;max-width:412px;border-radius:22px 22px 0 0;padding:20px;max-height:min(82dvh,calc(100dvh - env(safe-area-inset-top, 0px)));overflow:hidden;animation:sheetup .2s ease;}
+.sheet-modal.centered{width:min(100%,760px);max-height:min(86dvh,760px);border-radius:18px;box-shadow:0 24px 70px rgba(10,18,17,.28);animation:dialogpop .18s ease;}
 .sheet-handle{width:38px; height:4px; border-radius:20px; background:var(--border); margin:0 auto 16px;}
+@keyframes dialogpop{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
 
 @media (max-width:460px){
   .app-stage{height:var(--app-viewport-height, 100dvh);min-height:var(--app-viewport-height, 100svh);align-items:stretch;}
   .app-shell{width:100%;height:100%;max-height:none;border:0;border-radius:0;box-shadow:none;}
   .sheet-modal{max-width:460px;max-height:min(86dvh,calc(100dvh - env(safe-area-inset-top, 0px)));padding:16px 20px 20px;}
+  .overlay.centered{padding:12px;}
+  .sheet-modal.centered{max-height:calc(100dvh - 24px);border-radius:16px;padding:15px;}
 }
 
 /* Forms */

@@ -11,6 +11,7 @@ use Database\Seeders\DemoSeeder;
 use Database\Seeders\PlanSeeder;
 use Database\Seeders\ProvinceSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
@@ -84,6 +85,15 @@ class AdminEmployeeManagementTest extends TestCase
             ->get(route('admin.employees'))
             ->assertForbidden();
         $this->actingAs($employee)
+            ->post(route('admin.employees.store'), [
+                'name' => 'محاولة تصعيد',
+                'email' => 'forbidden-system-employee@example.test',
+                'password' => 'StrongPassword123',
+                'password_confirmation' => 'StrongPassword123',
+                'permission_profile_id' => $profile->id,
+            ])
+            ->assertForbidden();
+        $this->actingAs($employee)
             ->post(route('admin.employees.invitations.store'), [
                 'name' => 'محاولة تصعيد',
                 'email' => 'forbidden-invite@example.test',
@@ -108,7 +118,57 @@ class AdminEmployeeManagementTest extends TestCase
             ->assertForbidden();
 
         $this->assertDatabaseMissing('dashboard_invitations', ['email' => 'forbidden-invite@example.test']);
+        $this->assertDatabaseMissing('users', ['email' => 'forbidden-system-employee@example.test']);
         $this->assertTrue($superAdmin->fresh()->isSuperAdmin());
+    }
+
+    public function test_super_administrator_can_create_a_system_employee_with_a_password_and_selected_profile(): void
+    {
+        $superAdmin = $this->superAdministrator();
+        $profile = $this->profile('مشغل الطلبات', ['orders' => ['view', 'update']]);
+
+        $this->actingAs($superAdmin)
+            ->post(route('admin.employees.store'), [
+                'name' => 'موظف النظام',
+                'email' => 'system-employee@example.test',
+                'password' => 'StrongPassword123',
+                'password_confirmation' => 'StrongPassword123',
+                'permission_profile_id' => $profile->id,
+                // These fields are deliberately ignored: creating an employee
+                // can never mint a more powerful or different account type.
+                'role' => 'merchant',
+                'status' => 'suspended',
+                'is_super_admin' => true,
+                'tenant_id' => 999999,
+            ])
+            ->assertRedirect();
+
+        $employee = User::query()->where('email', 'system-employee@example.test')->firstOrFail();
+        $this->assertSame('موظف النظام', $employee->name);
+        $this->assertSame('admin', $employee->role);
+        $this->assertSame('active', $employee->status);
+        $this->assertFalse($employee->isSuperAdmin());
+        $this->assertSame($profile->id, $employee->permission_profile_id);
+        $this->assertSame(Tenant::platform()->id, $employee->tenant_id);
+        $this->assertStringStartsWith('system-', $employee->username);
+        $this->assertNull($employee->phone);
+        $this->assertTrue(Hash::check('StrongPassword123', $employee->password));
+        $this->assertDatabaseMissing('dashboard_invitations', ['email' => $employee->email]);
+        $this->assertDatabaseHas('activity_logs', [
+            'user_id' => $superAdmin->id,
+            'action' => 'dashboard.employee.created',
+            'subject_type' => User::class,
+            'subject_id' => $employee->id,
+        ]);
+
+        $this->post(route('logout'))->assertRedirect('/dashboard/login');
+        $this->post('/dashboard/login', [
+            'username' => $employee->email,
+            'password' => 'StrongPassword123',
+        ])->assertRedirect('/dashboard/orders');
+
+        $this->get('/dashboard/orders')->assertOk();
+        $this->get('/dashboard/finance')->assertForbidden();
     }
 
     public function test_super_administrator_can_invite_a_scoped_employee_without_minting_super_admin_access(): void
@@ -193,14 +253,17 @@ class AdminEmployeeManagementTest extends TestCase
         $oldProfile = $this->profile('مشغل الطلبات', ['orders' => ['view']]);
         $newProfile = $this->profile('مشغل المحتوى', ['content' => ['view', 'update']]);
         $employee = $this->employee('editable-staff', $oldProfile);
+        $legacyUsername = $employee->username;
+        $legacyPhone = $employee->phone;
+        $employee->createToken('password-reset-token');
 
         $this->actingAs($superAdmin)
             ->put(route('admin.employees.update', $employee), [
                 'name' => 'موظف تم تعديله',
-                'username' => 'edited-staff',
                 'email' => 'edited-staff@example.test',
-                'phone' => '07980000222',
                 'permission_profile_id' => $newProfile->id,
+                'password' => 'ChangedPassword123',
+                'password_confirmation' => 'ChangedPassword123',
                 // These inputs have no mutation path in the controller.
                 'role' => 'merchant',
                 'status' => 'suspended',
@@ -210,13 +273,15 @@ class AdminEmployeeManagementTest extends TestCase
 
         $employee->refresh();
         $this->assertSame('موظف تم تعديله', $employee->name);
-        $this->assertSame('edited-staff', $employee->username);
+        $this->assertSame($legacyUsername, $employee->username);
         $this->assertSame('edited-staff@example.test', $employee->email);
-        $this->assertSame('07980000222', $employee->phone);
+        $this->assertSame($legacyPhone, $employee->phone);
         $this->assertSame($newProfile->id, $employee->permission_profile_id);
         $this->assertSame('admin', $employee->role);
         $this->assertSame('active', $employee->status);
         $this->assertFalse($employee->isSuperAdmin());
+        $this->assertTrue(Hash::check('ChangedPassword123', $employee->password));
+        $this->assertDatabaseMissing('personal_access_tokens', ['tokenable_id' => $employee->id]);
 
         $adminBefore = $superAdmin->fresh();
         $this->actingAs($superAdmin)
@@ -248,6 +313,9 @@ class AdminEmployeeManagementTest extends TestCase
             ->assertRedirect();
         $this->assertSame('suspended', $employee->fresh()->status);
         $this->assertDatabaseMissing('personal_access_tokens', ['tokenable_id' => $employee->id]);
+        $this->actingAs($employee->fresh())
+            ->get('/dashboard/reports')
+            ->assertRedirect('/dashboard/login');
 
         $this->actingAs($superAdmin)
             ->patch(route('admin.employees.status', $employee), ['status' => 'active'])

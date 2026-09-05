@@ -5,7 +5,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Facades\Storage;
 
 /**
  * An operator-managed announcement card shown on the mobile home screen.
@@ -41,7 +40,7 @@ class MobileSlide extends Model
      * Dates are evaluated server-side so a stale installed PWA cannot show a
      * campaign outside its scheduled period after it refreshes its home data.
      *
-     * @param Builder<self> $query
+     * @param  Builder<self>  $query
      * @return Builder<self>
      */
     public function scopePublishedFor(Builder $query, string $audience, ?int $branchId = null): Builder
@@ -72,6 +71,14 @@ class MobileSlide extends Model
     /** @return array<string, mixed> */
     public function mobilePayload(): array
     {
+        $imageUrl = null;
+
+        if (is_string($this->image_path) && str_starts_with($this->image_path, 'mobile-slides/')) {
+            $imageUrl = route('media.mobile-slide', [
+                'filename' => basename($this->image_path),
+            ]);
+        }
+
         return [
             'id' => $this->id,
             'title_ar' => $this->title_ar,
@@ -81,7 +88,7 @@ class MobileSlide extends Model
             'body_en' => $this->body_en,
             'body_ku' => $this->body_ku,
             'accent' => $this->audience === 'courier',
-            'image_url' => $this->image_path ? Storage::disk('public')->url($this->image_path) : null,
+            'image_url' => $imageUrl,
         ];
     }
 

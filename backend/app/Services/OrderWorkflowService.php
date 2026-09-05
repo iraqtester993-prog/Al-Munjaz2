@@ -8,6 +8,7 @@ use App\Models\Order;
 use App\Models\OrderMovement;
 use App\Models\OrderStatusLog;
 use App\Models\Scopes\TenantScope;
+use App\Models\Setting;
 use App\Models\Tenant;
 use App\Models\Transaction;
 use App\Models\User;
@@ -33,17 +34,28 @@ class OrderWorkflowService
         'rejected' => 'rejected',
     ];
 
-    public function changeStatus(Order $order, string $status, User $actor, ?string $note = null): void
+    public function changeStatus(
+        Order $order,
+        string $status,
+        User $actor,
+        ?string $note = null,
+        bool $allowApprovedReoffer = false,
+    ): void
     {
         if (! in_array($status, Order::STATUSES, true)) {
             throw ValidationException::withMessages(['status' => 'حالة الطلب غير صحيحة.']);
         }
 
-        DB::transaction(function () use ($order, $status, $actor, $note) {
+        DB::transaction(function () use ($order, $status, $actor, $note, $allowApprovedReoffer) {
             // The courier has a different tenant from the merchant that owns
             // the order.  Reload without the tenant visibility scope after
             // authorisation has already happened in the calling controller.
-            $order = Order::withoutGlobalScope(TenantScope::class)->findOrFail($order->id);
+            // Status transitions can post several ledger rows. Serialise the
+            // order itself so two concurrent requests cannot both pass the
+            // idempotency checks before either row is written.
+            $order = Order::withoutGlobalScope(TenantScope::class)
+                ->lockForUpdate()
+                ->findOrFail($order->id);
             $fromStatus = $order->status;
             $fromStage = $order->workflow_stage;
 
@@ -51,7 +63,7 @@ class OrderWorkflowService
                 return;
             }
 
-            $this->ensureValidStatusTransition($order, $status, $actor, $note);
+            $this->ensureValidStatusTransition($order, $status, $allowApprovedReoffer);
 
             $updates = [
                 'status' => $status,
@@ -72,12 +84,11 @@ class OrderWorkflowService
                 );
                 $updates['picked_at'] = now();
                 $updates['courier_id'] = $assignedCourierId;
-                $updates['delivery_courier_id'] = $order->delivery_courier_id ?: $assignedCourierId;
             }
             if ($status === 'delivered') {
                 $this->ensure(
-                    (bool) ($order->delivery_courier_id ?: $order->courier_id),
-                    'يجب تعيين مندوب وتسليم مرحلة الاستلام قبل تسجيل الطلب كمسلّم.'
+                    (bool) ($order->courier_id ?: $order->delivery_courier_id ?: $order->pickup_courier_id),
+                    'يجب تعيين مندوب للطلب قبل تسجيله كمسلّم.'
                 );
                 $updates['delivered_at'] = now();
             }
@@ -86,6 +97,14 @@ class OrderWorkflowService
             }
 
             $order->update($updates);
+
+            // New claims reserve the product value at acceptance. Keep this
+            // call for approved orders that existed before that policy was
+            // introduced: it creates the missing reservation once and is a
+            // no-op for every newly claimed order.
+            if ($status === 'courier') {
+                $this->reserveCourierBudgetForPickup($order);
+            }
 
             OrderStatusLog::create([
                 'tenant_id' => $order->tenant_id,
@@ -174,20 +193,26 @@ class OrderWorkflowService
      * the failed delivery; the separate confirmation below records the
      * handback and only then posts an optional return fee to the ledger.
      */
-    public function startCourierReturn(Order $order, User $actor, int $returnFee = 0, ?string $note = null): void
+    public function startCourierReturn(Order $order, User $actor, string $feeMode, string $returnReason): void
     {
-        DB::transaction(function () use ($order, $actor, $returnFee, $note): void {
+        DB::transaction(function () use ($order, $actor, $feeMode, $returnReason): void {
             $delivery = Order::withoutGlobalScope(TenantScope::class)
                 ->lockForUpdate()
                 ->findOrFail($order->id);
 
             $this->ensureCourierReturnCanStart($delivery, $actor);
 
-            $returnFee = max(0, $returnFee);
-            $feeNote = $returnFee > 0
-                ? 'تم اختيار إرجاع بأجرة '.number_format($returnFee).' د.ع.'
+            $feeMode = $feeMode === 'fee' ? 'fee' : 'none';
+            $returnReason = trim($returnReason);
+            $this->ensure($returnReason !== '', 'سبب إرجاع الطلب مطلوب.');
+
+            // The courier chooses only whether the already-quoted delivery
+            // fee applies. Never accept a browser-supplied amount here.
+            $returnFee = $feeMode === 'fee' ? max(0, (int) $delivery->return_fee) : 0;
+            $feeNote = $feeMode === 'fee'
+                ? 'تم اختيار إرجاع بأجرة التوصيل المعتمدة '.number_format($returnFee).' د.ع.'
                 : 'تم اختيار إرجاع بدون أجرة توصيل.';
-            $entryNote = $note ? $feeNote.' '.$note : $feeNote;
+            $entryNote = $feeNote.' سبب الإرجاع: '.$returnReason;
             $fromStatus = $delivery->status;
             $fromStage = $delivery->workflow_stage;
 
@@ -198,6 +223,8 @@ class OrderWorkflowService
                 // return_fee is the immutable pricing quote; the courier's
                 // actual fee choice belongs in return_fee_applied.
                 'return_fee_applied' => $returnFee,
+                'return_fee_mode' => $feeMode,
+                'return_reason' => $returnReason,
                 'returned_to_merchant_at' => null,
                 'return_fee_charged_at' => null,
             ])->save();
@@ -222,7 +249,9 @@ class OrderWorkflowService
                 'meta' => [
                     'return_fee_quote' => (int) $delivery->return_fee,
                     'return_fee_applied' => $returnFee,
-                    'fee_status' => $returnFee > 0 ? 'pending_confirmation' : 'none',
+                    'return_fee_mode' => $feeMode,
+                    'return_reason' => $returnReason,
+                    'fee_status' => $feeMode === 'fee' ? 'pending_confirmation' : 'none',
                     'from_status' => $fromStatus,
                     'from_stage' => $fromStage,
                 ],
@@ -238,6 +267,8 @@ class OrderWorkflowService
                 'data' => [
                     'return_fee_quote' => (int) $delivery->return_fee,
                     'return_fee_applied' => $returnFee,
+                    'return_fee_mode' => $feeMode,
+                    'return_reason' => $returnReason,
                     'from_status' => $fromStatus,
                 ],
                 'ip' => request()->ip(),
@@ -252,21 +283,23 @@ class OrderWorkflowService
                     'title_ar' => $delivery->track_no,
                     'title_en' => $delivery->track_no,
                     'title_ku' => $delivery->track_no,
-                    'body_ar' => $returnFee > 0
-                        ? 'تم تسجيل إرجاع الطلب بأجرة '.$amount.' د.ع. بانتظار تأكيد تسليمه إليك.'
-                        : 'تم تسجيل إرجاع الطلب بدون أجرة. بانتظار تأكيد تسليمه إليك.',
-                    'body_en' => $returnFee > 0
-                        ? 'The return was recorded with a '.number_format($returnFee).' IQD fee and awaits merchant handback confirmation.'
-                        : 'The return was recorded with no fee and awaits merchant handback confirmation.',
-                    'body_ku' => $returnFee > 0
-                        ? 'گەڕاندنەوەکە بە کرێی '.number_format($returnFee).' د.ع تۆمار کرا و چاوەڕێی دڵنیابوونەوەی گەیاندنە بۆ بازرگانە.'
-                        : 'گەڕاندنەوەکە بەبێ کرێ تۆمار کرا و چاوەڕێی دڵنیابوونەوەی گەیاندنە بۆ بازرگانە.',
+                    'body_ar' => $feeMode === 'fee'
+                        ? 'تم تسجيل إرجاع الطلب بأجرة التوصيل المعتمدة '.$amount.' د.ع. السبب: '.$returnReason
+                        : 'تم تسجيل إرجاع الطلب بدون أجرة توصيل. السبب: '.$returnReason,
+                    'body_en' => $feeMode === 'fee'
+                        ? 'The return was recorded with the quoted '.number_format($returnFee).' IQD delivery fee. Reason: '.$returnReason
+                        : 'The return was recorded with no delivery fee. Reason: '.$returnReason,
+                    'body_ku' => $feeMode === 'fee'
+                        ? 'گەڕاندنەوەکە بە کرێی گواستنەوەی دیاریکراوی '.number_format($returnFee).' د.ع تۆمار کرا. هۆکار: '.$returnReason
+                        : 'گەڕاندنەوەکە بەبێ کرێی گواستنەوە تۆمار کرا. هۆکار: '.$returnReason,
                     'data' => [
                         'order_id' => $delivery->id,
                         'status' => 'returned',
                         'stage' => 'return_pending_merchant',
                         'return_fee_quote' => (int) $delivery->return_fee,
                         'return_fee_applied' => $returnFee,
+                        'return_fee_mode' => $feeMode,
+                        'return_reason' => $returnReason,
                     ],
                 ]);
             }
@@ -274,7 +307,11 @@ class OrderWorkflowService
             // The order-value budget hold is no longer needed after a failed
             // delivery. This method is idempotent, so a repeat browser post
             // cannot release the same reservation twice.
-            $this->postReturnedAdministrativeDeduction($delivery);
+            if ($feeMode === 'none') {
+                $this->refundAdministrativeDeductionForFreeReturn($delivery, $actor);
+            } else {
+                $this->postReturnedAdministrativeDeduction($delivery);
+            }
             $this->releaseCourierBudgetIfHeld($delivery, 'returned');
         });
     }
@@ -302,6 +339,8 @@ class OrderWorkflowService
             );
 
             $returnFee = max(0, (int) $delivery->return_fee_applied);
+            $returnFeeMode = $delivery->return_fee_mode ?: ($returnFee > 0 ? 'fee' : 'none');
+            $returnReason = trim((string) $delivery->return_reason);
             $confirmedAt = now();
             $confirmationNote = $note ?: 'تم تأكيد تسليم الطلب المرتجع إلى التاجر.';
 
@@ -310,33 +349,24 @@ class OrderWorkflowService
                 'returned_to_merchant_at' => $confirmedAt,
             ])->save();
 
-            $feePosted = false;
-            if ($returnFee > 0) {
-                $feePosted = Transaction::withoutGlobalScope(TenantScope::class)
-                    ->where('order_id', $delivery->id)
-                    ->where('user_id', $actor->id)
-                    ->where('type', 'delivery_fee')
-                    ->where('direction', -1)
-                    ->exists();
+            // The actual debit is posted once by
+            // postReturnedAdministrativeDeduction() when the courier selects
+            // a paid return. Do not write a second, ledger-only fee entry
+            // here: it made the wallet history show two deductions while the
+            // Qi balance changed only once.
+            // A new order already carries a deduction snapshot from claim
+            // time. Its optional return-fee choice is operational metadata,
+            // not a second Qi debit. Only pre-policy orders can have a
+            // separately posted return fee.
+            $hasLegacyReturnCharge = $returnFee > 0 && $delivery->admin_deduction_applied === null;
+            $feePosted = $hasLegacyReturnCharge && Transaction::withoutGlobalScope(TenantScope::class)
+                ->where('order_id', $delivery->id)
+                ->where('user_id', $actor->id)
+                ->where('type', 'commission')
+                ->where('direction', -1)
+                ->exists();
 
-                if (! $feePosted) {
-                    // The reference app shows this as a courier delivery-fee
-                    // debit. Persist it in the immutable ledger only after
-                    // confirmation; verified cash and wallet settlements are
-                    // still controlled by the finance workflow.
-                    Transaction::create([
-                        'tenant_id' => $actor->tenant_id,
-                        'user_id' => $actor->id,
-                        'type' => 'delivery_fee',
-                        'amount' => $returnFee,
-                        'direction' => -1,
-                        'ref' => $delivery->track_no,
-                        'order_id' => $delivery->id,
-                        'date' => today(),
-                        'note' => 'أجرة توصيل للطلب المرتجع بعد تأكيد إعادته للتاجر.',
-                    ]);
-                }
-
+            if ($hasLegacyReturnCharge) {
                 $delivery->forceFill(['return_fee_charged_at' => $confirmedAt])->save();
             }
 
@@ -351,7 +381,9 @@ class OrderWorkflowService
                 'meta' => [
                     'return_fee_quote' => (int) $delivery->return_fee,
                     'return_fee_applied' => $returnFee,
-                    'fee_ledger_posted' => $returnFee > 0,
+                    'return_fee_mode' => $returnFeeMode,
+                    'return_reason' => $returnReason,
+                    'fee_ledger_posted' => $feePosted,
                     'fee_already_posted' => $feePosted,
                 ],
                 'occurred_at' => $confirmedAt,
@@ -366,7 +398,9 @@ class OrderWorkflowService
                 'data' => [
                     'return_fee_quote' => (int) $delivery->return_fee,
                     'return_fee_applied' => $returnFee,
-                    'fee_posted' => $returnFee > 0,
+                    'return_fee_mode' => $returnFeeMode,
+                    'return_reason' => $returnReason,
+                    'fee_posted' => $feePosted,
                 ],
                 'ip' => request()->ip(),
             ]);
@@ -379,21 +413,23 @@ class OrderWorkflowService
                     'title_ar' => $delivery->track_no,
                     'title_en' => $delivery->track_no,
                     'title_ku' => $delivery->track_no,
-                    'body_ar' => $returnFee > 0
-                        ? 'تم تأكيد إعادة الطلب إليك. سُجلت أجرة الإرجاع بقيمة '.number_format($returnFee).' د.ع في السجل المالي.'
-                        : 'تم تأكيد إعادة الطلب إليك بدون أجرة توصيل.',
-                    'body_en' => $returnFee > 0
-                        ? 'The return to the merchant was confirmed. A '.number_format($returnFee).' IQD return delivery fee was recorded.'
-                        : 'The return to the merchant was confirmed with no delivery fee.',
-                    'body_ku' => $returnFee > 0
-                        ? 'گەڕاندنەوەکە بۆ بازرگان پشتڕاست کرایەوە. کرێی گەڕاندنەوەی '.number_format($returnFee).' د.ع لە تۆماری دارایی تۆمار کرا.'
-                        : 'گەڕاندنەوەکە بۆ بازرگان بەبێ کرێی گواستنەوە پشتڕاست کرایەوە.',
+                    'body_ar' => $returnFeeMode === 'fee'
+                        ? 'تم تأكيد إعادة الطلب إليك بأجرة التوصيل المعتمدة '.number_format($returnFee).' د.ع. السبب: '.$returnReason
+                        : 'تم تأكيد إعادة الطلب إليك بدون أجرة توصيل. السبب: '.$returnReason,
+                    'body_en' => $returnFeeMode === 'fee'
+                        ? 'The return was confirmed with the quoted '.number_format($returnFee).' IQD delivery fee. Reason: '.$returnReason
+                        : 'The return was confirmed with no delivery fee. Reason: '.$returnReason,
+                    'body_ku' => $returnFeeMode === 'fee'
+                        ? 'گەڕاندنەوەکە بە کرێی دیاریکراوی '.number_format($returnFee).' د.ع پشتڕاست کرایەوە. هۆکار: '.$returnReason
+                        : 'گەڕاندنەوەکە بەبێ کرێی گواستنەوە پشتڕاست کرایەوە. هۆکار: '.$returnReason,
                     'data' => [
                         'order_id' => $delivery->id,
                         'status' => 'returned',
                         'stage' => 'returned_to_merchant',
                         'return_fee_quote' => (int) $delivery->return_fee,
                         'return_fee_applied' => $returnFee,
+                        'return_fee_mode' => $returnFeeMode,
+                        'return_reason' => $returnReason,
                     ],
                 ]);
             }
@@ -426,13 +462,8 @@ class OrderWorkflowService
         }
     }
 
-    /**
-     * Normal workflow transitions stay explicit. An administrator may record
-     * a documented correction for a physically verified exceptional case,
-     * but an empty click in the dashboard can never jump a delivery straight
-     * into a terminal financial status.
-     */
-    private function ensureValidStatusTransition(Order $order, string $to, User $actor, ?string $note): void
+    /** Keep the customer-facing order lifecycle explicit and sequential. */
+    private function ensureValidStatusTransition(Order $order, string $to, bool $allowApprovedReoffer = false): void
     {
         $allowed = match ($order->status) {
             'pending' => ['approved', 'cancelled', 'rejected'],
@@ -445,67 +476,88 @@ class OrderWorkflowService
             return;
         }
 
-        // Branch operators can correct a record only from their scoped
-        // portal endpoint and only when their explicit orders capability is
-        // present. The controller performs the branch boundary; the note is
-        // still mandatory so an exceptional status cannot be an accidental
-        // click by any dashboard user.
-        $canCorrect = $actor->canUseAdminPermission('orders', 'update')
-            || (
-                in_array($actor->role, ['owner', 'branch_manager'], true)
-                && $actor->canUseDashboardPermission('orders')
-            );
+        // Re-offering is the sole internal recovery path back to the existing
+        // pending state. The recovery service has already released the
+        // current courier's holds and cleared the assignment before calling
+        // here. Controllers never set this flag, so an admin note cannot
+        // turn an accepted order back into a new offer arbitrarily.
+        if ($allowApprovedReoffer && $order->status === 'approved' && $to === 'pending' && ! $order->courier_id) {
+            return;
+        }
 
-        $this->ensure(
-            $canCorrect && filled($note),
-            'الانتقال التشغيلي غير مسموح. التصحيح الإداري يتطلب ملاحظة توثيقية.'
-        );
+        $this->ensure(false, 'الانتقال التشغيلي غير مسموح لهذه الحالة.');
     }
 
     protected function releaseCourierBudgetIfHeld(Order $order, string $status): void
     {
-        $held = Transaction::withoutGlobalScope(TenantScope::class)
+        // Prefer the regular courier assignment. The fallback keeps records
+        // created by an older deployment releasable without reviving a
+        // separate pickup/delivery workflow.
+        $courierId = (int) ($order->courier_id ?: $order->delivery_courier_id);
+
+        app(CourierBudgetHoldService::class)->releaseOutstandingForCourier(
+            $order,
+            $courierId,
+            match ($status) {
+                'delivered' => 'إعادة مبلغ حجز الطلب إلى رصيد الميزانية بعد التسليم',
+                'cancelled' => 'إعادة ميزانية بعد إلغاء الطلب',
+                'damaged' => 'إعادة ميزانية بعد تسجيل الطلب كتالف',
+                'rejected' => 'إعادة ميزانية بعد رفض الطلب',
+                default => 'إعادة مبلغ حجز الطلب إلى رصيد الميزانية بعد الإرجاع',
+            },
+        );
+    }
+
+    /**
+     * Compatibility path for an already-approved order that predates the
+     * acceptance-time reservation. New orders already have `paid_order` and
+     * return immediately from this method.
+     */
+    protected function reserveCourierBudgetForPickup(Order $order): void
+    {
+        // New orders always use courier_id. The trailing values only close
+        // records created by the retired multi-courier workflow.
+        $courierId = $order->courier_id ?: $order->delivery_courier_id ?: $order->pickup_courier_id;
+        if (! $courierId) {
+            throw ValidationException::withMessages(['order' => ['يجب تعيين مندوب قبل استلام الطلب.']]);
+        }
+
+        $alreadyHeld = Transaction::withoutGlobalScope(TenantScope::class)
             ->where('order_id', $order->id)
-            ->where('user_id', $order->courier_id)
+            ->where('user_id', $courierId)
             ->where('type', 'paid_order')
             ->where('direction', -1)
             ->exists();
 
-        $released = Transaction::withoutGlobalScope(TenantScope::class)
-            ->where('order_id', $order->id)
-            ->where('user_id', $order->courier_id)
-            ->where('type', 'budget_release')
-            ->exists();
-
-        if (! $held || $released) {
+        if ($alreadyHeld) {
             return;
         }
 
-        $courier = User::withoutGlobalScopes()->find($order->courier_id);
-        $wallet = Wallet::query()->where('user_id', $order->courier_id)->lockForUpdate()->first();
+        $wallet = Wallet::firstOrCreate(
+            ['user_id' => $courierId],
+            ['balance' => 0, 'budget' => 0, 'budget_balance' => 0],
+        );
+        $wallet = Wallet::query()->whereKey($wallet->id)->lockForUpdate()->firstOrFail();
+        $budgetHold = max(0, (int) $order->price);
 
-        $budgetHold = max(0, (int) $order->price) + max(0, (int) $order->fee);
+        $this->ensure(
+            (int) $wallet->budget_balance >= $budgetHold,
+            'رصيد ميزانية المندوب لا يغطي سعر الطلب دون أجرة التوصيل.'
+        );
 
-        if ($wallet) {
-            $wallet->increment('budget', $budgetHold);
-        }
+        $wallet->decrement('budget_balance', $budgetHold);
 
+        $courier = User::withoutGlobalScopes()->find($courierId);
         Transaction::create([
-            'tenant_id' => $courier?->tenant_id,
-            'user_id' => $order->courier_id,
-            'type' => 'budget_release',
+            'tenant_id' => $courier?->tenant_id ?? $order->tenant_id,
+            'user_id' => $courierId,
+            'type' => 'paid_order',
             'amount' => $budgetHold,
-            'direction' => 1,
+            'direction' => -1,
             'ref' => $order->track_no,
             'order_id' => $order->id,
             'date' => today(),
-            'note' => match ($status) {
-                'delivered' => 'إعادة ميزانية الطلب والتوصيل بعد التسليم',
-                'cancelled' => 'إعادة ميزانية بعد إلغاء الطلب',
-                'damaged' => 'إعادة ميزانية بعد تسجيل الطلب كتالف',
-                'rejected' => 'إعادة ميزانية بعد رفض الطلب',
-                default => 'إعادة ميزانية الطلب والتوصيل بعد الإرجاع',
-            },
+            'note' => 'حجز سعر الطلب من رصيد الميزانية للطلب السابق عند الاستلام (لا يشمل أجرة التوصيل).',
         ]);
     }
 
@@ -513,9 +565,9 @@ class OrderWorkflowService
      * Record a delivered COD order without mixing physical courier cash with
      * the courier's prepaid Qi credit:
      *
-     * - the courier collection is the delivery charge after the fixed,
-     *   courier-specific administration deduction;
-     * - that deduction is debited from the courier's Qi wallet; and
+     * - the courier budget hold is released in full by the caller;
+     * - the fixed administration deduction was already debited and frozen
+     *   when the courier accepted the job; and
      * - the merchant receives the full order value because the courier pays
      *   it from the cash budget used when accepting the job.
      *
@@ -526,7 +578,9 @@ class OrderWorkflowService
     {
         $orderValue = max(0, (int) $order->price);
         $deliveryCharge = max(0, (int) $order->fee);
-        $courierId = $order->delivery_courier_id ?: $order->courier_id;
+        // Prefer the sole current courier; retain a legacy fallback only for
+        // settlement of historical records that predate this model.
+        $courierId = $order->courier_id ?: $order->delivery_courier_id ?: $order->pickup_courier_id;
 
         if ($courierId) {
             $courier = User::withoutGlobalScopes()->find($courierId);
@@ -539,14 +593,29 @@ class OrderWorkflowService
                     ->where('direction', 1)
                     ->exists();
 
-                $companyFee = $this->postAdministrativeDeduction($order, $courier, 'بعد تسليم الطلب');
+                $companyFee = $order->admin_deduction_applied;
 
-                if (! $alreadyCollected) {
+                // Preserve the accounting of an order that was already in
+                // progress before acceptance-time deductions were deployed.
+                // New orders always carry a non-null snapshot (including 0)
+                // and therefore can never be charged a second time here.
+                if ($companyFee === null) {
+                    $companyFee = $this->postAdministrativeDeduction(
+                        $order,
+                        $courier,
+                        'بعد تسليم طلب سابق',
+                        $deliveryCharge,
+                    );
+                    $order->forceFill(['admin_deduction_applied' => $companyFee])->save();
+                }
+
+                $courierNetDeliveryFee = max(0, $deliveryCharge - (int) $companyFee);
+                if (! $alreadyCollected && $courierNetDeliveryFee > 0) {
                     Transaction::create([
                         'tenant_id' => $courier->tenant_id ?? $order->tenant_id,
                         'user_id' => $courier->id,
                         'type' => 'collected',
-                        'amount' => max(0, $deliveryCharge - $companyFee),
+                        'amount' => $courierNetDeliveryFee,
                         'direction' => 1,
                         'ref' => $order->track_no,
                         'order_id' => $order->id,
@@ -581,7 +650,7 @@ class OrderWorkflowService
 
         Wallet::firstOrCreate(
             ['user_id' => $merchant->id],
-            ['balance' => 0, 'budget' => 0],
+            ['balance' => 0, 'budget' => 0, 'budget_balance' => 0],
         );
         $wallet = Wallet::query()
             ->where('user_id', $merchant->id)
@@ -612,30 +681,131 @@ class OrderWorkflowService
             ->update(['wallet_balance' => (int) $wallet->fresh()->balance]);
     }
 
-    /** Charge the fixed administration amount once when a returned order ends. */
+    /**
+     * New orders are charged once when accepted, so returning a parcel must
+     * never debit Qi a second time. The legacy branch keeps a pre-release
+     * in-progress order financially consistent until it is closed.
+     */
     protected function postReturnedAdministrativeDeduction(Order $order): void
     {
-        $courierId = $order->delivery_courier_id ?: $order->courier_id;
+        if ($order->admin_deduction_applied !== null) {
+            return;
+        }
+
+        if ((int) $order->return_fee_applied <= 0) {
+            return;
+        }
+
+        $courierId = $order->courier_id ?: $order->delivery_courier_id ?: $order->pickup_courier_id;
         if (! $courierId) {
             return;
         }
 
         $courier = User::withoutGlobalScopes()->find($courierId);
         if ($courier && $courier->isCourierRole()) {
-            $this->postAdministrativeDeduction($order, $courier, 'بعد إرجاع الطلب');
+            $this->postAdministrativeDeduction(
+                $order,
+                $courier,
+                'بعد إرجاع طلب سابق',
+                max(0, (int) $order->return_fee_applied),
+            );
         }
     }
 
     /**
-     * Administration deductions are independent of the delivery charge shown
-     * to the merchant.  The amount is snapshotted at assignment and guarded
-     * by the ledger so retries cannot debit a courier twice.
+     * A no-fee return is the one exception to the acceptance-time company
+     * deduction: the courier gets that exact frozen amount back. The ledger
+     * guards make a repeat HTTP request harmless and leave the original
+     * snapshot intact for audit purposes.
      */
-    protected function postAdministrativeDeduction(Order $order, User $courier, string $when): int
+    protected function refundAdministrativeDeductionForFreeReturn(Order $order, User $courier): void
     {
-        $amount = $order->admin_deduction_applied === null
-            ? max(0, (int) $courier->admin_deduction_per_order)
-            : max(0, (int) $order->admin_deduction_applied);
+        $courierId = (int) ($order->courier_id ?: $order->delivery_courier_id ?: $order->pickup_courier_id);
+        if ($courierId <= 0 || $courierId !== (int) $courier->id) {
+            return;
+        }
+
+        // The ledger is the source of truth for the amount actually taken
+        // from Qi.  Newly accepted orders carry admin_deduction_applied, but
+        // older in-progress orders can have a commission row without that
+        // newer snapshot.  A free return must restore the real debit in both
+        // cases rather than leaving a legacy courier charged by mistake.
+        $chargedAmount = max(0, (int) Transaction::withoutGlobalScope(TenantScope::class)
+            ->where('order_id', $order->id)
+            ->where('user_id', $courierId)
+            ->where('type', 'commission')
+            ->where('direction', -1)
+            ->sum('amount'));
+        $refundedAmount = max(0, (int) Transaction::withoutGlobalScope(TenantScope::class)
+            ->where('order_id', $order->id)
+            ->where('user_id', $courierId)
+            ->where('type', 'commission_refund')
+            ->where('direction', 1)
+            ->sum('amount'));
+        $amount = max(0, $chargedAmount - $refundedAmount);
+
+        if ($amount === 0) {
+            return;
+        }
+
+        $wallet = Wallet::query()
+            ->where('user_id', $courierId)
+            ->lockForUpdate()
+            ->first();
+        if (! $wallet) {
+            return;
+        }
+
+        $wallet->increment('balance', $amount);
+
+        $refund = Transaction::create([
+            'tenant_id' => $courier->tenant_id ?? $order->tenant_id,
+            'user_id' => $courierId,
+            'type' => 'commission_refund',
+            'amount' => $amount,
+            'direction' => 1,
+            'ref' => $order->track_no,
+            'order_id' => $order->id,
+            'date' => today(),
+            'note' => 'إعادة استقطاع الإدارة بسبب إرجاع الطلب بدون أجرة توصيل.',
+        ]);
+
+        ActivityLog::create([
+            'tenant_id' => $courier->tenant_id ?? $order->tenant_id,
+            'user_id' => $courierId,
+            'action' => 'wallet.commission_refunded_for_free_return',
+            'subject_type' => 'order',
+            'subject_id' => $order->id,
+            'data' => [
+                'amount' => $amount,
+                'transaction_id' => $refund->id,
+                'track_no' => $order->track_no,
+            ],
+            'ip' => request()->ip(),
+        ]);
+
+        Notification::create([
+            'tenant_id' => $courier->tenant_id ?? $order->tenant_id,
+            'user_id' => $courierId,
+            'type' => 'finance',
+            'title_ar' => 'إعادة استقطاع الإدارة',
+            'title_en' => 'Platform deduction refunded',
+            'title_ku' => 'گەڕاندنەوەی کەمکردنەوەی بەڕێوەبەرایەتی',
+            'body_ar' => 'أُعيد مبلغ '.number_format($amount).' د.ع إلى رصيد Qi لأن الطلب '.$order->track_no.' أُرجع بدون أجرة توصيل.',
+            'body_en' => number_format($amount).' IQD was returned to your Qi balance because '.$order->track_no.' was returned without a delivery fee.',
+            'body_ku' => number_format($amount).' د.ع گەڕێندرایەوە بۆ باڵانسی Qi ـت چونکە '.$order->track_no.' بەبێ کرێی گواستنەوە گەڕێندرایەوە.',
+            'data' => ['order_id' => $order->id, 'type' => 'commission_refund', 'amount' => $amount],
+        ]);
+    }
+
+    /**
+     * Compatibility charge for orders that were already underway before
+     * `admin_deduction_applied` began being snapshotted at acceptance. New
+     * orders use CourierOrderAssignmentService and never call this method.
+     */
+    protected function postAdministrativeDeduction(Order $order, User $courier, string $when, int $amount): int
+    {
+        $amount = max(0, $amount);
 
         if ($amount === 0) {
             return 0;
@@ -652,9 +822,9 @@ class OrderWorkflowService
             return $amount;
         }
 
-        Wallet::firstOrCreate(['user_id' => $courier->id], ['balance' => 0, 'budget' => 0]);
+        Wallet::firstOrCreate(['user_id' => $courier->id], ['balance' => 0, 'budget' => 0, 'budget_balance' => 0]);
         $wallet = Wallet::query()->where('user_id', $courier->id)->lockForUpdate()->firstOrFail();
-        $this->ensure((int) $wallet->balance >= $amount, 'رصيد المندوب لا يغطي استقطاع الإدارة لهذا الطلب.');
+        $this->ensure((int) $wallet->balance >= $amount, 'رصيد المندوب لا يغطي مبلغ استقطاع الإدارة لهذا الطلب.');
         $wallet->decrement('balance', $amount);
 
         Transaction::create([
@@ -666,7 +836,7 @@ class OrderWorkflowService
             'ref' => $order->track_no,
             'order_id' => $order->id,
             'date' => today(),
-            'note' => 'استقطاع الإدارة الثابت '.$when.'.',
+            'note' => 'استقطاع الإدارة '.$when.'.',
         ]);
 
         Notification::create([
@@ -674,7 +844,7 @@ class OrderWorkflowService
             'user_id' => $courier->id,
             'type' => 'finance',
             'title_ar' => 'استقطاع الإدارة',
-            'title_en' => 'Administration deduction',
+            'title_en' => 'Platform deduction',
             'title_ku' => 'کەمکردنەوەی بەڕێوەبەرایەتی',
             'body_ar' => 'تم استقطاع '.number_format($amount).' د.ع من رصيد Qi للطلب '.$order->track_no.'.',
             'body_en' => number_format($amount).' IQD was deducted from your Qi balance for '.$order->track_no.'.',

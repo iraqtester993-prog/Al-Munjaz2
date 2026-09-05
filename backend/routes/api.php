@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Admin\AdminCourierLocationController;
 use App\Http\Controllers\Api\V1\AdminController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\ChatController;
@@ -10,7 +11,6 @@ use App\Http\Controllers\Api\V1\OrderController;
 use App\Http\Controllers\Api\V1\ProvinceController;
 use App\Http\Controllers\Api\V1\ReportController;
 use App\Http\Controllers\Api\V1\WalletController;
-use App\Http\Controllers\Admin\AdminCourierLocationController;
 use App\Http\Controllers\App\CourierLocationController;
 use App\Http\Middleware\EnsureMobileApiUser;
 use App\Http\Middleware\SetTenantContext;

@@ -503,6 +503,8 @@ class SmokeTest extends TestCase
 
         $order = Order::query()->where('customer_name_ar', 'عميل إعدادات')->latest('id')->firstOrFail();
         $this->assertSame(4750, (int) $order->fee);
+        $this->assertNotNull($order->offer_opened_at);
+        $this->assertEquals(45 * 60, $order->offer_opened_at->diffInSeconds($order->pickup_deadline_at));
         $this->assertGreaterThanOrEqual($startedAt->copy()->addMinutes(44)->timestamp, $order->pickup_deadline_at->timestamp);
         $this->assertLessThanOrEqual($startedAt->copy()->addMinutes(46)->timestamp, $order->pickup_deadline_at->timestamp);
     }
@@ -510,6 +512,9 @@ class SmokeTest extends TestCase
     public function test_order_status_transition(): void
     {
         $courier = User::where('username', 'مندوب')->firstOrFail();
+        $adminDeduction = 2000;
+        $courier->update(['admin_deduction_per_order' => 0]);
+        Setting::set('admin_deduction_fee', $adminDeduction);
         $courier->update([
             'current_latitude' => 33.3152412,
             'current_longitude' => 44.3660731,
@@ -517,6 +522,8 @@ class SmokeTest extends TestCase
         ]);
         $order = Order::where('status', 'pending')->whereNull('courier_id')->firstOrFail();
         $startingBudget = $courier->wallet->budget;
+        $startingBudgetBalance = $courier->wallet->budget_balance;
+        $startingBalance = $courier->wallet->balance;
 
         $this->actingAs($courier)->post("/app/orders/{$order->id}/claim")
             ->assertRedirect();
@@ -526,14 +533,33 @@ class SmokeTest extends TestCase
             'order_id' => $order->id,
             'user_id' => $courier->id,
             'type' => 'paid_order',
+            'amount' => $order->price,
             'direction' => -1,
         ]);
-        $this->assertSame($startingBudget - $order->price - $order->fee, $courier->wallet->fresh()->budget);
+        $this->assertDatabaseHas('transactions', [
+            'order_id' => $order->id,
+            'user_id' => $courier->id,
+            'type' => 'commission',
+            'amount' => $adminDeduction,
+            'direction' => -1,
+        ]);
+        $this->assertSame($startingBudget, $courier->wallet->fresh()->budget);
+        $this->assertSame($startingBudgetBalance - $order->price, $courier->wallet->fresh()->budget_balance);
+        $this->assertSame($startingBalance - $adminDeduction, $courier->wallet->fresh()->balance);
 
         $this->actingAs($courier)->post("/app/orders/{$order->id}/status", ['status' => 'courier'])
             ->assertRedirect();
 
         $this->assertDatabaseHas('orders', ['id' => $order->id, 'status' => 'courier', 'courier_id' => $courier->id]);
+        $this->assertDatabaseHas('transactions', [
+            'order_id' => $order->id,
+            'user_id' => $courier->id,
+            'type' => 'paid_order',
+            'direction' => -1,
+        ]);
+        $this->assertSame($startingBudget, $courier->wallet->fresh()->budget);
+        $this->assertSame($startingBudgetBalance - $order->price, $courier->wallet->fresh()->budget_balance);
+        $this->assertSame($startingBalance - $adminDeduction, $courier->wallet->fresh()->balance);
     }
 
     public function test_mobile_order_detail_loads_the_real_branch_route_and_operational_history_for_each_authorized_role(): void
@@ -684,6 +710,29 @@ class SmokeTest extends TestCase
         ]);
     }
 
+    public function test_courier_cannot_claim_an_expired_pending_offer(): void
+    {
+        $courier = User::where('username', 'مندوب')->firstOrFail();
+        $courier->update([
+            'is_online' => true,
+            'current_latitude' => 33.3152412,
+            'current_longitude' => 44.3660731,
+            'location_updated_at' => now(),
+        ]);
+        $order = Order::where('status', 'pending')->whereNull('courier_id')->firstOrFail();
+        $order->forceFill(['pickup_deadline_at' => now()->subSecond()])->save();
+
+        $this->actingAs($courier)->post("/app/orders/{$order->id}/claim")
+            ->assertRedirect()
+            ->assertSessionHasErrors('order');
+
+        $this->assertDatabaseHas('orders', [
+            'id' => $order->id,
+            'status' => 'pending',
+            'courier_id' => null,
+        ]);
+    }
+
     public function test_courier_can_switch_off_duty_without_a_heartbeat_reenabling_it(): void
     {
         $courier = User::where('username', 'مندوب')->firstOrFail();
@@ -707,12 +756,22 @@ class SmokeTest extends TestCase
         ]);
     }
 
-    public function test_admin_assignment_reserves_the_same_courier_budget(): void
+    public function test_admin_assignment_reserves_the_product_budget_at_assignment(): void
     {
         $admin = User::where('role', 'admin')->firstOrFail();
         $courier = User::where('username', 'مندوب')->firstOrFail();
+        $adminDeduction = 2000;
+        $courier->update(['admin_deduction_per_order' => 0]);
+        Setting::set('admin_deduction_fee', $adminDeduction);
+        $courier->update([
+            'current_latitude' => 33.3152412,
+            'current_longitude' => 44.3660731,
+            'location_updated_at' => now(),
+        ]);
         $order = Order::where('status', 'pending')->whereNull('courier_id')->firstOrFail();
         $startingBudget = $courier->wallet->budget;
+        $startingBudgetBalance = $courier->wallet->budget_balance;
+        $startingBalance = $courier->wallet->balance;
 
         $this->actingAs($admin)->post("/dashboard/orders/{$order->id}/courier", [
             'courier_id' => $courier->id,
@@ -727,9 +786,25 @@ class SmokeTest extends TestCase
             'order_id' => $order->id,
             'user_id' => $courier->id,
             'type' => 'paid_order',
+            'amount' => $order->price,
             'direction' => -1,
         ]);
-        $this->assertSame($startingBudget - $order->price - $order->fee, $courier->wallet->fresh()->budget);
+        $this->assertSame($startingBudget, $courier->wallet->fresh()->budget);
+        $this->assertSame($startingBudgetBalance - $order->price, $courier->wallet->fresh()->budget_balance);
+        $this->assertSame($startingBalance - $adminDeduction, $courier->wallet->fresh()->balance);
+
+        $this->actingAs($courier)->post("/app/orders/{$order->id}/status", ['status' => 'courier'])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('transactions', [
+            'order_id' => $order->id,
+            'user_id' => $courier->id,
+            'type' => 'paid_order',
+            'direction' => -1,
+        ]);
+        $this->assertSame($startingBudget, $courier->wallet->fresh()->budget);
+        $this->assertSame($startingBudgetBalance - $order->price, $courier->wallet->fresh()->budget_balance);
+        $this->assertSame($startingBalance - $adminDeduction, $courier->wallet->fresh()->balance);
     }
 
     public function test_wallet_withdraw_and_chat_send(): void
@@ -992,6 +1067,8 @@ class SmokeTest extends TestCase
         $this->assertSame('لقی کارپێکردن', data_get($branchPayload, 'name_ku'));
 
         $this->actingAs($admin)->put("/dashboard/branches/{$branch->id}", [
+            // A client cannot alter a branch code after creation. It is used
+            // in generated branch credentials and must remain stable.
             'code' => 'ops-manage-2',
             'name_ar' => 'فرع عمليات بغداد',
             'name_en' => 'Baghdad Operations Branch',
@@ -1004,7 +1081,7 @@ class SmokeTest extends TestCase
 
         $this->assertDatabaseHas('branches', [
             'id' => $branch->id,
-            'code' => 'OPS-MANAGE-2',
+            'code' => 'OPS-MANAGE',
             'name_en' => 'Baghdad Operations Branch',
             'name_ku' => 'لقی کارپێکردنی بەغدا',
             'phone' => '07710000222',
@@ -1130,7 +1207,7 @@ class SmokeTest extends TestCase
             'shop' => 'متجر OTP',
             'address' => 'بغداد',
             'province_id' => $province->id,
-            'phone' => '07900001234',
+            'phone' => '07700001234',
             'password' => 'temporary-pass-123',
             'password_confirmation' => 'temporary-pass-123',
         ])->assertRedirect('/verify-otp');
@@ -1145,7 +1222,7 @@ class SmokeTest extends TestCase
         $this->post('/verify-otp', ['code' => '123456'])
             ->assertRedirect('/app');
 
-        $user = User::where('phone', '07900001234')->firstOrFail();
+        $user = User::where('phone', '07700001234')->firstOrFail();
         $this->assertSame('active', $user->status);
         $this->assertNotNull($user->phone_verified_at);
         $this->assertAuthenticatedAs($user);
@@ -1162,7 +1239,7 @@ class SmokeTest extends TestCase
             'address' => 'بغداد — الكرادة',
             'vehicle' => 'bike',
             'province_id' => $province->id,
-            'phone' => '07900001235',
+            'phone' => '07800001235',
             'password' => 'temporary-pass-123',
             'password_confirmation' => 'temporary-pass-123',
             'residence_document' => UploadedFile::fake()->image('residence.jpg'),
@@ -1172,7 +1249,7 @@ class SmokeTest extends TestCase
             'license_back_document' => UploadedFile::fake()->image('license-back.jpg'),
         ])->assertRedirect('/verify-otp');
 
-        $courier = User::where('phone', '07900001235')->firstOrFail();
+        $courier = User::where('phone', '07800001235')->firstOrFail();
         $this->assertSame('pending', $courier->status);
         $this->assertSame(5, Document::where('user_id', $courier->id)->count());
     }
@@ -1187,7 +1264,7 @@ class SmokeTest extends TestCase
             'address' => 'بغداد — الكرادة',
             'vehicle' => 'bike',
             'province_id' => $province->id,
-            'phone' => '07900001236',
+            'phone' => '07800001236',
             'password' => 'temporary-pass-123',
             'password_confirmation' => 'temporary-pass-123',
             // Each document is permitted individually (0.9 MB), but their
@@ -1199,7 +1276,7 @@ class SmokeTest extends TestCase
             'license_back_document' => UploadedFile::fake()->create('license-back.pdf', 900, 'application/pdf'),
         ])->assertSessionHasErrors('documents');
 
-        $this->assertDatabaseMissing('users', ['phone' => '07900001236']);
+        $this->assertDatabaseMissing('users', ['phone' => '07800001236']);
     }
 
     public function test_chat_messages_endpoint_refreshes_messages_for_the_other_party(): void
@@ -1229,6 +1306,23 @@ class SmokeTest extends TestCase
         $this->assertDatabaseHas('users', ['id' => $admin->id, 'theme' => 'dark', 'locale' => 'ku']);
     }
 
+    public function test_theme_preferences_save_over_json_without_reloading_the_active_page(): void
+    {
+        $admin = User::where('role', 'admin')->firstOrFail();
+        $merchant = User::where('role', 'merchant')->firstOrFail();
+
+        $this->actingAs($admin)
+            ->postJson('/dashboard/preferences/theme', ['theme' => 'light'])
+            ->assertNoContent();
+
+        $this->actingAs($merchant)
+            ->postJson('/profile/theme', ['theme' => 'dark'])
+            ->assertNoContent();
+
+        $this->assertDatabaseHas('users', ['id' => $admin->id, 'theme' => 'light']);
+        $this->assertDatabaseHas('users', ['id' => $merchant->id, 'theme' => 'dark']);
+    }
+
     public function test_merchant_can_submit_profile_verification_without_losing_active_access(): void
     {
         Storage::fake('public');
@@ -1237,7 +1331,7 @@ class SmokeTest extends TestCase
         $this->actingAs($merchant)->post('/profile/verification', [
             'name' => 'Merchant Verified',
             'address' => 'Baghdad — Karrada',
-            'phone' => '07900009991',
+            'phone' => '07700009991',
             'identity_number' => 'ID-TEST-123',
             'id_front_document' => UploadedFile::fake()->image('id-front.jpg'),
             'id_back_document' => UploadedFile::fake()->image('id-back.jpg'),

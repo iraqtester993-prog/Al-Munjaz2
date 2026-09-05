@@ -1,20 +1,19 @@
-/**
- * A merchant pickup point is deliberately opened through the platform's
- * native `geo:` protocol instead of a Google/Apple Maps URL.  On Android the
- * operating system presents the installed map/navigation handlers, so the
- * courier chooses the app they already use.  We do not record a route or
- * destination history in the web app.
- */
-export function hasPickupLocation(order) {
-    const latitude = Number(order?.pickup_latitude)
-    const longitude = Number(order?.pickup_longitude)
+function coordinate(value, minimum, maximum) {
+    // Number(null) and Number('') both equal zero. Treat empty values as
+    // absent so an order without a saved point never becomes a false pin at
+    // the Gulf of Guinea.
+    if (value === null || value === undefined || String(value).trim() === '') return null
 
-    return Number.isFinite(latitude)
-        && Number.isFinite(longitude)
-        && latitude >= -90
-        && latitude <= 90
-        && longitude >= -180
-        && longitude <= 180
+    const parsed = Number(value)
+
+    return Number.isFinite(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null
+}
+
+export function hasPickupLocation(order) {
+    const latitude = coordinate(order?.pickup_latitude, -90, 90)
+    const longitude = coordinate(order?.pickup_longitude, -180, 180)
+
+    return latitude !== null && longitude !== null
 }
 
 export function pickupLocationLabel(order, fallback = '') {
@@ -28,10 +27,23 @@ export function pickupNavigationHref(order) {
     const longitude = Number(order.pickup_longitude).toFixed(6)
     const label = pickupLocationLabel(order)
     const destination = `${latitude},${longitude}`
-    // `geo:0,0?q=` is the Android navigation-intent form. It lets the
-    // operating system offer the map/navigation apps installed by the courier
-    // instead of hard-coding one provider inside the PWA.
-    const query = encodeURIComponent(label ? `${destination} (${label})` : destination)
+    const userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent || ''
+    const platform = typeof navigator === 'undefined' ? '' : navigator.platform || ''
+    const isIos = /iPad|iPhone|iPod/.test(userAgent)
+        || (platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1)
 
-    return `geo:0,0?q=${query}`
+    // Android's native geo intent shows the courier's installed navigation
+    // apps. Apple Maps is the matching native hand-off on iOS; a normal Maps
+    // URL keeps navigation usable when a courier opens the PWA on desktop.
+    if (/Android/i.test(userAgent)) {
+        const query = encodeURIComponent(label ? `${destination} (${label})` : destination)
+        return `geo:0,0?q=${query}`
+    }
+
+    if (isIos) {
+        const query = encodeURIComponent(label || destination)
+        return `https://maps.apple.com/?ll=${destination}&q=${query}`
+    }
+
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(destination)}`
 }

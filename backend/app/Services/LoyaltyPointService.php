@@ -146,7 +146,9 @@ class LoyaltyPointService
                 return null;
             }
 
-            $courierId = $delivery->delivery_courier_id ?: $delivery->courier_id;
+            // The primary courier owns every new order. Fallbacks only keep
+            // rewards for an old completed record readable during migration.
+            $courierId = $delivery->courier_id ?: $delivery->delivery_courier_id ?: $delivery->pickup_courier_id;
             // Older records and exceptional operator flows can mark an order
             // delivered without an eligible courier. Settlement must still
             // complete; reward points are simply not created for that order.

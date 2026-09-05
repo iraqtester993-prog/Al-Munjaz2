@@ -32,8 +32,27 @@ class AdminPlatformController extends Controller
     {
         $user = $request->user();
         $canManageOperators = $user->isSuperAdmin();
-        $canCreatePlatform = $user->canUseAdminPermission('platform', 'create');
-        $canUpdatePlatform = $user->canUseAdminPermission('platform', 'update');
+        $canCreateCompanies = $user->canUseAdminPermission('platform', 'companies_create');
+        $canEditCompanies = $user->canUseAdminPermission('platform', 'companies_edit');
+        $canCreatePlans = $user->canUseAdminPermission('platform', 'plans_create');
+        $canEditPlans = $user->canUseAdminPermission('platform', 'plans_edit');
+        $canCreateSubscriptions = $user->canUseAdminPermission('platform', 'subscriptions_create');
+        $canChangeSubscriptionStatus = $user->canUseAdminPermission('platform', 'subscriptions_change_status');
+        $canCreateInvoices = $user->canUseAdminPermission('platform', 'invoices_create');
+        $canChangeInvoiceStatus = $user->canUseAdminPermission('platform', 'invoices_change_status');
+        // Reading the commercial side of the SaaS platform is intentionally
+        // separate from operating it. A staff member may create a company,
+        // change a subscription state, or issue a new invoice without seeing
+        // every plan price, historic amount, revenue total, or balance.
+        $canViewPlatformFinancials = $user->canUseAdminPermission('platform', 'view_financial');
+        // Plan editors need the current price to edit that plan. This is the
+        // sole non-financial-read exception and never unlocks invoice,
+        // subscription, revenue, or balance amounts elsewhere in the page.
+        $canViewPlanPrices = $canViewPlatformFinancials || $canEditPlans;
+        // Legacy props are retained for cached browser pages. All current
+        // buttons receive one of the explicit capabilities below.
+        $canCreatePlatform = $canCreateCompanies || $canCreatePlans || $canCreateSubscriptions || $canCreateInvoices;
+        $canUpdatePlatform = $canEditCompanies || $canEditPlans || $canChangeSubscriptionStatus || $canChangeInvoiceStatus;
 
         $monthUsage = Order::withoutGlobalScope(TenantScope::class)
             ->where('created_at', '>=', now()->startOfMonth())
@@ -41,8 +60,24 @@ class AdminPlatformController extends Controller
             ->groupBy('tenant_id')
             ->pluck('total', 'tenant_id');
 
+        $subscriptionColumns = [
+            'id', 'tenant_id', 'plan_id', 'status', 'billing_period',
+            'starts_at', 'ends_at', 'next_invoice_at', 'auto_renew',
+        ];
+        if ($canViewPlatformFinancials) {
+            $subscriptionColumns[] = 'amount';
+        }
+        $subscriptionPlanColumns = ['id', 'slug', 'name_ar', 'name_en', 'name_ku', 'limits', 'features', 'is_active'];
+        if ($canViewPlatformFinancials) {
+            $subscriptionPlanColumns[] = 'price';
+        }
+
         $subscriptions = Subscription::query()
-            ->with(['tenant:id,name,slug,kind,status,plan_id', 'plan:id,slug,name_ar,name_en,name_ku,price'])
+            ->select($subscriptionColumns)
+            ->with([
+                'tenant:id,name,slug,kind,status,plan_id',
+                'plan' => fn ($query) => $query->select($subscriptionPlanColumns),
+            ])
             ->latest('id')
             ->limit(160)
             ->get();
@@ -52,8 +87,25 @@ class AdminPlatformController extends Controller
             ->groupBy('tenant_id')
             ->map(fn ($items) => $items->sortByDesc('starts_at')->first());
 
+        $invoiceColumns = [
+            'id', 'tenant_id', 'subscription_id', 'number',
+            'status', 'issued_at', 'due_at', 'paid_at',
+        ];
+        $invoiceRelations = ['tenant:id,name,slug', 'subscription:id,plan_id,status'];
+        if ($canViewPlatformFinancials) {
+            $invoiceColumns[] = 'amount';
+            $invoiceColumns[] = 'currency';
+            // Billing notes can themselves contain an amount or a private
+            // commercial arrangement, so keep them in the financial read
+            // boundary as well.
+            $invoiceColumns[] = 'note';
+            $invoiceColumns[] = 'created_by';
+            $invoiceRelations[] = 'creator:id,name';
+        }
+
         $recentInvoices = Invoice::query()
-            ->with(['tenant:id,name,slug', 'subscription:id,plan_id,status', 'creator:id,name'])
+            ->select($invoiceColumns)
+            ->with($invoiceRelations)
             ->latest('id')
             ->limit(180)
             ->get();
@@ -66,7 +118,16 @@ class AdminPlatformController extends Controller
         $companies = Tenant::query()
             ->where('slug', '!=', Tenant::PLATFORM_SLUG)
             ->whereIn('kind', ['company', 'merchant'])
-            ->with('plan:id,slug,name_ar,name_en,name_ku,price,limits,features')
+            ->with([
+                'plan' => function ($query) use ($canViewPlatformFinancials): void {
+                    $columns = ['id', 'slug', 'name_ar', 'name_en', 'name_ku', 'limits', 'features', 'is_active'];
+                    if ($canViewPlatformFinancials) {
+                        $columns[] = 'price';
+                    }
+
+                    $query->select($columns);
+                },
+            ])
             ->withCount('users')
             // Branch itself is tenant scoped. The platform console must
             // explicitly remove that scope so an invited admin, which belongs
@@ -74,7 +135,7 @@ class AdminPlatformController extends Controller
             ->withCount(['branches' => fn ($query) => $query->withoutGlobalScope(TenantScope::class)])
             ->orderBy('name')
             ->get()
-            ->map(function (Tenant $tenant) use ($monthUsage, $currentSubscriptionByTenant, $outstandingByTenant): array {
+            ->map(function (Tenant $tenant) use ($monthUsage, $currentSubscriptionByTenant, $outstandingByTenant, $canViewPlatformFinancials): array {
                 $subscription = $currentSubscriptionByTenant->get($tenant->id);
                 $invoice = $outstandingByTenant->get($tenant->id);
                 $limits = $tenant->plan?->limits ?? [];
@@ -86,48 +147,65 @@ class AdminPlatformController extends Controller
                     'kind' => $tenant->kind,
                     'status' => $tenant->status,
                     'trial_ends_at' => $tenant->trial_ends_at?->toDateString(),
-                    'plan' => $this->planData($tenant->plan),
+                    'plan' => $this->planData($tenant->plan, $canViewPlatformFinancials),
                     'users_count' => (int) $tenant->users_count,
                     'branches_count' => (int) $tenant->branches_count,
                     'orders_this_month' => (int) ($monthUsage[$tenant->id] ?? 0),
                     'order_limit' => $limits['max_orders_month'] ?? null,
-                    'subscription' => $subscription ? $this->subscriptionData($subscription) : null,
-                    'next_invoice' => $invoice ? $this->invoiceData($invoice) : null,
+                    'subscription' => $subscription ? $this->subscriptionData($subscription, $canViewPlatformFinancials) : null,
+                    'next_invoice' => $invoice ? $this->invoiceData($invoice, $canViewPlatformFinancials) : null,
                 ];
             })
             ->values();
 
-        $plans = Plan::query()
-            ->withCount(['tenants', 'subscriptions'])
-            ->orderBy('price')
+        $planColumns = ['id', 'slug', 'name_ar', 'name_en', 'name_ku', 'limits', 'features', 'is_active'];
+        if ($canViewPlanPrices) {
+            $planColumns[] = 'price';
+        }
+
+        $plansQuery = Plan::query()
+            ->select($planColumns)
+            ->withCount(['tenants', 'subscriptions']);
+        // Sorting a hidden numeric field would still disclose its relative
+        // order. Keep the old price ordering only for someone entitled to
+        // read prices; everyone else gets a stable non-financial ordering.
+        if ($canViewPlanPrices) {
+            $plansQuery->orderBy('price');
+        } else {
+            $plansQuery->orderBy('slug');
+        }
+
+        $plans = $plansQuery
             ->orderBy('id')
             ->get()
             ->map(fn (Plan $plan) => [
-                ...$this->planData($plan),
+                ...$this->planData($plan, $canViewPlanPrices),
                 'tenants_count' => (int) $plan->tenants_count,
                 'subscriptions_count' => (int) $plan->subscriptions_count,
             ])
             ->values();
 
         $subscriptionRows = $subscriptions
-            ->map(fn (Subscription $subscription) => $this->subscriptionData($subscription))
+            ->map(fn (Subscription $subscription) => $this->subscriptionData($subscription, $canViewPlatformFinancials))
             ->values();
         $invoiceRows = $recentInvoices
-            ->map(fn (Invoice $invoice) => $this->invoiceData($invoice))
+            ->map(fn (Invoice $invoice) => $this->invoiceData($invoice, $canViewPlatformFinancials))
             ->values();
 
         $summary = [
             'companies' => $companies->count(),
             'active_subscriptions' => $subscriptions->where('status', 'active')->count(),
             'trials' => $subscriptions->where('status', 'trial')->count(),
-            'monthly_revenue' => (int) $subscriptions
+        ];
+        if ($canViewPlatformFinancials) {
+            $summary['monthly_revenue'] = (int) $subscriptions
                 ->where('status', 'active')
                 ->where('billing_period', 'monthly')
-                ->sum('amount'),
-            'outstanding' => (int) $recentInvoices
+                ->sum('amount');
+            $summary['outstanding'] = (int) $recentInvoices
                 ->whereIn('status', ['issued', 'overdue'])
-                ->sum('amount'),
-        ];
+                ->sum('amount');
+        }
 
         $props = [
             'summary' => $summary,
@@ -135,9 +213,19 @@ class AdminPlatformController extends Controller
             'plans' => $plans,
             'subscriptions' => $subscriptionRows,
             'invoices' => $invoiceRows,
+            'canViewPlatformFinancials' => $canViewPlatformFinancials,
+            'canViewPlanPrices' => $canViewPlanPrices,
             'canManageOperators' => $canManageOperators,
             'canCreatePlatform' => $canCreatePlatform,
             'canUpdatePlatform' => $canUpdatePlatform,
+            'canCreateCompanies' => $canCreateCompanies,
+            'canEditCompanies' => $canEditCompanies,
+            'canCreatePlans' => $canCreatePlans,
+            'canEditPlans' => $canEditPlans,
+            'canCreateSubscriptions' => $canCreateSubscriptions,
+            'canChangeSubscriptionStatus' => $canChangeSubscriptionStatus,
+            'canCreateInvoices' => $canCreateInvoices,
+            'canChangeInvoiceStatus' => $canChangeInvoiceStatus,
         ];
 
         // Dashboard-staff records and invitation metadata are not part of
@@ -193,6 +281,9 @@ class AdminPlatformController extends Controller
 
     public function storeCompany(Request $request)
     {
+        $canCreateInitialSubscription = $request->user()->canUseAdminPermission('platform', 'subscriptions_create');
+        $canCreateInitialInvoice = $request->user()->canUseAdminPermission('platform', 'invoices_create');
+
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
             'slug' => ['required', 'alpha_dash:ascii', 'min:3', 'max:80', Rule::unique('tenants', 'slug')],
@@ -204,7 +295,7 @@ class AdminPlatformController extends Controller
 
         $plan = Plan::findOrFail($data['plan_id']);
 
-        DB::transaction(function () use ($data, $plan, $request): void {
+        DB::transaction(function () use ($data, $plan, $request, $canCreateInitialSubscription, $canCreateInitialInvoice): void {
             $trialEndsAt = $data['status'] === 'trial'
                 ? ($data['trial_ends_at'] ?? now()->addDays(14))
                 : null;
@@ -217,16 +308,30 @@ class AdminPlatformController extends Controller
                 'trial_ends_at' => $trialEndsAt,
             ]);
 
-            $subscription = $this->createSubscription(
-                $tenant,
-                $plan,
-                $data['status'],
-                $data['billing_period'],
-                null,
-            );
+            // A company can be provisioned without giving the operator the
+            // separate commercial powers to create its subscription or bill
+            // it. When both capabilities are deliberately granted, preserve
+            // the existing convenient initial setup workflow.
+            $subscription = null;
+            if ($canCreateInitialSubscription) {
+                $subscription = $this->createSubscription(
+                    $tenant,
+                    $plan,
+                    $data['status'],
+                    $data['billing_period'],
+                    null,
+                );
+            }
 
-            $this->createSubscriptionInvoice($subscription, $request->user(), $data['status'] === 'trial');
-            $this->log($request, 'platform.company.created', $tenant, ['plan_id' => $plan->id]);
+            if ($subscription && $canCreateInitialInvoice) {
+                $this->createSubscriptionInvoice($subscription, $request->user(), $data['status'] === 'trial');
+            }
+
+            $this->log($request, 'platform.company.created', $tenant, [
+                'plan_id' => $plan->id,
+                'subscription_created' => $subscription !== null,
+                'invoice_created' => $subscription !== null && $canCreateInitialInvoice,
+            ]);
         });
 
         return back()->with('success', __('Platform company created.'));
@@ -304,13 +409,21 @@ class AdminPlatformController extends Controller
                 (bool) $data['auto_renew'],
             );
 
+            // A subscription controls the company's dashboard access state.
+            // That linked access effect is intentionally part of the
+            // subscription action; creating an invoice remains an explicitly
+            // separate action immediately below.
             $tenant->update([
                 'plan_id' => $plan->id,
                 'status' => in_array($data['status'], ['active', 'trial'], true) ? $data['status'] : 'suspended',
                 'trial_ends_at' => $data['status'] === 'trial' ? $subscription->ends_at : null,
             ]);
 
-            if (($data['create_invoice'] ?? true) === true) {
+            // Creating a subscription and issuing a bill are separate
+            // authority decisions. Never let a request flag turn the former
+            // into the latter without the invoices_create capability.
+            if ($request->user()->canUseAdminPermission('platform', 'invoices_create')
+                && ($data['create_invoice'] ?? true) === true) {
                 $this->createSubscriptionInvoice($subscription, $request->user(), $data['status'] === 'trial');
             }
             $this->log($request, 'platform.subscription.created', $subscription, ['tenant_id' => $tenant->id, 'plan_id' => $plan->id]);
@@ -332,6 +445,8 @@ class AdminPlatformController extends Controller
                 'auto_renew' => (bool) $data['auto_renew'],
             ]);
 
+            // Changing a subscription may change the linked company's access
+            // state, but it never creates, settles, or exposes an invoice.
             if ($subscription->tenant && in_array($data['status'], ['active', 'trial', 'suspended'], true)) {
                 $subscription->tenant->update([
                     'status' => in_array($data['status'], ['active', 'trial'], true) ? $data['status'] : 'suspended',
@@ -635,58 +750,75 @@ class AdminPlatformController extends Controller
         ]);
     }
 
-    private function planData(?Plan $plan): ?array
+    private function planData(?Plan $plan, bool $includePrice = false): ?array
     {
         if (! $plan) {
             return null;
         }
 
-        return [
+        $data = [
             'id' => $plan->id,
             'slug' => $plan->slug,
             'name_ar' => $plan->name_ar,
             'name_en' => $plan->name_en,
             'name_ku' => $plan->name_ku,
-            'price' => (int) $plan->price,
             'limits' => $plan->limits ?? [],
             'features' => $plan->features ?? [],
             'is_active' => (bool) $plan->is_active,
         ];
+
+        if ($includePrice) {
+            $data['price'] = (int) $plan->price;
+        }
+
+        return $data;
     }
 
-    private function subscriptionData(Subscription $subscription): array
+    private function subscriptionData(Subscription $subscription, bool $includeFinancials = false): array
     {
-        return [
+        $data = [
             'id' => $subscription->id,
             'tenant_id' => $subscription->tenant_id,
             'tenant' => $subscription->tenant ? ['id' => $subscription->tenant->id, 'name' => $subscription->tenant->name, 'slug' => $subscription->tenant->slug] : null,
-            'plan' => $this->planData($subscription->plan),
+            // The plan reference is useful to select or operate a
+            // subscription. Its price is a separate financial-read field.
+            'plan' => $this->planData($subscription->plan, $includeFinancials),
             'status' => $subscription->status,
             'billing_period' => $subscription->billing_period,
-            'amount' => (int) $subscription->amount,
             'starts_at' => $subscription->starts_at?->toDateString(),
             'ends_at' => $subscription->ends_at?->toDateString(),
             'next_invoice_at' => $subscription->next_invoice_at?->toDateString(),
             'auto_renew' => (bool) $subscription->auto_renew,
         ];
+
+        if ($includeFinancials) {
+            $data['amount'] = (int) $subscription->amount;
+        }
+
+        return $data;
     }
 
-    private function invoiceData(Invoice $invoice): array
+    private function invoiceData(Invoice $invoice, bool $includeFinancials = false): array
     {
-        return [
+        $data = [
             'id' => $invoice->id,
             'tenant_id' => $invoice->tenant_id,
             'tenant' => $invoice->tenant ? ['id' => $invoice->tenant->id, 'name' => $invoice->tenant->name, 'slug' => $invoice->tenant->slug] : null,
             'subscription_id' => $invoice->subscription_id,
             'number' => $invoice->number,
             'status' => $invoice->status,
-            'amount' => (int) $invoice->amount,
-            'currency' => $invoice->currency,
             'issued_at' => $invoice->issued_at?->toDateString(),
             'due_at' => $invoice->due_at?->toDateString(),
             'paid_at' => $invoice->paid_at?->toDateString(),
-            'note' => $invoice->note,
-            'created_by' => $invoice->creator?->name,
         ];
+
+        if ($includeFinancials) {
+            $data['amount'] = (int) $invoice->amount;
+            $data['currency'] = $invoice->currency;
+            $data['note'] = $invoice->note;
+            $data['created_by'] = $invoice->creator?->name;
+        }
+
+        return $data;
     }
 }

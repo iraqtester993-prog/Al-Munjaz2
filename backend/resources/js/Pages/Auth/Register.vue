@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { useForm, usePage } from '@inertiajs/vue3'
 import Flash from '../../Components/Flash.vue'
 import { bytesToMegabytes, CourierDocumentError, prepareCourierDocument } from '../../Utils/courierDocuments'
+import { isIraqiMobilePhone, normalizeIraqiMobilePhone } from '../../Utils/iraqiPhone'
 
 const props = defineProps({
     role: { type: String, required: true },
@@ -23,7 +24,6 @@ const direction = computed(() => locale.value === 'en' ? 'ltr' : 'rtl')
 const sending = ref(false)
 const showPassword = ref(false)
 const showConfirmation = ref(false)
-const showVehicles = ref(false)
 const uploadErrors = ref({})
 const uploadInfo = ref({})
 const preparingDocuments = ref({})
@@ -85,13 +85,22 @@ function localizedProvince(province) {
         || ''
 }
 
-const vehicleOptions = computed(() => Object.entries(props.vehicles).map(([key, labels]) => ({
-    key,
-    label: localizedVehicle(labels, key),
-})))
-const selectedVehicle = computed(() => vehicleOptions.value.find((vehicle) => vehicle.key === form.vehicle))
+const vehicleDisplayOrder = ['sedan', 'suv', 'truck', 'bike']
 
+const vehicleOptions = computed(() => Object.entries(props.vehicles)
+    .map(([key, labels]) => ({
+        key,
+        label: localizedVehicle(labels, key),
+    }))
+    .sort((first, second) => {
+        const firstPosition = vehicleDisplayOrder.indexOf(first.key)
+        const secondPosition = vehicleDisplayOrder.indexOf(second.key)
+
+        return (firstPosition === -1 ? Number.MAX_SAFE_INTEGER : firstPosition)
+            - (secondPosition === -1 ? Number.MAX_SAFE_INTEGER : secondPosition)
+    }))
 function submitForm() {
+    if (!validatePhone()) return
     if (isCourier && !validateCourierFields()) return
     if (isCourier && !validateCourierDocuments()) return
 
@@ -101,6 +110,20 @@ function submitForm() {
         preserveScroll: true,
         onFinish: () => (sending.value = false),
     })
+}
+
+function normalizePhone() {
+    form.phone = normalizeIraqiMobilePhone(form.phone)
+}
+
+function validatePhone() {
+    normalizePhone()
+    form.clearErrors('phone')
+
+    if (isIraqiMobilePhone(form.phone)) return true
+
+    form.setError('phone', t('The phone number must be exactly 11 digits and start with 077 or 078.'))
+    return false
 }
 
 function validateCourierFields() {
@@ -252,11 +275,6 @@ function vehicleIcon(vehicle) {
         : 'M5 14l1.9-4.6a2 2 0 0 1 1.9-1.2h6.4a2 2 0 0 1 1.9 1.2L19 14M3.5 14h17A1.5 1.5 0 0 1 22 15.5V17h-2M2 16.5h1V17a1 1 0 0 0 1 1h.8M7 19.1a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2Zm10 0a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2Z'
 }
 
-function selectVehicle(vehicle) {
-    form.vehicle = vehicle
-    showVehicles.value = false
-}
-
 function icon(name) {
     const paths = {
         back: 'M15 18l-6-6 6-6',
@@ -319,7 +337,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="reg-field" :class="{ error: form.errors.phone }">
                     <label>{{ t('Phone Number') }}</label>
-                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path :d="icon('phone')" /></svg><input v-model="form.phone" dir="ltr" inputmode="tel" placeholder="07xx xxx xxxx" autocomplete="tel" required></div>
+                    <div><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path :d="icon('phone')" /></svg><input v-model="form.phone" type="tel" dir="ltr" inputmode="numeric" maxlength="11" minlength="11" pattern="(?:077|078)[0-9]{8}" placeholder="077xxxxxxxx" autocomplete="tel" required @input="normalizePhone"></div>
                     <small v-if="form.errors.phone">{{ form.errors.phone }}</small>
                 </div>
                 <div class="reg-field" :class="{ error: form.errors.password }">
@@ -336,50 +354,44 @@ onBeforeUnmount(() => {
                     <div class="courier-divider"><span>{{ t('Vehicle Type') }} · {{ t('Documents') }}</span></div>
                     <div class="reg-field vehicle-field" :class="{ error: form.errors.vehicle }">
                         <label>{{ t('Vehicle Type') }}</label>
-                        <button class="vehicle-trigger" type="button" @click="showVehicles = !showVehicles">
-                            <span class="vehicle-trigger-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="vehicleIcon(form.vehicle)" /></svg></span>
-                            <span>{{ selectedVehicle?.label || t('Choose Vehicle') }}</span>
-                            <svg class="vehicle-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
-                        </button>
-                        <div v-if="showVehicles" class="vehicle-dropdown">
-                            <button v-for="vehicle in vehicleOptions" :key="vehicle.key" type="button" class="vehicle-card" :class="{ selected: form.vehicle === vehicle.key }" @click="selectVehicle(vehicle.key)">
-                                <span class="vehicle-card-check">✓</span>
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path :d="vehicleIcon(vehicle.key)" /></svg>
-                                <b>{{ vehicle.label }}</b>
-                            </button>
+                        <div class="vehicle-choice-grid" role="radiogroup" :aria-label="t('Vehicle Type')">
+                            <label v-for="vehicle in vehicleOptions" :key="vehicle.key" class="vehicle-choice" :class="{ selected: form.vehicle === vehicle.key }">
+                                <input v-model="form.vehicle" type="radio" name="vehicle" :value="vehicle.key" @change="form.clearErrors('vehicle')">
+                                <span class="vehicle-choice-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="vehicleIcon(vehicle.key)" /></svg></span>
+                                <span>{{ vehicle.label }}</span>
+                            </label>
                         </div>
                         <small v-if="form.errors.vehicle">{{ form.errors.vehicle }}</small>
                     </div>
 
                     <div class="documents">
-                        <p class="document-helper">{{ t('Images are optimized automatically before upload. Use JPG, PNG, WebP, or PDF. Each file and the full request have a safe size limit.') }}</p>
                         <small v-if="documentSummaryError || form.errors.documents" class="document-error document-summary-error">{{ documentSummaryError || form.errors.documents }}</small>
                         <p>{{ t('Residence Card') }}</p>
-                        <label class="upload-zone" :class="{ uploaded: !!form.residence_document, error: !!uploadError('residence_document'), preparing: preparingDocuments.residence_document }">
-                            <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" :disabled="preparingDocuments.residence_document" @change="chooseFile($event, 'residence_document')">
+                        <div class="upload-zone" :class="{ uploaded: !!form.residence_document, error: !!uploadError('residence_document'), preparing: preparingDocuments.residence_document }">
                             <span class="upload-visual"><img v-if="documentPreview('residence_document')" :src="documentPreview('residence_document')" alt=""><svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form.residence_document ? icon('check') : icon('upload')" /></svg></span>
                             <span>{{ preparingDocuments.residence_document ? t('Preparing image…') : (form.residence_document ? t('Uploaded') : t('Tap to upload')) }}</span>
-                        </label>
+                            <input class="upload-input" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" :aria-label="t('Residence Card')" :disabled="preparingDocuments.residence_document" @change="chooseFile($event, 'residence_document')">
+                        </div>
                         <small v-if="fileInfo('residence_document')" class="document-info">{{ fileInfo('residence_document') }}</small>
                         <small v-if="uploadError('residence_document')" class="document-error">{{ uploadError('residence_document') }}</small>
 
                         <p>{{ t('National ID Card') }}</p>
                         <div class="upload-pair">
-                            <label v-for="doc in [['id_front_document', t('Front')], ['id_back_document', t('Back')]]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!uploadError(doc[0]), preparing: preparingDocuments[doc[0]] }">
-                                <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" :disabled="preparingDocuments[doc[0]]" @change="chooseFile($event, doc[0])">
+                            <div v-for="doc in [['id_front_document', t('Front')], ['id_back_document', t('Back')]]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!uploadError(doc[0]), preparing: preparingDocuments[doc[0]] }">
                                 <span class="upload-visual"><img v-if="documentPreview(doc[0])" :src="documentPreview(doc[0])" alt=""><svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form[doc[0]] ? icon('check') : icon('upload')" /></svg></span>
                                 <span>{{ preparingDocuments[doc[0]] ? t('Preparing image…') : (form[doc[0]] ? t('Uploaded') : doc[1]) }}</span>
-                            </label>
+                                <input class="upload-input" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" :aria-label="doc[1]" :disabled="preparingDocuments[doc[0]]" @change="chooseFile($event, doc[0])">
+                            </div>
                         </div>
                         <div class="document-file-details"><small v-for="key in ['id_front_document', 'id_back_document']" :key="key"><template v-if="fileInfo(key)">{{ fileInfo(key) }}</template><template v-else-if="uploadError(key)"><span class="document-error">{{ uploadError(key) }}</span></template></small></div>
 
                         <p>{{ t('Driving License') }}</p>
                         <div class="upload-pair">
-                            <label v-for="doc in [['license_front_document', t('Front')], ['license_back_document', t('Back')]]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!uploadError(doc[0]), preparing: preparingDocuments[doc[0]] }">
-                            <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" :disabled="preparingDocuments[doc[0]]" @change="chooseFile($event, doc[0])">
+                            <div v-for="doc in [['license_front_document', t('Front')], ['license_back_document', t('Back')]]" :key="doc[0]" class="upload-zone" :class="{ uploaded: !!form[doc[0]], error: !!uploadError(doc[0]), preparing: preparingDocuments[doc[0]] }">
                             <span class="upload-visual"><img v-if="documentPreview(doc[0])" :src="documentPreview(doc[0])" alt=""><svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path :d="form[doc[0]] ? icon('check') : icon('upload')" /></svg></span>
                             <span>{{ preparingDocuments[doc[0]] ? t('Preparing image…') : (form[doc[0]] ? t('Uploaded') : doc[1]) }}</span>
-                            </label>
+                            <input class="upload-input" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" :aria-label="doc[1]" :disabled="preparingDocuments[doc[0]]" @change="chooseFile($event, doc[0])">
+                            </div>
                         </div>
                         <div class="document-file-details"><small v-for="key in ['license_front_document', 'license_back_document']" :key="key"><template v-if="fileInfo(key)">{{ fileInfo(key) }}</template><template v-else-if="uploadError(key)"><span class="document-error">{{ uploadError(key) }}</span></template></small></div>
                     </div>
@@ -390,13 +402,14 @@ onBeforeUnmount(() => {
                     <span v-if="sending || isPreparingDocuments" class="loader"></span><span v-else>{{ t('Create Account') }}</span>
                 </button>
             </form>
-            <p class="reg-login">{{ t('Already have an account?') }} <a @click="$inertia.visit(route('login'))">{{ t('Sign In') }}</a></p>
         </section>
     </main>
 </template>
 
 <style scoped>
-.register-reference { min-height:100dvh; width:100%; color:#fff; background:linear-gradient(175deg, var(--primary-strong), var(--primary) 59%, var(--accent)); overflow-y:auto; }
+/* Registration is outside AppShell, so it needs the same orientation guard.
+   This also neutralizes a transform retained by an older cached PWA style. */
+.register-reference { min-height:100dvh; width:100%; color:#fff; background:linear-gradient(175deg, var(--primary-strong), var(--primary) 59%, var(--accent)); overflow-y:auto; writing-mode:horizontal-tb; rotate:none; scale:1; transform:none !important; }
 .reg-header { display:grid; grid-template-columns:38px 1fr 38px; align-items:center; padding:16px 18px 6px; }
 .reg-back { width:34px; height:34px; display:grid; place-items:center; color:#fff; border:1px solid rgba(255,255,255,.28); border-radius:10px; background:rgba(255,255,255,.14); }
 .reg-brand { display:flex; align-items:center; justify-content:center; gap:8px; font-size:14px; font-weight:900; }
@@ -411,8 +424,8 @@ onBeforeUnmount(() => {
 .reg-card { padding:18px 15px; border:1px solid rgba(255,255,255,.26); border-radius:18px; background:rgba(255,255,255,.12); backdrop-filter:blur(8px); }
 .reg-field { margin-bottom:12px; }
 .reg-field > label { display:block; margin-bottom:5px; color:rgba(255,255,255,.88); font-size:11px; font-weight:800; }
-.reg-field > div { display:flex; align-items:center; gap:8px; min-height:43px; padding:0 11px; color:rgba(255,255,255,.68); border:1.5px solid rgba(255,255,255,.25); border-radius:11px; background:rgba(255,255,255,.1); }
-.reg-field > div:focus-within { border-color:rgba(255,255,255,.7); background:rgba(255,255,255,.16); }
+.reg-field > div:not(.vehicle-dropdown):not(.vehicle-choice-grid) { display:flex; align-items:center; gap:8px; min-height:43px; padding:0 11px; color:rgba(255,255,255,.68); border:1.5px solid rgba(255,255,255,.25); border-radius:11px; background:rgba(255,255,255,.1); }
+.reg-field > div:not(.vehicle-dropdown):not(.vehicle-choice-grid):focus-within { border-color:rgba(255,255,255,.7); background:rgba(255,255,255,.16); }
 .reg-field input, .reg-field select { min-width:0; width:100%; flex:1; color:#fff; border:0; outline:0; background:transparent; font:inherit; font-size:12px; }
 .reg-field select option { color:var(--ink); background:var(--surface); }
 .reg-field input::placeholder { color:rgba(255,255,255,.48); }
@@ -420,28 +433,27 @@ onBeforeUnmount(() => {
 .reg-field small { display:block; margin-top:4px; color:#ffd0cb; font-size:10px; font-weight:800; }
 .courier-divider { display:flex; align-items:center; gap:8px; margin:18px 0 10px; color:rgba(255,255,255,.86); font-size:11px; font-weight:900; }
 .courier-divider::before, .courier-divider::after { content:''; height:1px; flex:1; background:rgba(255,255,255,.25); }
-.vehicle-field { position:relative; }
-.vehicle-trigger { width:100%; min-height:44px; display:flex; align-items:center; gap:9px; padding:0 11px; color:rgba(255,255,255,.9); border:1.5px solid rgba(255,255,255,.25); border-radius:11px; background:rgba(255,255,255,.1); font:inherit; font-size:12px; font-weight:700; text-align:right; }
-.vehicle-trigger-icon { width:27px; height:27px; display:grid; place-items:center; border-radius:8px; background:rgba(255,255,255,.16); }
-.vehicle-chevron { margin-inline-start:auto; opacity:.75; }
-.vehicle-dropdown { display:grid; grid-template-columns:repeat(2, 1fr); gap:8px; margin-top:8px; padding:8px; border:1px solid rgba(255,255,255,.24); border-radius:13px; background:rgba(5,56,52,.54); backdrop-filter:blur(9px); }
-.vehicle-card { position:relative; min-height:68px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; color:#fff; border:1px solid rgba(255,255,255,.23); border-radius:11px; background:rgba(255,255,255,.1); font:inherit; }
-.vehicle-card.selected { border:2px solid #fff; background:rgba(255,255,255,.21); }
-.vehicle-card b { font-size:10px; font-weight:800; }
-.vehicle-card-check { position:absolute; top:5px; inset-inline-end:5px; width:16px; height:16px; display:grid; place-items:center; border-radius:50%; background:#fff; color:var(--primary-strong); opacity:0; font-size:9px; font-weight:900; }
-.vehicle-card.selected .vehicle-card-check { opacity:1; }
+.vehicle-field { position:relative; display:block!important; min-height:0!important; padding:0!important; border:0!important; background:transparent!important; }
+.vehicle-choice-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+.vehicle-choice { min-height:58px; display:flex; align-items:center; gap:8px; padding:8px 9px; color:#fff; border:1.5px solid rgba(255,255,255,.38); border-radius:13px; background:rgba(4,68,64,.42); font:800 11px var(--font); cursor:pointer; touch-action:auto; -webkit-tap-highlight-color:rgba(255,255,255,.18); }
+.vehicle-choice.selected { border-color:#fff; background:rgba(255,255,255,.2); box-shadow:0 0 0 2px rgba(255,255,255,.14); }
+.vehicle-choice input { width:19px; height:19px; margin:0; flex:none; accent-color:#fff; cursor:pointer; pointer-events:auto; touch-action:auto; -webkit-appearance:auto; appearance:auto; }
+.vehicle-choice-icon { width:29px; height:29px; display:grid; place-items:center; flex:none; border-radius:9px; background:rgba(255,255,255,.15); }
+.vehicle-choice span:last-child { min-width:0; line-height:1.45; }
+.vehicle-choice:focus-within { outline:3px solid rgba(255,255,255,.52); outline-offset:2px; }
 .documents { margin-top:16px; }
 .documents > p { margin:14px 0 7px; color:rgba(255,255,255,.86); font-size:11px; font-weight:900; }
 .documents > p:first-child { margin-top:0; }
-.documents > .document-helper { margin:0 0 10px; padding:9px 10px; border:1px solid rgba(255,255,255,.16); border-radius:10px; background:rgba(2,48,45,.2); color:rgba(255,255,255,.76); font-size:9.5px; line-height:1.65; font-weight:650; }
-.upload-zone { min-height:46px; display:flex; align-items:center; gap:9px; margin-top:7px; padding:8px 10px; color:rgba(255,255,255,.83); border:1px dashed rgba(255,255,255,.38); border-radius:11px; background:rgba(255,255,255,.07); font-size:10px; font-weight:700; cursor:pointer; }
-.upload-zone input { display:none; }
+.upload-zone { min-height:46px; display:grid; grid-template-columns:28px minmax(0, 1fr); align-items:center; gap:9px; margin-top:7px; padding:8px 10px; color:rgba(255,255,255,.83); border:1px dashed rgba(255,255,255,.38); border-radius:11px; background:rgba(255,255,255,.07); font-size:10px; font-weight:700; touch-action:auto; }
+.upload-zone .upload-input { position:relative; z-index:2; grid-column:1 / -1; display:block!important; width:100%; min-height:44px; margin:1px 0 0; padding:4px; color:#fff; border:1px solid rgba(255,255,255,.42); border-radius:8px; background:rgba(4,68,64,.5); font:700 11px var(--font); cursor:pointer; pointer-events:auto!important; touch-action:auto!important; -webkit-user-select:auto; user-select:auto; -webkit-appearance:auto; appearance:auto; }
+.upload-zone .upload-input::file-selector-button { margin-inline-end:8px; padding:6px 9px; color:#07524e; border:0; border-radius:6px; background:#fff; font:800 10px var(--font); cursor:pointer; }
 .upload-visual{display:grid;width:28px;height:28px;place-items:center;overflow:hidden;flex:none;border-radius:7px;background:rgba(255,255,255,.12)}.upload-visual img{width:100%;height:100%;object-fit:cover}.upload-pair .upload-visual{width:42px;height:38px;border-radius:8px}.upload-pair .upload-zone.uploaded{padding:6px}
 .upload-zone.uploaded { border-style:solid; border-color:#a3f2ca; background:rgba(86, 212, 139, .16); color:#fff; }
 .upload-zone.error { border-color:#ffd0cb; }
 .upload-zone.preparing { opacity:.72; cursor:progress; }
 .upload-pair { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.upload-pair .upload-zone { justify-content:center; flex-direction:column; min-height:63px; margin-top:0; text-align:center; }
+.upload-pair .upload-zone { grid-template-columns:1fr; justify-items:center; min-height:63px; margin-top:0; text-align:center; }
+.upload-pair .upload-zone .upload-input { min-height:42px; }
 .document-error { display:block; margin-top:4px; color:#ffd0cb; font-size:10px; font-weight:800; }
 .document-summary-error { margin-bottom:3px; padding:8px 10px; border:1px solid rgba(255,208,203,.45); border-radius:9px; background:rgba(156,44,37,.16); line-height:1.5; }
 .document-info { display:block; margin-top:4px; color:#b9f7d3; font-size:9px; font-weight:800; }
@@ -450,6 +462,4 @@ onBeforeUnmount(() => {
 .registration-unavailable { margin:16px 0 -5px; padding:10px 11px; border:1px solid rgba(255,208,203,.52); border-radius:10px; background:rgba(156,44,37,.18); color:#ffd8d2; font-size:10px; line-height:1.65; font-weight:800; }
 .reg-submit:disabled { opacity:.72; cursor:not-allowed; }
 .reg-submit { width:100%; min-height:46px; margin-top:19px; border-radius:12px; background:#fff; color:var(--primary-strong); font:inherit; font-size:13px; font-weight:900; box-shadow:0 8px 20px -6px rgba(0,0,0,.28); }
-.reg-login { margin:15px 0 0; text-align:center; color:rgba(255,255,255,.76); font-size:11px; font-weight:600; }
-.reg-login a { color:#fff; font-weight:900; text-decoration:underline; cursor:pointer; }
 </style>

@@ -4,6 +4,8 @@ import axios from 'axios'
 import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
+import BranchFilter from '../../Components/BranchFilter.vue'
+import { subscribeToChat } from '../../Utils/realtimeChat'
 
 const props = defineProps({
     chats: { type: Array, default: () => [] },
@@ -12,6 +14,7 @@ const props = defineProps({
     chatTabs: { type: Array, default: () => [] },
     activeChat: { type: Object, default: null },
     messages: { type: Array, default: () => [] },
+    branchFilter: { type: Object, default: () => ({}) },
 })
 
 const page = usePage()
@@ -114,6 +117,7 @@ let disposed = false
 let resumeAfterRefresh = false
 let failureCount = 0
 let recentActivityUntil = 0
+let unsubscribeRealtime = () => {}
 
 function mergeMessages(messages, { replace = false } = {}) {
     const byId = new Map(replace ? [] : msgs.value.map((message) => [message.id, message]))
@@ -138,7 +142,11 @@ function selectTab(tab) {
 
 function openChat(chat) {
     selectedTab.value = channelOf(chat)
-    router.visit(route('admin.chat.show', chat.id))
+    router.get(route('admin.chat.show', chat.id), { branch_id: props.branchFilter?.selected_id || undefined }, { preserveState: true })
+}
+
+function changeBranchFilter(branchId) {
+    router.get(route('admin.chat'), { branch_id: branchId || undefined }, { preserveState: true, replace: true })
 }
 
 function initials(name) {
@@ -201,7 +209,10 @@ async function send() {
     sending.value = true
     sendError.value = ''
     try {
-        const { data } = await axios.post(route('admin.chat.send', activeChat.value.id), { text: value })
+        const { data } = await axios.post(route('admin.chat.send', activeChat.value.id), {
+            text: value,
+            branch_id: props.branchFilter?.selected_id || undefined,
+        })
         mergeMessages([data])
         text.value = ''
         markConversationActive()
@@ -275,7 +286,7 @@ async function refreshMessages() {
     refreshing = true
     try {
         const { data } = await axios.get(route('admin.chat.messages', activeChat.value.id), {
-            params: { after_id: lastMessageId.value },
+            params: { after_id: lastMessageId.value, branch_id: props.branchFilter?.selected_id || undefined },
         })
         mergeMessages(data.messages)
         lastMessageId.value = Math.max(lastMessageId.value, Number(data.last_id || 0))
@@ -307,13 +318,24 @@ function onEnter(event) {
     }
 }
 
+function subscribeActiveChat() {
+    unsubscribeRealtime()
+    unsubscribeRealtime = activeChat.value
+        ? subscribeToChat(activeChat.value.id, () => requestRefresh())
+        : () => {}
+}
+
 watch(() => props.messages, (messages) => mergeMessages(messages), { deep: true })
 watch(() => props.activeChat?.id, () => {
     const chat = props.activeChat
     if (chat) selectedTab.value = channelOf(chat)
     replaceMessages(props.messages)
-    if (chat) requestRefresh()
-    else clearPollTimer()
+    if (chat) {
+        requestRefresh()
+    } else {
+        clearPollTimer()
+    }
+    subscribeActiveChat()
 })
 
 function handleVisibilityChange() {
@@ -340,6 +362,7 @@ onMounted(() => {
         markConversationActive()
         requestRefresh()
     }
+    subscribeActiveChat()
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('blur', handleWindowBlur)
     window.addEventListener('focus', handleWindowFocus)
@@ -348,6 +371,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
     disposed = true
     clearPollTimer()
+    unsubscribeRealtime()
     document.removeEventListener('visibilitychange', handleVisibilityChange)
     window.removeEventListener('blur', handleWindowBlur)
     window.removeEventListener('focus', handleWindowFocus)
@@ -356,6 +380,7 @@ onBeforeUnmount(() => {
 
 <template>
     <AdminShell :title="l('title')">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:12px"><BranchFilter :filter="branchFilter" @change="changeBranchFilter" /></div>
         <div class="chat-tabs" role="tablist" :aria-label="l('title')">
             <button v-for="tab in tabs" :key="tab.id" type="button" class="chat-tab" :class="{ active: selectedTab === tab.id }" role="tab" :aria-selected="selectedTab === tab.id" @click="selectTab(tab.id)">
                 <span class="chat-tab-icon" aria-hidden="true">

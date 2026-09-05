@@ -1,0 +1,35 @@
+/* Keeps all app roots upright and disables browser page-transition effects. */
+html,
+body,
+#app,
+.app-stage,
+.app-shell,
+.register-reference {
+  writing-mode: horizontal-tb;
+  rotate: none;
+  scale: 1;
+  transform: none !important;
+}
+
+.app-shell { flex-direction: column !important; }
+.app-topbar { order: 0; }
+.app-content { order: 1; }
+.bottom-tabs { order: 3; }
+
+@view-transition { navigation: none; }
+html,
+:root { view-transition-name: none !important; }
+
+::view-transition-group(root),
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none !important;
+}
+
+/* The mobile pages are swapped by Inertia. Keep every component static. */
+*,
+*::before,
+*::after {
+  animation: none !important;
+  transition: none !important;
+}

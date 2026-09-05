@@ -12,9 +12,21 @@ const props = defineProps({
     invoices: { type: Array, default: () => [] },
     operators: { type: Array, default: () => [] },
     invitations: { type: Array, default: () => [] },
+    canViewPlatformFinancials: { type: Boolean, default: false },
+    // A plan editor receives only a plan's own current price so its edit
+    // form can be prefilled. It does not imply billing/revenue visibility.
+    canViewPlanPrices: { type: Boolean, default: false },
     canManageOperators: { type: Boolean, default: false },
     canCreatePlatform: { type: Boolean, default: false },
     canUpdatePlatform: { type: Boolean, default: false },
+    canCreateCompanies: { type: Boolean, default: false },
+    canEditCompanies: { type: Boolean, default: false },
+    canCreatePlans: { type: Boolean, default: false },
+    canEditPlans: { type: Boolean, default: false },
+    canCreateSubscriptions: { type: Boolean, default: false },
+    canChangeSubscriptionStatus: { type: Boolean, default: false },
+    canCreateInvoices: { type: Boolean, default: false },
+    canChangeInvoiceStatus: { type: Boolean, default: false },
 })
 
 const page = usePage()
@@ -38,7 +50,7 @@ const copy = {
         title: 'مركز إدارة المنصة', eyebrow: 'SaaS CONTROL', subtitle: 'الشركات، الباقات، الاشتراكات، الفواتير، وصلاحيات مشغلي لوحة الإدارة في مكان واحد.',
         overview: 'نظرة المنصة', companies: 'الشركات', plans: 'الباقات', billing: 'الاشتراكات والفواتير', people: 'المستخدمون والصلاحيات',
         activeSubs: 'اشتراكات نشطة', trials: 'فترات تجريبية', mrr: 'إيراد شهري متوقع', outstanding: 'فواتير مستحقة', operators: 'مشغلو المنصة',
-        company: 'الشركة', package: 'الباقة', usage: 'استخدام الشهر', branches: 'الفروع', users: 'المستخدمون', status: 'الحالة', nextInvoice: 'الفاتورة التالية', actions: 'إجراءات',
+        company: 'الشركة', package: 'الباقة', usage: 'استخدام الشهر', branches: 'الفروع', users: 'المستخدمون', status: 'الحالة', nextInvoice: 'الفاتورة التالية', actions: 'إجراءات', iqd: 'د.ع',
         addCompany: 'شركة جديدة', editCompany: 'تعديل الشركة', companyName: 'اسم الشركة', companySlug: 'معرّف الشركة', companyStatus: 'حالة الشركة', trialEnds: 'ينتهي التجريبي في', billingPeriod: 'دورة الفوترة', monthly: 'شهري', annual: 'سنوي', save: 'حفظ', cancel: 'إلغاء',
         addPlan: 'باقة جديدة', editPlan: 'تعديل الباقة', planSlug: 'رمز الباقة', nameAr: 'الاسم بالعربية', nameEn: 'الاسم بالإنجليزية', nameKu: 'الاسم بالكردية', monthlyPrice: 'السعر الشهري', ordersLimit: 'حد الطلبات الشهري', branchesLimit: 'حد الفروع', usersLimit: 'حد المستخدمين', merchantsLimit: 'حد التجار', features: 'المزايا (افصل بفاصلة)', active: 'نشط', inactive: 'موقوف',
         newSubscription: 'اشتراك / تجديد', subscription: 'الاشتراك', starts: 'يبدأ', ends: 'ينتهي', autoRenew: 'تجديد تلقائي', amount: 'المبلغ', createInvoice: 'إنشاء فاتورة مع الاشتراك', activate: 'تفعيل', suspend: 'إيقاف', cancelSubscription: 'إلغاء الاشتراك',
@@ -54,7 +66,7 @@ const copy = {
         title: 'Platform control center', eyebrow: 'SaaS CONTROL', subtitle: 'Companies, packages, subscriptions, invoices, and dashboard-operator access in one place.',
         overview: 'Platform overview', companies: 'Companies', plans: 'Packages', billing: 'Subscriptions & invoices', people: 'Users & roles',
         activeSubs: 'Active subscriptions', trials: 'Trials', mrr: 'Expected monthly revenue', outstanding: 'Outstanding invoices', operators: 'Platform operators',
-        company: 'Company', package: 'Package', usage: 'This-month usage', branches: 'Branches', users: 'Users', status: 'Status', nextInvoice: 'Next invoice', actions: 'Actions',
+        company: 'Company', package: 'Package', usage: 'This-month usage', branches: 'Branches', users: 'Users', status: 'Status', nextInvoice: 'Next invoice', actions: 'Actions', iqd: 'IQD',
         addCompany: 'New company', editCompany: 'Edit company', companyName: 'Company name', companySlug: 'Company slug', companyStatus: 'Company status', trialEnds: 'Trial ends', billingPeriod: 'Billing period', monthly: 'Monthly', annual: 'Annual', save: 'Save', cancel: 'Cancel',
         addPlan: 'New package', editPlan: 'Edit package', planSlug: 'Package code', nameAr: 'Arabic name', nameEn: 'English name', nameKu: 'Kurdish name', monthlyPrice: 'Monthly price', ordersLimit: 'Monthly order limit', branchesLimit: 'Branch limit', usersLimit: 'User limit', merchantsLimit: 'Merchant limit', features: 'Features (comma separated)', active: 'Active', inactive: 'Inactive',
         newSubscription: 'Subscribe / renew', subscription: 'Subscription', starts: 'Starts', ends: 'Ends', autoRenew: 'Auto renew', amount: 'Amount', createInvoice: 'Create invoice with subscription', activate: 'Activate', suspend: 'Suspend', cancelSubscription: 'Cancel subscription',
@@ -70,7 +82,7 @@ const copy = {
         title: 'ناوەندی بەڕێوەبردنی پلاتفۆرم', eyebrow: 'SaaS CONTROL', subtitle: 'کۆمپانیاکان، پاکێجەکان، بەشداربوونەکان، پسوولەکان و دەستگەیشتنی بەڕێوەبەرانی داشبۆرد لە یەک شوێن.',
         overview: 'پوختەی پلاتفۆرم', companies: 'کۆمپانیاکان', plans: 'پاکێجەکان', billing: 'بەشداربوون و پسوولەکان', people: 'بەکارهێنەران و ڕۆڵەکان',
         activeSubs: 'بەشداربوونی چالاک', trials: 'تاقیکردنەوەکان', mrr: 'داهاتی مانگانەی چاوەڕوانکراو', outstanding: 'پسوولە نەپارێدراوەکان', operators: 'بەڕێوەبەرانی پلاتفۆرم',
-        company: 'کۆمپانیا', package: 'پاکێج', usage: 'بەکارهێنانی ئەم مانگە', branches: 'لقەکان', users: 'بەکارهێنەران', status: 'دۆخ', nextInvoice: 'پسوولی داهاتوو', actions: 'کردارەکان',
+        company: 'کۆمپانیا', package: 'پاکێج', usage: 'بەکارهێنانی ئەم مانگە', branches: 'لقەکان', users: 'بەکارهێنەران', status: 'دۆخ', nextInvoice: 'پسوولی داهاتوو', actions: 'کردارەکان', iqd: 'د.ع',
         addCompany: 'کۆمپانیای نوێ', editCompany: 'دەستکاریکردنی کۆمپانیا', companyName: 'ناوی کۆمپانیا', companySlug: 'ناسنامەی کۆمپانیا', companyStatus: 'دۆخی کۆمپانیا', trialEnds: 'کۆتایی تاقیکردنەوە', billingPeriod: 'خولی پسوولە', monthly: 'مانگانە', annual: 'ساڵانە', save: 'پاشەکەوتکردن', cancel: 'هەڵوەشاندنەوە',
         addPlan: 'پاکێجی نوێ', editPlan: 'دەستکاریکردنی پاکێج', planSlug: 'کۆدی پاکێج', nameAr: 'ناوی عەرەبی', nameEn: 'ناوی ئینگلیزی', nameKu: 'ناوی کوردی', monthlyPrice: 'نرخی مانگانە', ordersLimit: 'سنووری داواکاریی مانگانە', branchesLimit: 'سنووری لق', usersLimit: 'سنووری بەکارهێنەر', merchantsLimit: 'سنووری بازرگان', features: 'تایبەتمەندییەکان (بە کاما جیا بکەوە)', active: 'چالاک', inactive: 'ناچالاک',
         newSubscription: 'بەشداربوون / نوێکردنەوە', subscription: 'بەشداربوون', starts: 'دەستپێدەکات', ends: 'کۆتایی دێت', autoRenew: 'نوێکردنەوەی خۆکار', amount: 'بڕ', createInvoice: 'دروستکردنی پسوولە لەگەڵ بەشداربوون', activate: 'چالاککردن', suspend: 'وەستاندن', cancelSubscription: 'هەڵوەشاندنی بەشداربوون',
@@ -90,7 +102,8 @@ const roles = [
 ]
 
 function l(key) { return copy[locale.value]?.[key] || copy.ar[key] || key }
-function money(value) { return `${fmt(Number(value || 0))} ${t('IQD')}` }
+function fmt(value) { return new Intl.NumberFormat(locale.value === 'en' ? 'en-US' : 'ar-IQ').format(Number(value || 0)) }
+function money(value) { return `${fmt(value)} ${l('iqd')}` }
 function planName(plan) { return plan?.[`name_${locale.value}`] || plan?.name_ar || plan?.name_en || '—' }
 function statusLabel(status) {
     return ({ trial: l('trial'), active: l('active'), suspended: l('suspended'), cancelled: l('cancelled'), expired: l('expiredStatus'), draft: l('draft'), issued: l('issuedStatus'), paid: l('paid'), overdue: l('overdue'), void: l('void'), pending: l('pending'), accepted: l('accepted') })[status] || status
@@ -109,7 +122,7 @@ function startTab(tab) {
 
 function blankCompany() { return { name: '', slug: '', plan_id: props.plans[0]?.id || '', status: 'trial', billing_period: 'monthly', trial_ends_at: '' } }
 function blankPlan() { return { slug: '', name_ar: '', name_en: '', name_ku: '', price: 0, max_orders_month: '', max_branches: '', max_users: '', max_merchants: '', features_text: '', is_active: true } }
-function blankSubscription(company = null) { return { tenant_id: company?.id || props.companies[0]?.id || '', plan_id: company?.plan?.id || props.plans[0]?.id || '', status: company?.status === 'suspended' ? 'suspended' : 'active', billing_period: company?.subscription?.billing_period || 'monthly', amount: company?.subscription?.amount ?? '', ends_at: '', auto_renew: true, create_invoice: true } }
+function blankSubscription(company = null) { return { tenant_id: company?.id || props.companies[0]?.id || '', plan_id: company?.plan?.id || props.plans[0]?.id || '', status: company?.status === 'suspended' ? 'suspended' : 'active', billing_period: company?.subscription?.billing_period || 'monthly', amount: company?.subscription?.amount ?? '', ends_at: '', auto_renew: true, create_invoice: props.canCreateInvoices } }
 function blankInvoice(company = null) { return { tenant_id: company?.id || props.companies[0]?.id || '', subscription_id: company?.subscription?.id || '', amount: company?.subscription?.amount ?? '', due_at: '', note: '' } }
 
 const companyForm = ref(blankCompany())
@@ -119,13 +132,13 @@ const invoiceForm = ref(blankInvoice())
 const inviteForm = ref({ name: '', email: '', expires_in_days: 7 })
 
 function openCompany(company = null) {
-    if (company ? !props.canUpdatePlatform : !props.canCreatePlatform) return
+    if (company ? !props.canEditCompanies : !props.canCreateCompanies) return
     editing.value = company
     companyForm.value = company ? { name: company.name, slug: company.slug, plan_id: company.plan?.id || '', status: company.status, billing_period: company.subscription?.billing_period || 'monthly', trial_ends_at: company.trial_ends_at || '' } : blankCompany()
     modal.value = 'company'
 }
 function openPlan(plan = null) {
-    if (plan ? !props.canUpdatePlatform : !props.canCreatePlatform) return
+    if (plan ? !props.canEditPlans : !props.canCreatePlans) return
     editing.value = plan
     planForm.value = plan ? {
         slug: plan.slug, name_ar: plan.name_ar || '', name_en: plan.name_en || '', name_ku: plan.name_ku || '', price: plan.price || 0,
@@ -135,13 +148,13 @@ function openPlan(plan = null) {
     modal.value = 'plan'
 }
 function openSubscription(company = null) {
-    if (!props.canCreatePlatform) return
+    if (!props.canCreateSubscriptions) return
     editing.value = company
     subscriptionForm.value = blankSubscription(company)
     modal.value = 'subscription'
 }
 function openInvoice(company = null) {
-    if (!props.canCreatePlatform) return
+    if (!props.canCreateInvoices) return
     editing.value = company
     invoiceForm.value = blankInvoice(company)
     modal.value = 'invoice'
@@ -166,14 +179,14 @@ function send(method, url, payload, onSuccess = closeModal) {
     })
 }
 function submitCompany() {
-    if (editing.value ? !props.canUpdatePlatform : !props.canCreatePlatform) return
+    if (editing.value ? !props.canEditCompanies : !props.canCreateCompanies) return
     if (!companyForm.value.name || (!editing.value && !companyForm.value.slug) || (!editing.value && !companyForm.value.plan_id)) { actionError.value = l('required'); return }
     const payload = { ...companyForm.value, plan_id: Number(companyForm.value.plan_id) }
     if (editing.value) send('put', route('admin.platform.companies.update', editing.value.id), payload)
     else send('post', route('admin.platform.companies.store'), payload)
 }
 function submitPlan() {
-    if (editing.value ? !props.canUpdatePlatform : !props.canCreatePlatform) return
+    if (editing.value ? !props.canEditPlans : !props.canCreatePlans) return
     if (!planForm.value.name_ar || !planForm.value.name_en || (!editing.value && !planForm.value.slug)) { actionError.value = l('required'); return }
     const f = planForm.value
     const payload = {
@@ -186,13 +199,13 @@ function submitPlan() {
 }
 function nullableNumber(value) { return value === '' || value === null || value === undefined ? null : Number(value) }
 function submitSubscription() {
-    if (!props.canCreatePlatform) return
+    if (!props.canCreateSubscriptions) return
     const f = subscriptionForm.value
     if (!f.tenant_id || !f.plan_id) { actionError.value = l('required'); return }
-    send('post', route('admin.platform.subscriptions.store'), { ...f, tenant_id: Number(f.tenant_id), plan_id: Number(f.plan_id), amount: nullableNumber(f.amount), ends_at: f.ends_at || null, auto_renew: !!f.auto_renew, create_invoice: !!f.create_invoice })
+    send('post', route('admin.platform.subscriptions.store'), { ...f, tenant_id: Number(f.tenant_id), plan_id: Number(f.plan_id), amount: nullableNumber(f.amount), ends_at: f.ends_at || null, auto_renew: !!f.auto_renew, create_invoice: props.canCreateInvoices && !!f.create_invoice })
 }
 function submitInvoice() {
-    if (!props.canCreatePlatform) return
+    if (!props.canCreateInvoices) return
     const f = invoiceForm.value
     if (!f.tenant_id || f.amount === '') { actionError.value = l('required'); return }
     send('post', route('admin.platform.invoices.store'), { ...f, tenant_id: Number(f.tenant_id), subscription_id: f.subscription_id ? Number(f.subscription_id) : null, amount: Number(f.amount), due_at: f.due_at || null })
@@ -203,19 +216,19 @@ function submitInvite() {
     send('post', route('admin.platform.invitations.store'), { ...inviteForm.value, expires_in_days: Number(inviteForm.value.expires_in_days) }, () => { modal.value = null })
 }
 function updateSubscription(subscription, status) {
-    if (!props.canUpdatePlatform) return
+    if (!props.canChangeSubscriptionStatus) return
     if (!confirm(`${l('status')}: ${statusLabel(status)}?`)) return
     send('patch', route('admin.platform.subscriptions.status', subscription.id), { status, auto_renew: status === 'active' ? subscription.auto_renew : false }, () => {})
 }
 function updateInvoice(invoice, status) {
-    if (!props.canUpdatePlatform) return
+    if (!props.canChangeInvoiceStatus) return
     if (!confirm(`${l('status')}: ${statusLabel(status)}?`)) return
     send('patch', route('admin.platform.invoices.status', invoice.id), { status }, () => {})
 }
 function updateOperator(operator, status) {
     if (!props.canManageOperators) return
     if (!confirm(`${l('status')}: ${statusLabel(status)}?`)) return
-    send('post', route('admin.users.status', operator.id), { status }, () => {})
+    send('patch', route('admin.employees.status', operator.id), { status }, () => {})
 }
 async function copyInviteLink() {
     if (!props.canManageOperators) return
@@ -234,7 +247,7 @@ async function copyInviteLink() {
             </div>
             <div class="heading-actions">
                 <button v-if="canManageOperators" class="btn secondary" type="button" @click="openInvite">{{ l('inviteOperator') }}</button>
-                <button v-if="canCreatePlatform" class="btn primary" type="button" @click="openCompany">＋ {{ l('addCompany') }}</button>
+                <button v-if="canCreateCompanies" class="btn primary" type="button" @click="openCompany">＋ {{ l('addCompany') }}</button>
             </div>
         </header>
 
@@ -246,8 +259,10 @@ async function copyInviteLink() {
             <div class="metric-grid">
                 <article class="metric-card cyan"><small>{{ l('companies') }}</small><b>{{ summary.companies || 0 }}</b><span>{{ l('activeSubs') }}: {{ summary.active_subscriptions || 0 }}</span></article>
                 <article class="metric-card violet"><small>{{ l('trials') }}</small><b>{{ summary.trials || 0 }}</b><span>{{ l('operators') }}: {{ summary.operators || 0 }}</span></article>
-                <article class="metric-card gold"><small>{{ l('mrr') }}</small><b class="mono">{{ money(summary.monthly_revenue) }}</b><span>{{ l('monthly') }}</span></article>
-                <article class="metric-card rose"><small>{{ l('outstanding') }}</small><b class="mono">{{ money(summary.outstanding) }}</b><span>{{ l('invoices') }}</span></article>
+                <template v-if="canViewPlatformFinancials">
+                    <article class="metric-card gold"><small>{{ l('mrr') }}</small><b class="mono">{{ money(summary.monthly_revenue) }}</b><span>{{ l('monthly') }}</span></article>
+                    <article class="metric-card rose"><small>{{ l('outstanding') }}</small><b class="mono">{{ money(summary.outstanding) }}</b><span>{{ l('invoices') }}</span></article>
+                </template>
             </div>
 
             <div class="overview-grid">
@@ -268,7 +283,8 @@ async function copyInviteLink() {
                         <article v-for="invoice in invoices.slice(0, 6)" :key="invoice.id" class="company-line">
                             <div class="invoice-letter">#</div>
                             <div class="line-main"><b class="mono">{{ invoice.number }}</b><span>{{ invoice.tenant?.name }} · {{ dateValue(invoice.due_at) }}</span></div>
-                            <div class="line-end"><b class="mono">{{ money(invoice.amount) }}</b><span class="status" :class="statusClass(invoice.status)">{{ statusLabel(invoice.status) }}</span></div>
+                            <div v-if="canViewPlatformFinancials" class="line-end"><b class="mono">{{ money(invoice.amount) }}</b><span class="status" :class="statusClass(invoice.status)">{{ statusLabel(invoice.status) }}</span></div>
+                            <span v-else class="status" :class="statusClass(invoice.status)">{{ statusLabel(invoice.status) }}</span>
                         </article>
                     </div>
                     <div v-else class="empty-card">{{ l('noInvoices') }}</div>
@@ -277,41 +293,41 @@ async function copyInviteLink() {
         </section>
 
         <section v-else-if="activeTab === 'companies'" class="tab-section">
-            <header class="section-heading"><div><h3>{{ l('companies') }}</h3><p>{{ l('subtitle') }}</p></div><button v-if="canCreatePlatform" class="btn primary" type="button" @click="openCompany">＋ {{ l('addCompany') }}</button></header>
+            <header class="section-heading"><div><h3>{{ l('companies') }}</h3><p>{{ l('subtitle') }}</p></div><button v-if="canCreateCompanies" class="btn primary" type="button" @click="openCompany">＋ {{ l('addCompany') }}</button></header>
             <div v-if="companies.length" class="company-grid">
                 <article v-for="company in companies" :key="company.id" class="company-card">
                     <header><div class="company-letter big">{{ company.name?.charAt(0) }}</div><div class="company-ident"><h3>{{ company.name }}</h3><p class="mono">{{ company.slug }}</p></div><span class="status" :class="statusClass(company.status)">{{ statusLabel(company.status) }}</span></header>
                     <div class="company-kpis"><span><small>{{ l('package') }}</small><b>{{ planName(company.plan) }}</b></span><span><small>{{ l('usage') }}</small><b>{{ company.orders_this_month }} / {{ company.order_limit ?? '∞' }}</b></span><span><small>{{ l('branches') }}</small><b>{{ company.branches_count }}</b></span><span><small>{{ l('users') }}</small><b>{{ company.users_count }}</b></span></div>
                     <div class="company-billing"><span>{{ l('subscription') }} <b>{{ company.subscription ? statusLabel(company.subscription.status) : '—' }}</b></span><span>{{ l('nextInvoice') }} <b>{{ company.next_invoice?.number || dateValue(company.subscription?.next_invoice_at) }}</b></span></div>
-                    <footer v-if="canUpdatePlatform || canCreatePlatform"><button v-if="canUpdatePlatform" type="button" @click="openCompany(company)">{{ l('editCompany') }}</button><button v-if="canCreatePlatform" type="button" @click="openSubscription(company)">{{ l('newSubscription') }}</button><button v-if="canCreatePlatform" type="button" @click="openInvoice(company)">{{ l('issueInvoice') }}</button></footer>
+                    <footer v-if="canEditCompanies || canCreateSubscriptions || canCreateInvoices"><button v-if="canEditCompanies" type="button" @click="openCompany(company)">{{ l('editCompany') }}</button><button v-if="canCreateSubscriptions" type="button" @click="openSubscription(company)">{{ l('newSubscription') }}</button><button v-if="canCreateInvoices" type="button" @click="openInvoice(company)">{{ l('issueInvoice') }}</button></footer>
                 </article>
             </div>
             <div v-else class="empty-card">{{ l('noCompanies') }}</div>
         </section>
 
         <section v-else-if="activeTab === 'plans'" class="tab-section">
-            <header class="section-heading"><div><h3>{{ l('plans') }}</h3><p>{{ l('subtitle') }}</p></div><button v-if="canCreatePlatform" class="btn primary" type="button" @click="openPlan">＋ {{ l('addPlan') }}</button></header>
+            <header class="section-heading"><div><h3>{{ l('plans') }}</h3><p>{{ l('subtitle') }}</p></div><button v-if="canCreatePlans" class="btn primary" type="button" @click="openPlan">＋ {{ l('addPlan') }}</button></header>
             <div v-if="plans.length" class="plan-grid">
                 <article v-for="plan in plans" :key="plan.id" class="plan-card" :class="{ off: !plan.is_active }">
                     <header><span class="plan-code mono">{{ plan.slug }}</span><span class="status" :class="plan.is_active ? 'success' : 'neutral'">{{ plan.is_active ? l('active') : l('inactive') }}</span></header>
-                    <h3>{{ planName(plan) }}</h3><strong class="mono">{{ money(plan.price) }}<small> / {{ l('monthly') }}</small></strong>
+                    <h3>{{ planName(plan) }}</h3><strong v-if="canViewPlanPrices" class="mono">{{ money(plan.price) }}<small> / {{ l('monthly') }}</small></strong>
                     <div class="plan-limits"><span>{{ plan.limits?.max_orders_month ?? '∞' }} {{ l('ordersLimit') }}</span><span>{{ plan.limits?.max_branches ?? '∞' }} {{ l('branchesLimit') }}</span><span>{{ plan.tenants_count }} {{ l('companies') }}</span></div>
                     <ul><li v-for="feature in plan.features || []" :key="feature">✓ {{ feature }}</li></ul>
-                    <footer><span>{{ plan.subscriptions_count }} {{ l('subscription') }}</span><button v-if="canUpdatePlatform" type="button" @click="openPlan(plan)">{{ l('editPlan') }}</button></footer>
+                    <footer><span>{{ plan.subscriptions_count }} {{ l('subscription') }}</span><button v-if="canEditPlans" type="button" @click="openPlan(plan)">{{ l('editPlan') }}</button></footer>
                 </article>
             </div>
             <div v-else class="empty-card">{{ l('noPlans') }}</div>
         </section>
 
         <section v-else-if="activeTab === 'billing'" class="tab-section">
-            <header class="section-heading"><div><h3>{{ l('billing') }}</h3><p>{{ l('subscription') }} · {{ l('invoices') }}</p></div><div v-if="canCreatePlatform" class="heading-actions"><button class="btn secondary" type="button" @click="openInvoice">{{ l('issueInvoice') }}</button><button class="btn primary" type="button" @click="openSubscription">{{ l('newSubscription') }}</button></div></header>
+            <header class="section-heading"><div><h3>{{ l('billing') }}</h3><p>{{ l('subscription') }} · {{ l('invoices') }}</p></div><div v-if="canCreateInvoices || canCreateSubscriptions" class="heading-actions"><button v-if="canCreateInvoices" class="btn secondary" type="button" @click="openInvoice">{{ l('issueInvoice') }}</button><button v-if="canCreateSubscriptions" class="btn primary" type="button" @click="openSubscription">{{ l('newSubscription') }}</button></div></header>
             <div class="billing-stack">
                 <section class="panel-surface wide-table"><header class="panel-title"><div><h3>{{ l('subscription') }}</h3><p>{{ l('activeSubs') }}</p></div></header>
-                    <div v-if="subscriptions.length" class="table-wrap"><table><thead><tr><th>{{ l('company') }}</th><th>{{ l('package') }}</th><th>{{ l('status') }}</th><th>{{ l('amount') }}</th><th>{{ l('ends') }}</th><th v-if="canUpdatePlatform">{{ l('actions') }}</th></tr></thead><tbody><tr v-for="sub in subscriptions" :key="sub.id"><td><b>{{ sub.tenant?.name }}</b></td><td>{{ planName(sub.plan) }}</td><td><span class="status" :class="statusClass(sub.status)">{{ statusLabel(sub.status) }}</span></td><td class="mono">{{ money(sub.amount) }}</td><td class="mono">{{ dateValue(sub.ends_at) }}</td><td v-if="canUpdatePlatform" class="table-actions"><button v-if="sub.status !== 'active'" type="button" @click="updateSubscription(sub, 'active')">{{ l('activate') }}</button><button v-if="sub.status === 'active'" type="button" @click="updateSubscription(sub, 'suspended')">{{ l('suspend') }}</button><button v-if="!['cancelled','expired'].includes(sub.status)" type="button" class="danger-link" @click="updateSubscription(sub, 'cancelled')">{{ l('cancelSubscription') }}</button></td></tr></tbody></table></div>
+                    <div v-if="subscriptions.length" class="table-wrap"><table><thead><tr><th>{{ l('company') }}</th><th>{{ l('package') }}</th><th>{{ l('status') }}</th><th v-if="canViewPlatformFinancials">{{ l('amount') }}</th><th>{{ l('ends') }}</th><th v-if="canChangeSubscriptionStatus">{{ l('actions') }}</th></tr></thead><tbody><tr v-for="sub in subscriptions" :key="sub.id"><td><b>{{ sub.tenant?.name }}</b></td><td>{{ planName(sub.plan) }}</td><td><span class="status" :class="statusClass(sub.status)">{{ statusLabel(sub.status) }}</span></td><td v-if="canViewPlatformFinancials" class="mono">{{ money(sub.amount) }}</td><td class="mono">{{ dateValue(sub.ends_at) }}</td><td v-if="canChangeSubscriptionStatus" class="table-actions"><button v-if="sub.status !== 'active'" type="button" @click="updateSubscription(sub, 'active')">{{ l('activate') }}</button><button v-if="sub.status === 'active'" type="button" @click="updateSubscription(sub, 'suspended')">{{ l('suspend') }}</button><button v-if="!['cancelled','expired'].includes(sub.status)" type="button" class="danger-link" @click="updateSubscription(sub, 'cancelled')">{{ l('cancelSubscription') }}</button></td></tr></tbody></table></div>
                     <div v-else class="empty-card">{{ l('noSubscriptions') }}</div>
                 </section>
                 <section class="panel-surface wide-table"><header class="panel-title"><div><h3>{{ l('invoices') }}</h3><p>{{ l('outstanding') }}</p></div></header>
-                    <div v-if="invoices.length" class="table-wrap"><table><thead><tr><th>{{ l('invoice') }}</th><th>{{ l('company') }}</th><th>{{ l('amount') }}</th><th>{{ l('due') }}</th><th>{{ l('status') }}</th><th v-if="canUpdatePlatform">{{ l('actions') }}</th></tr></thead><tbody><tr v-for="invoice in invoices" :key="invoice.id"><td class="mono"><b>{{ invoice.number }}</b></td><td>{{ invoice.tenant?.name }}</td><td class="mono">{{ money(invoice.amount) }}</td><td class="mono">{{ dateValue(invoice.due_at) }}</td><td><span class="status" :class="statusClass(invoice.status)">{{ statusLabel(invoice.status) }}</span></td><td v-if="canUpdatePlatform" class="table-actions"><button v-if="['draft','issued','overdue'].includes(invoice.status)" type="button" @click="updateInvoice(invoice, 'paid')">{{ l('markPaid') }}</button><button v-if="invoice.status === 'issued'" type="button" @click="updateInvoice(invoice, 'overdue')">{{ l('markOverdue') }}</button><button v-if="!['paid','void'].includes(invoice.status)" class="danger-link" type="button" @click="updateInvoice(invoice, 'void')">{{ l('voidInvoice') }}</button></td></tr></tbody></table></div>
+                    <div v-if="invoices.length" class="table-wrap"><table><thead><tr><th>{{ l('invoice') }}</th><th>{{ l('company') }}</th><th v-if="canViewPlatformFinancials">{{ l('amount') }}</th><th>{{ l('due') }}</th><th>{{ l('status') }}</th><th v-if="canChangeInvoiceStatus">{{ l('actions') }}</th></tr></thead><tbody><tr v-for="invoice in invoices" :key="invoice.id"><td class="mono"><b>{{ invoice.number }}</b></td><td>{{ invoice.tenant?.name }}</td><td v-if="canViewPlatformFinancials" class="mono">{{ money(invoice.amount) }}</td><td class="mono">{{ dateValue(invoice.due_at) }}</td><td><span class="status" :class="statusClass(invoice.status)">{{ statusLabel(invoice.status) }}</span></td><td v-if="canChangeInvoiceStatus" class="table-actions"><button v-if="['draft','issued','overdue'].includes(invoice.status)" type="button" @click="updateInvoice(invoice, 'paid')">{{ l('markPaid') }}</button><button v-if="invoice.status === 'issued'" type="button" @click="updateInvoice(invoice, 'overdue')">{{ l('markOverdue') }}</button><button v-if="!['paid','void'].includes(invoice.status)" class="danger-link" type="button" @click="updateInvoice(invoice, 'void')">{{ l('voidInvoice') }}</button></td></tr></tbody></table></div>
                     <div v-else class="empty-card">{{ l('noInvoices') }}</div>
                 </section>
             </div>
@@ -335,20 +351,21 @@ async function copyInviteLink() {
         <div
             v-if="modal && (
                 (modal === 'invite' && canManageOperators)
-                || (modal === 'company' && (editing ? canUpdatePlatform : canCreatePlatform))
-                || (modal === 'plan' && (editing ? canUpdatePlatform : canCreatePlatform))
-                || ((modal === 'subscription' || modal === 'invoice') && canCreatePlatform)
+                || (modal === 'company' && (editing ? canEditCompanies : canCreateCompanies))
+                || (modal === 'plan' && (editing ? canEditPlans : canCreatePlans))
+                || (modal === 'subscription' && canCreateSubscriptions)
+                || (modal === 'invoice' && canCreateInvoices)
             )"
             class="modal-backdrop"
             @click.self="closeModal"
         >
-            <form v-if="modal === 'company'" class="modal-card" @submit.prevent="submitCompany"><header><div><h3>{{ editing ? l('editCompany') : l('addCompany') }}</h3><p>{{ l('companies') }}</p></div><button type="button" @click="closeModal">×</button></header><div class="form-grid"><label class="wide"><span>{{ l('companyName') }}</span><input v-model.trim="companyForm.name" required></label><label v-if="!editing"><span>{{ l('companySlug') }}</span><input v-model.trim="companyForm.slug" dir="ltr" required></label><label v-if="!editing"><span>{{ l('package') }}</span><select v-model="companyForm.plan_id" required><option v-for="plan in plans.filter(p => p.is_active)" :key="plan.id" :value="plan.id">{{ planName(plan) }}</option></select></label><label><span>{{ l('companyStatus') }}</span><select v-model="companyForm.status"><option value="trial">{{ l('trial') }}</option><option value="active">{{ l('active') }}</option><option value="suspended">{{ l('suspended') }}</option></select></label><label v-if="!editing"><span>{{ l('billingPeriod') }}</span><select v-model="companyForm.billing_period"><option value="monthly">{{ l('monthly') }}</option><option value="annual">{{ l('annual') }}</option></select></label><label v-if="companyForm.status === 'trial'" class="wide"><span>{{ l('trialEnds') }}</span><input v-model="companyForm.trial_ends_at" type="date"></label></div><p v-if="actionError" class="form-error">{{ actionError }}</p><footer><button class="btn secondary" type="button" @click="closeModal">{{ l('cancel') }}</button><button class="btn primary" :disabled="busy">{{ l('save') }}</button></footer></form>
+            <form v-if="modal === 'company'" class="modal-card" @submit.prevent="submitCompany"><header><div><h3>{{ editing ? l('editCompany') : l('addCompany') }}</h3><p>{{ l('companies') }}</p></div><button type="button" @click="closeModal">×</button></header><div class="form-grid"><label class="wide"><span>{{ l('companyName') }}</span><input v-model.trim="companyForm.name" required></label><label v-if="!editing"><span>{{ l('companySlug') }}</span><input v-model.trim="companyForm.slug" dir="ltr" required></label><label v-if="!editing"><span>{{ l('package') }}</span><PopupSelect v-model="companyForm.plan_id" required><option v-for="plan in plans.filter(p => p.is_active)" :key="plan.id" :value="plan.id">{{ planName(plan) }}</option></PopupSelect></label><label><span>{{ l('companyStatus') }}</span><PopupSelect v-model="companyForm.status"><option value="trial">{{ l('trial') }}</option><option value="active">{{ l('active') }}</option><option value="suspended">{{ l('suspended') }}</option></PopupSelect></label><label v-if="!editing"><span>{{ l('billingPeriod') }}</span><PopupSelect v-model="companyForm.billing_period"><option value="monthly">{{ l('monthly') }}</option><option value="annual">{{ l('annual') }}</option></PopupSelect></label><label v-if="companyForm.status === 'trial'" class="wide"><span>{{ l('trialEnds') }}</span><input v-model="companyForm.trial_ends_at" type="date"></label></div><p v-if="actionError" class="form-error">{{ actionError }}</p><footer><button class="btn secondary" type="button" @click="closeModal">{{ l('cancel') }}</button><button class="btn primary" :disabled="busy">{{ l('save') }}</button></footer></form>
 
-            <form v-else-if="modal === 'plan'" class="modal-card" @submit.prevent="submitPlan"><header><div><h3>{{ editing ? l('editPlan') : l('addPlan') }}</h3><p>{{ l('plans') }}</p></div><button type="button" @click="closeModal">×</button></header><div class="form-grid"><label><span>{{ l('planSlug') }}</span><input v-model.trim="planForm.slug" dir="ltr" :disabled="!!editing" :required="!editing"></label><label><span>{{ l('monthlyPrice') }} ({{ t('IQD') }})</span><input v-model.number="planForm.price" min="0" type="number" required></label><label><span>{{ l('nameAr') }}</span><input v-model.trim="planForm.name_ar" required></label><label><span>{{ l('nameEn') }}</span><input v-model.trim="planForm.name_en" required></label><label class="wide"><span>{{ l('nameKu') }}</span><input v-model.trim="planForm.name_ku"></label><label><span>{{ l('ordersLimit') }}</span><input v-model="planForm.max_orders_month" min="0" type="number"></label><label><span>{{ l('branchesLimit') }}</span><input v-model="planForm.max_branches" min="0" type="number"></label><label><span>{{ l('usersLimit') }}</span><input v-model="planForm.max_users" min="0" type="number"></label><label><span>{{ l('merchantsLimit') }}</span><input v-model="planForm.max_merchants" min="0" type="number"></label><label class="wide"><span>{{ l('features') }}</span><textarea v-model="planForm.features_text" rows="3" /></label><label class="check wide"><input v-model="planForm.is_active" type="checkbox"><span>{{ l('active') }}</span></label></div><p v-if="actionError" class="form-error">{{ actionError }}</p><footer><button class="btn secondary" type="button" @click="closeModal">{{ l('cancel') }}</button><button class="btn primary" :disabled="busy">{{ l('save') }}</button></footer></form>
+            <form v-else-if="modal === 'plan'" class="modal-card" @submit.prevent="submitPlan"><header><div><h3>{{ editing ? l('editPlan') : l('addPlan') }}</h3><p>{{ l('plans') }}</p></div><button type="button" @click="closeModal">×</button></header><div class="form-grid"><label><span>{{ l('planSlug') }}</span><input v-model.trim="planForm.slug" dir="ltr" :disabled="!!editing" :required="!editing"></label><label><span>{{ l('monthlyPrice') }} ({{ l('iqd') }})</span><input v-model.number="planForm.price" min="0" type="number" required></label><label><span>{{ l('nameAr') }}</span><input v-model.trim="planForm.name_ar" required></label><label><span>{{ l('nameEn') }}</span><input v-model.trim="planForm.name_en" required></label><label class="wide"><span>{{ l('nameKu') }}</span><input v-model.trim="planForm.name_ku"></label><label><span>{{ l('ordersLimit') }}</span><input v-model="planForm.max_orders_month" min="0" type="number"></label><label><span>{{ l('branchesLimit') }}</span><input v-model="planForm.max_branches" min="0" type="number"></label><label><span>{{ l('usersLimit') }}</span><input v-model="planForm.max_users" min="0" type="number"></label><label><span>{{ l('merchantsLimit') }}</span><input v-model="planForm.max_merchants" min="0" type="number"></label><label class="wide"><span>{{ l('features') }}</span><textarea v-model="planForm.features_text" rows="3" /></label><label class="check wide"><input v-model="planForm.is_active" type="checkbox"><span>{{ l('active') }}</span></label></div><p v-if="actionError" class="form-error">{{ actionError }}</p><footer><button class="btn secondary" type="button" @click="closeModal">{{ l('cancel') }}</button><button class="btn primary" :disabled="busy">{{ l('save') }}</button></footer></form>
 
-            <form v-else-if="modal === 'subscription'" class="modal-card" @submit.prevent="submitSubscription"><header><div><h3>{{ l('newSubscription') }}</h3><p>{{ l('subscription') }}</p></div><button type="button" @click="closeModal">×</button></header><div class="form-grid"><label class="wide"><span>{{ l('company') }}</span><select v-model="subscriptionForm.tenant_id" required><option v-for="company in companies" :key="company.id" :value="company.id">{{ company.name }}</option></select></label><label><span>{{ l('package') }}</span><select v-model="subscriptionForm.plan_id" required><option v-for="plan in plans" :key="plan.id" :value="plan.id">{{ planName(plan) }}</option></select></label><label><span>{{ l('status') }}</span><select v-model="subscriptionForm.status"><option value="trial">{{ l('trial') }}</option><option value="active">{{ l('active') }}</option><option value="suspended">{{ l('suspended') }}</option></select></label><label><span>{{ l('billingPeriod') }}</span><select v-model="subscriptionForm.billing_period"><option value="monthly">{{ l('monthly') }}</option><option value="annual">{{ l('annual') }}</option></select></label><label><span>{{ l('amount') }} ({{ t('IQD') }})</span><input v-model="subscriptionForm.amount" min="0" type="number"></label><label class="wide"><span>{{ l('ends') }}</span><input v-model="subscriptionForm.ends_at" type="date"></label><label class="check"><input v-model="subscriptionForm.auto_renew" type="checkbox"><span>{{ l('autoRenew') }}</span></label><label class="check"><input v-model="subscriptionForm.create_invoice" type="checkbox"><span>{{ l('createInvoice') }}</span></label></div><p v-if="actionError" class="form-error">{{ actionError }}</p><footer><button class="btn secondary" type="button" @click="closeModal">{{ l('cancel') }}</button><button class="btn primary" :disabled="busy">{{ l('save') }}</button></footer></form>
+            <form v-else-if="modal === 'subscription'" class="modal-card" @submit.prevent="submitSubscription"><header><div><h3>{{ l('newSubscription') }}</h3><p>{{ l('subscription') }}</p></div><button type="button" @click="closeModal">×</button></header><div class="form-grid"><label class="wide"><span>{{ l('company') }}</span><PopupSelect v-model="subscriptionForm.tenant_id" required><option v-for="company in companies" :key="company.id" :value="company.id">{{ company.name }}</option></PopupSelect></label><label><span>{{ l('package') }}</span><PopupSelect v-model="subscriptionForm.plan_id" required><option v-for="plan in plans" :key="plan.id" :value="plan.id">{{ planName(plan) }}</option></PopupSelect></label><label><span>{{ l('status') }}</span><PopupSelect v-model="subscriptionForm.status"><option value="trial">{{ l('trial') }}</option><option value="active">{{ l('active') }}</option><option value="suspended">{{ l('suspended') }}</option></PopupSelect></label><label><span>{{ l('billingPeriod') }}</span><PopupSelect v-model="subscriptionForm.billing_period"><option value="monthly">{{ l('monthly') }}</option><option value="annual">{{ l('annual') }}</option></PopupSelect></label><label><span>{{ l('amount') }} ({{ l('iqd') }})</span><input v-model="subscriptionForm.amount" min="0" type="number"></label><label class="wide"><span>{{ l('ends') }}</span><input v-model="subscriptionForm.ends_at" type="date"></label><label class="check"><input v-model="subscriptionForm.auto_renew" type="checkbox"><span>{{ l('autoRenew') }}</span></label><label v-if="canCreateInvoices" class="check"><input v-model="subscriptionForm.create_invoice" type="checkbox"><span>{{ l('createInvoice') }}</span></label></div><p v-if="actionError" class="form-error">{{ actionError }}</p><footer><button class="btn secondary" type="button" @click="closeModal">{{ l('cancel') }}</button><button class="btn primary" :disabled="busy">{{ l('save') }}</button></footer></form>
 
-            <form v-else-if="modal === 'invoice'" class="modal-card" @submit.prevent="submitInvoice"><header><div><h3>{{ l('issueInvoice') }}</h3><p>{{ l('invoices') }}</p></div><button type="button" @click="closeModal">×</button></header><div class="form-grid"><label class="wide"><span>{{ l('company') }}</span><select v-model="invoiceForm.tenant_id" required><option v-for="company in companies" :key="company.id" :value="company.id">{{ company.name }}</option></select></label><label><span>{{ l('subscription') }}</span><select v-model="invoiceForm.subscription_id"><option value="">—</option><option v-for="sub in subscriptions.filter(s => String(s.tenant_id) === String(invoiceForm.tenant_id))" :key="sub.id" :value="sub.id">{{ planName(sub.plan) }} · {{ dateValue(sub.ends_at) }}</option></select></label><label><span>{{ l('amount') }} ({{ t('IQD') }})</span><input v-model="invoiceForm.amount" min="0" type="number" required></label><label class="wide"><span>{{ l('due') }}</span><input v-model="invoiceForm.due_at" type="date"></label><label class="wide"><span>{{ l('note') }}</span><textarea v-model.trim="invoiceForm.note" rows="3" /></label></div><p v-if="actionError" class="form-error">{{ actionError }}</p><footer><button class="btn secondary" type="button" @click="closeModal">{{ l('cancel') }}</button><button class="btn primary" :disabled="busy">{{ l('issueInvoice') }}</button></footer></form>
+            <form v-else-if="modal === 'invoice'" class="modal-card" @submit.prevent="submitInvoice"><header><div><h3>{{ l('issueInvoice') }}</h3><p>{{ l('invoices') }}</p></div><button type="button" @click="closeModal">×</button></header><div class="form-grid"><label class="wide"><span>{{ l('company') }}</span><PopupSelect v-model="invoiceForm.tenant_id" required><option v-for="company in companies" :key="company.id" :value="company.id">{{ company.name }}</option></PopupSelect></label><label><span>{{ l('subscription') }}</span><PopupSelect v-model="invoiceForm.subscription_id"><option value="">—</option><option v-for="sub in subscriptions.filter(s => String(s.tenant_id) === String(invoiceForm.tenant_id))" :key="sub.id" :value="sub.id">{{ planName(sub.plan) }} · {{ dateValue(sub.ends_at) }}</option></PopupSelect></label><label><span>{{ l('amount') }} ({{ l('iqd') }})</span><input v-model="invoiceForm.amount" min="0" type="number" required></label><label class="wide"><span>{{ l('due') }}</span><input v-model="invoiceForm.due_at" type="date"></label><label class="wide"><span>{{ l('note') }}</span><textarea v-model.trim="invoiceForm.note" rows="3" /></label></div><p v-if="actionError" class="form-error">{{ actionError }}</p><footer><button class="btn secondary" type="button" @click="closeModal">{{ l('cancel') }}</button><button class="btn primary" :disabled="busy">{{ l('issueInvoice') }}</button></footer></form>
 
             <form v-else-if="modal === 'invite'" class="modal-card compact" @submit.prevent="submitInvite"><header><div><h3>{{ l('inviteOperator') }}</h3><p>{{ l('platformOperators') }}</p></div><button type="button" @click="closeModal">×</button></header><div class="form-grid"><label class="wide"><span>{{ l('inviteName') }}</span><input v-model.trim="inviteForm.name" required></label><label class="wide"><span>{{ l('inviteEmail') }}</span><input v-model.trim="inviteForm.email" dir="ltr" type="email" required></label><label><span>{{ l('expiresDays') }}</span><input v-model.number="inviteForm.expires_in_days" type="number" min="1" max="30" required></label></div><p v-if="actionError" class="form-error">{{ actionError }}</p><footer><button class="btn secondary" type="button" @click="closeModal">{{ l('cancel') }}</button><button class="btn primary" :disabled="busy">{{ l('sendInvitation') }}</button></footer></form>
         </div>

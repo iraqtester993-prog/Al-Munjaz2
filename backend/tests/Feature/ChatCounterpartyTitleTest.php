@@ -81,7 +81,7 @@ class ChatCounterpartyTitleTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Mobile/ChatThread')
                 ->where('chat.counterparty_name', $courier->name)
-                ->where('chat.title_ar', 'شكوى / تأخر — '.$courier->name.' — '.$order->track_no));
+                ->where('chat.title_ar', 'دعم الطلب — '.$courier->name.' — '.$order->track_no));
     }
 
     public function test_dashboard_separates_support_from_read_only_merchant_courier_chats(): void
@@ -106,7 +106,7 @@ class ChatCounterpartyTitleTest extends TestCase
             'counterparty_id' => $courier->id,
             'counterparty_type' => 'order_support',
             'order_id' => $order->id,
-            'title_ar' => 'شكوى / تأخر — '.$courier->name,
+            'title_ar' => 'دعم الطلب — '.$courier->name.' — '.$order->track_no,
             'last_message' => 'أحتاج مساعدة من الإدارة.',
             'last_at' => now()->subMinute(),
         ]);

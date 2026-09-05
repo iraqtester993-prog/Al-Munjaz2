@@ -123,7 +123,7 @@ class AdminNotificationDispatcher
      * includes dashboard users merely because they happen to have an active
      * account in the same users table.
      *
-     * @param array{audience:string,target_user_id?:int|null} $payload
+     * @param  array{audience:string,target_user_id?:int|null}  $payload
      */
     private function recipientsFor(array $payload): Builder
     {

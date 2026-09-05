@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
 
@@ -16,19 +17,22 @@ use Illuminate\Validation\ValidationException;
 class CourierLocationService
 {
     /**
-     * A live operational pin is useful only for a short time. Fifteen minutes
-     * keeps it useful without making a courier who briefly loses reception
-     * re-authorize every action. The timestamp is set by the server only.
+     * A live operational pin is useful only for a very short time. A claim
+     * also asks the device for a fresh point immediately before it is sent,
+     * so a previously shared coordinate cannot keep authorising new work
+     * after location access has been switched off.
      */
-    public const OPERATIONAL_FRESHNESS_MINUTES = 15;
+    public const OPERATIONAL_FRESHNESS_MINUTES = 3;
 
-    public const OPERATIONAL_LOCATION_REQUIRED_MESSAGE = 'لا يمكن متابعة الطلب قبل تفعيل الموقع. اسمح للتطبيق بتحديث موقعك، وتأكد أن آخر تحديث خلال 15 دقيقة.';
+    public const OPERATIONAL_LOCATION_REQUIRED_MESSAGE = 'لا يمكن متابعة الطلب قبل تفعيل الموقع. اسمح للتطبيق بتحديث موقعك، وتأكد أن آخر تحديث خلال 3 دقائق.';
 
     /**
      * @param  array{latitude: numeric, longitude: numeric, accuracy_meters?: numeric|null}  $location
      */
     public function record(User $courier, array $location): User
     {
+        $this->ensureDirectCourier($courier);
+
         $courier->forceFill([
             'current_latitude' => round((float) $location['latitude'], 7),
             'current_longitude' => round((float) $location['longitude'], 7),
@@ -51,6 +55,8 @@ class CourierLocationService
      */
     public function clear(User $courier): void
     {
+        $this->ensureDirectCourier($courier);
+
         $courier->forceFill([
             'current_latitude' => null,
             'current_longitude' => null,
@@ -82,6 +88,8 @@ class CourierLocationService
      */
     public function requireFreshOperationalLocation(User $courier): void
     {
+        $this->ensureDirectCourier($courier);
+
         if (! $this->hasFreshOperationalLocation($courier)) {
             throw ValidationException::withMessages([
                 'location' => [self::OPERATIONAL_LOCATION_REQUIRED_MESSAGE],
@@ -98,7 +106,7 @@ class CourierLocationService
     public function dashboardRows(): array
     {
         return User::withoutGlobalScopes()
-            ->whereIn('role', User::COURIER_ROLES)
+            ->where('role', 'courier')
             ->where('status', 'active')
             // `withoutGlobalScopes()` is deliberate for cross-tenant
             // operations, but it also removes SoftDeletes' scope. A removed
@@ -139,7 +147,7 @@ class CourierLocationService
     public function dashboardCourierRows(User $actor): array
     {
         $couriers = User::withoutGlobalScopes()
-            ->whereIn('role', User::COURIER_ROLES)
+            ->where('role', 'courier')
             // A suspended, pending, or removed account must never expose a
             // previously shared point through the operations dashboard.
             ->where('status', 'active');
@@ -275,5 +283,12 @@ class CourierLocationService
             'updated_at' => $courier->location_updated_at->toIso8601String(),
             'address_label' => $addressLabel === '' ? null : $addressLabel,
         ];
+    }
+
+    private function ensureDirectCourier(User $courier): void
+    {
+        if ($courier->role !== 'courier') {
+            throw new AuthorizationException('مشاركة الموقع متاحة للمندوب فقط.');
+        }
     }
 }

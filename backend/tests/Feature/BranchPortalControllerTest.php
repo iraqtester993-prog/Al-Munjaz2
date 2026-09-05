@@ -76,7 +76,7 @@ class BranchPortalControllerTest extends TestCase
             ->assertJsonMissingPath('props.couriers');
     }
 
-    public function test_branch_manager_can_use_only_explicit_manager_memberships(): void
+    public function test_branch_manager_cannot_use_the_legacy_owner_portal(): void
     {
         [$platform, $otherTenant] = $this->tenants();
         $memberBranch = $this->branch($platform, 'KRB-01', 'فرع كربلاء');
@@ -94,11 +94,7 @@ class BranchPortalControllerTest extends TestCase
         $this->actingAs($manager)
             ->withHeader('X-Inertia', 'true')
             ->get('/__tests/branch-portal')
-            ->assertOk()
-            ->assertJsonPath('component', 'Admin/BranchPortal')
-            ->assertJsonCount(1, 'props.branches')
-            ->assertJsonCount(1, 'props.recentOrders')
-            ->assertJsonPath('props.summary.branches', 1);
+            ->assertForbidden();
     }
 
     public function test_disabled_branch_membership_does_not_keep_the_portal_accessible(): void
@@ -115,6 +111,26 @@ class BranchPortalControllerTest extends TestCase
             ->assertOk()
             ->assertJsonCount(0, 'props.branches')
             ->assertJsonPath('props.summary.branches', 0);
+    }
+
+    public function test_paused_branch_revokes_the_unified_dashboard_session(): void
+    {
+        [$platform] = $this->tenants();
+        $branch = $this->branch($platform, 'BGD-PAUSE', 'فرع بغداد الموقوف');
+        $manager = $this->user($platform, 'branch_manager', 'paused-branch-manager');
+        $manager->managedBranches()->attach($branch->id, ['access_role' => BranchMembership::MANAGER]);
+
+        $this->actingAs($manager)
+            ->get('/dashboard')
+            ->assertOk();
+
+        $branch->update(['is_active' => false]);
+
+        $this->actingAs($manager)
+            ->get('/dashboard')
+            ->assertRedirect('/dashboard/login');
+
+        $this->assertGuest();
     }
 
     public function test_operational_lists_and_related_profiles_are_limited_to_authorised_branches(): void

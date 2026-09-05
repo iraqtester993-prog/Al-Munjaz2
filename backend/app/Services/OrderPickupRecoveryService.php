@@ -5,7 +5,6 @@ namespace App\Services;
 use App\Models\Notification;
 use App\Models\Order;
 use App\Models\Scopes\TenantScope;
-use App\Models\Setting;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Models\Wallet;
@@ -47,17 +46,23 @@ class OrderPickupRecoveryService
                 : 'تأخر المندوب عن الوصول إلى التاجر؛ أُعيد طرح الطلب من لوحة الإدارة.';
 
             $this->releaseBudgetReservation($delivery, $previousCourier);
+            $this->refundAdministrativeDeductionForReoffer($delivery, $previousCourier);
 
-            $availabilityMinutes = max(1, min((int) Setting::get('order_expiry_minutes', 30), 1440));
+            $availabilityMinutes = max(1, min((int) $this->settingForOrder($delivery, 'order_expiry_minutes', 30), 1440));
+            $offerOpenedAt = now();
             $delivery->forceFill([
                 'courier_id' => null,
                 'pickup_courier_id' => null,
                 'delivery_courier_id' => null,
                 'accepted_at' => null,
-                'pickup_deadline_at' => now()->addMinutes($availabilityMinutes),
+                // The next acceptance receives a fresh immutable snapshot;
+                // the prior one is retained in the financial ledger only.
+                'admin_deduction_applied' => null,
+                'offer_opened_at' => $offerOpenedAt,
+                'pickup_deadline_at' => $offerOpenedAt->copy()->addMinutes($availabilityMinutes),
             ])->save();
 
-            app(OrderWorkflowService::class)->changeStatus($delivery, 'pending', $actor, $reason);
+            app(OrderWorkflowService::class)->changeStatus($delivery, 'pending', $actor, $reason, true);
 
             if ($previousCourier) {
                 Notification::create([
@@ -78,42 +83,86 @@ class OrderPickupRecoveryService
 
     private function releaseBudgetReservation(Order $order, ?User $courier): void
     {
-        $held = Transaction::withoutGlobalScope(TenantScope::class)
-            ->where('order_id', $order->id)
-            ->where('user_id', $order->courier_id)
-            ->where('type', 'paid_order')
-            ->where('direction', -1)
-            ->exists();
+        $courierId = (int) ($courier?->id ?: $order->courier_id);
 
-        $alreadyReleased = Transaction::withoutGlobalScope(TenantScope::class)
-            ->where('order_id', $order->id)
-            ->where('user_id', $order->courier_id)
-            ->where('type', 'budget_release')
-            ->exists();
+        app(CourierBudgetHoldService::class)->releaseOutstandingForCourier(
+            $order,
+            $courierId,
+            'إعادة مبلغ حجز الطلب إلى رصيد الميزانية بعد انتهاء وقت الوصول وإعادة الطرح.',
+        );
+    }
 
-        if (! $held || $alreadyReleased) {
+    /**
+     * A courier who never reached the merchant has not performed the job.
+     * Re-offering the same order must therefore reverse the acceptance-time
+     * Qi deduction once, alongside returning its budget reservation.
+     */
+    private function refundAdministrativeDeductionForReoffer(Order $order, ?User $courier): void
+    {
+        $courierId = (int) $order->courier_id;
+        $amount = max(0, (int) ($order->admin_deduction_applied ?? 0));
+
+        if ($courierId <= 0 || $amount === 0) {
             return;
         }
 
-        $wallet = Wallet::query()
-            ->where('user_id', $order->courier_id)
-            ->lockForUpdate()
-            ->first();
+        $charged = Transaction::withoutGlobalScope(TenantScope::class)
+            ->where('order_id', $order->id)
+            ->where('user_id', $courierId)
+            ->where('type', 'commission')
+            ->where('direction', -1)
+            ->exists();
+        $alreadyRefunded = Transaction::withoutGlobalScope(TenantScope::class)
+            ->where('order_id', $order->id)
+            ->where('user_id', $courierId)
+            ->where('type', 'commission_refund')
+            ->where('direction', 1)
+            ->exists();
 
-        if ($wallet) {
-            $wallet->increment('budget', $order->price);
+        if (! $charged || $alreadyRefunded) {
+            return;
         }
+
+        $wallet = Wallet::query()->where('user_id', $courierId)->lockForUpdate()->first();
+        if (! $wallet) {
+            return;
+        }
+
+        $wallet->increment('balance', $amount);
 
         Transaction::create([
             'tenant_id' => $courier?->tenant_id,
-            'user_id' => $order->courier_id,
-            'type' => 'budget_release',
-            'amount' => $order->price,
+            'user_id' => $courierId,
+            'type' => 'commission_refund',
+            'amount' => $amount,
             'direction' => 1,
             'ref' => $order->track_no,
             'order_id' => $order->id,
             'date' => today(),
-            'note' => 'إعادة ميزانية بعد انتهاء وقت الوصول إلى التاجر وإعادة طرح الطلب.',
+            'note' => 'إعادة استقطاع الإدارة لأن الطلب أُعيد طرحه قبل استلامه.',
         ]);
+
+        if ($courier) {
+            Notification::create([
+                'tenant_id' => $courier->tenant_id,
+                'user_id' => $courier->id,
+                'type' => 'finance',
+                'title_ar' => 'إعادة استقطاع الإدارة',
+                'title_en' => 'Platform deduction refunded',
+                'title_ku' => 'گەڕاندنەوەی کەمکردنەوەی بەڕێوەبەرایەتی',
+                'body_ar' => 'أُعيد مبلغ '.number_format($amount).' د.ع إلى رصيد Qi لأن الطلب '.$order->track_no.' أُعيد طرحه قبل استلامه.',
+                'body_en' => number_format($amount).' IQD was returned to your Qi balance because '.$order->track_no.' was re-offered before pickup.',
+                'body_ku' => number_format($amount).' د.ع گەڕێندرایەوە بۆ باڵانسی Qi ـت چونکە '.$order->track_no.' پێش وەرگرتن دووبارە پێشکەش کرا.',
+                'data' => ['order_id' => $order->id, 'type' => 'commission_refund', 'amount' => $amount],
+            ]);
+        }
+    }
+
+    private function settingForOrder(Order $order, string $key, mixed $default): mixed
+    {
+        $branchId = (int) ($order->branch_id ?: $order->origin_branch_id);
+
+        return app(BranchSettingsResolver::class)
+            ->getForOperationalBranch($branchId > 0 ? $branchId : null, $key, $default);
     }
 }

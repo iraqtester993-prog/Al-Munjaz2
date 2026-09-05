@@ -13,6 +13,12 @@ class AdminPreferencesController extends Controller
 
         $request->user()->update(['theme' => $data['theme']]);
 
+        // Dashboard and branch portal theme changes are saved in the
+        // background, so do not redirect them back through Inertia.
+        if ($request->expectsJson()) {
+            return response()->noContent();
+        }
+
         return back();
     }
 

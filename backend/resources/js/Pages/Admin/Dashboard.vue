@@ -1,28 +1,25 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
+import BranchFilter from '../../Components/BranchFilter.vue'
 import DonutChart from '../../Components/DonutChart.vue'
 import StatusBadge from '../../Components/StatusBadge.vue'
 
 const props = defineProps({
     kpis: { type: Object, required: true },
-    operations: { type: Object, default: () => ({}) },
     financials: { type: Object, default: () => ({}) },
     statusCounts: { type: Object, required: true },
     week: { type: Array, default: () => [] },
     recentOrders: { type: Array, default: () => [] },
     recentNotifs: { type: Array, default: () => [] },
     topMerchants: { type: Array, default: () => [] },
+    branchFilter: { type: Object, default: () => ({}) },
 })
 
 const page = usePage()
 const locale = computed(() => page.props.locale || 'ar')
-const lastRefresh = ref(new Date())
-const heroSlideIndex = ref(0)
-let refreshTimer
-let heroTimer
 
 const primaryKpis = computed(() => [
     { icon: 'box', label: t('Orders'), value: props.kpis.orders, tint: 'var(--primary-tint)', color: 'var(--primary-strong)' },
@@ -55,42 +52,6 @@ const financialRows = computed(() => [
     { label: t('Merchant Balance'), value: props.financials.merchantBalance, tone: 'default' },
     { label: t('Courier Budget'), value: props.financials.courierBudget, tone: 'default' },
     { label: t('Courier Collections'), value: props.financials.collected, tone: 'positive' },
-])
-
-const heroSlides = computed(() => [
-    {
-        id: 'overview',
-        tone: 'overview',
-        tag: t('Live operational snapshot'),
-        title: t('Platform Operations'),
-        description: `${operationsValue('todayOrders')} ${t('Orders Today')} · ${operationsValue('onlineCouriers')} ${t('Couriers online')}`,
-        metric: operationsValue('todayOrders'),
-        metricLabel: t('Orders Today'),
-        action: t('View Orders'),
-        url: route('admin.orders'),
-    },
-    {
-        id: 'couriers',
-        tone: 'couriers',
-        tag: t('Couriers online'),
-        title: `${operationsValue('onlineCouriers')} ${t('Couriers online')}`,
-        description: `${props.kpis.courier || 0} ${t('With Courier')} · ${props.kpis.delivered || 0} ${t('Delivered')}`,
-        metric: props.kpis.courier || 0,
-        metricLabel: t('With Courier'),
-        action: t('View Orders'),
-        url: route('admin.orders'),
-    },
-    {
-        id: 'attention',
-        tone: 'attention',
-        tag: t('Need attention'),
-        title: `${operationsValue('deliveryRate')}% ${t('Delivery rate')}`,
-        description: `${operationsValue('attentionCount')} ${t('Need attention')} · ${props.kpis.pending || 0} ${t('Pending')}`,
-        metric: `${operationsValue('deliveryRate')}%`,
-        metricLabel: t('Delivery rate'),
-        action: t('Notifications'),
-        url: route('admin.notifications'),
-    },
 ])
 
 const maxWeek = computed(() => Math.max(1, ...props.week.map((item) => item.count)))
@@ -164,111 +125,20 @@ function money(value) {
     return `${fmt(value || 0)} ${t('IQD')}`
 }
 
-function operationsValue(key) {
-    return props.operations?.[key] || 0
-}
-
-function goToHeroSlide(index) {
-    const count = heroSlides.value.length
-    if (! count) return
-    heroSlideIndex.value = (index + count) % count
-}
-
-function nextHeroSlide() {
-    goToHeroSlide(heroSlideIndex.value + 1)
-}
-
-function previousHeroSlide() {
-    goToHeroSlide(heroSlideIndex.value - 1)
-}
-
-function visitHero(slide) {
-    router.visit(slide.url)
-}
-
-function refreshedAt() {
-    const language = { ar: 'ar-IQ-u-nu-latn', en: 'en-US', ku: 'ku-IQ-u-nu-latn' }[locale.value] || 'en-US'
-    return lastRefresh.value.toLocaleTimeString(language)
-}
-
-function startHeroTimer() {
-    window.clearInterval(heroTimer)
-    heroTimer = window.setInterval(() => {
-        if (document.visibilityState === 'visible') nextHeroSlide()
-    }, 5500)
-}
-
-function refreshOverview() {
-    router.reload({
-        only: ['kpis', 'operations', 'financials', 'statusCounts', 'week', 'recentOrders', 'recentNotifs', 'topMerchants'],
+function changeBranchFilter(branchId) {
+    router.get(route('admin.dashboard'), branchId ? { branch_id: branchId } : {}, {
         preserveScroll: true,
-        preserveState: true,
-        onSuccess: () => { lastRefresh.value = new Date() },
+        preserveState: false,
     })
 }
-
-onMounted(() => {
-    refreshTimer = window.setInterval(refreshOverview, 60_000)
-    startHeroTimer()
-})
-
-onBeforeUnmount(() => {
-    window.clearInterval(refreshTimer)
-    window.clearInterval(heroTimer)
-})
 
 </script>
 
 <template>
     <AdminShell title="Dashboard">
-        <section class="dashboard-hero-carousel" :aria-label="t('Platform Operations')">
-            <article
-                v-for="(slide, index) in heroSlides"
-                :key="slide.id"
-                class="dashboard-hero-slide"
-                :class="[`tone-${slide.tone}`, { active: heroSlideIndex === index }]"
-                :aria-hidden="heroSlideIndex !== index"
-            >
-                <div class="hero-orbit hero-orbit-one" aria-hidden="true" />
-                <div class="hero-orbit hero-orbit-two" aria-hidden="true" />
-                <div class="dashboard-hero-copy">
-                    <span class="dashboard-hero-tag"><i />{{ slide.tag }}</span>
-                    <h2>{{ slide.title }}</h2>
-                    <p>{{ slide.description }}</p>
-                    <button class="dashboard-hero-action" type="button" @click="visitHero(slide)">
-                        {{ slide.action }}
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-                    </button>
-                </div>
-
-                <div class="dashboard-hero-metric">
-                    <strong class="mono">{{ slide.metric }}</strong>
-                    <span>{{ slide.metricLabel }}</span>
-                    <small>{{ t('Updated') }} {{ refreshedAt() }}</small>
-                </div>
-            </article>
-
-            <button class="hero-arrow hero-prev" type="button" :aria-label="t('Previous')" @click="previousHeroSlide">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
-            </button>
-            <button class="hero-arrow hero-next" type="button" :aria-label="t('Next')" @click="nextHeroSlide">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
-            </button>
-            <div class="hero-dots" role="tablist" :aria-label="t('Platform Operations')">
-                <button
-                    v-for="(slide, index) in heroSlides"
-                    :key="slide.id"
-                    class="hero-dot"
-                    :class="{ active: heroSlideIndex === index }"
-                    type="button"
-                    role="tab"
-                    :aria-selected="heroSlideIndex === index"
-                    :aria-label="`${index + 1}`"
-                    @click="goToHeroSlide(index)"
-                />
-            </div>
-        </section>
-
+        <div v-if="branchFilter?.enabled" class="dashboard-filter-row">
+            <BranchFilter :filter="branchFilter" @change="changeBranchFilter" />
+        </div>
         <div class="kpi-grid dashboard-kpis">
             <div v-for="kpi in primaryKpis" :key="kpi.label" class="kpi">
                 <div class="ki" :style="{ background: kpi.tint, color: kpi.color }">
@@ -396,22 +266,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.dashboard-hero-carousel{position:relative;height:200px;margin-bottom:22px;overflow:hidden;border:1px solid var(--border);border-radius:18px;box-shadow:0 18px 34px rgba(0,0,0,.18)}
-.dashboard-hero-slide{position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between;gap:28px;padding:26px 72px 26px 30px;overflow:hidden;opacity:0;pointer-events:none;transform:scale(1.015);transition:opacity .56s ease,transform .7s ease;color:#fff;background:linear-gradient(135deg,#0e7490,#22d3ee)}
-.dashboard-hero-slide.active{z-index:1;opacity:1;pointer-events:auto;transform:scale(1)}
-.dashboard-hero-slide.tone-overview{background:radial-gradient(circle at 84% 20%,rgba(123,247,230,.32),transparent 25%),linear-gradient(135deg,#075e59,#0b7770 52%,#0f9a8e)}
-.dashboard-hero-slide.tone-couriers{background:radial-gradient(circle at 84% 20%,rgba(207,183,255,.3),transparent 25%),linear-gradient(135deg,#312e81,#5b21b6 52%,#7c3aed)}
-.dashboard-hero-slide.tone-attention{background:radial-gradient(circle at 84% 20%,rgba(255,230,158,.28),transparent 25%),linear-gradient(135deg,#92400e,#b45309 52%,#d97706)}
-.dashboard-hero-copy{position:relative;z-index:2;max-width:590px;min-width:0}.dashboard-hero-tag{display:inline-flex;align-items:center;gap:7px;margin-bottom:10px;padding:4px 11px;border:1px solid rgba(255,255,255,.26);border-radius:999px;background:rgba(255,255,255,.14);font-size:10.5px;font-weight:900}.dashboard-hero-tag i{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 0 4px rgba(255,255,255,.14)}
-.dashboard-hero-copy h2{margin:0;font-size:21px;line-height:1.35;font-weight:950;letter-spacing:-.35px}.dashboard-hero-copy p{margin:6px 0 0;max-width:470px;color:rgba(255,255,255,.86);font-size:12px;font-weight:650;line-height:1.75}.dashboard-hero-action{display:inline-flex;align-items:center;gap:7px;margin-top:14px;padding:8px 12px;border:1px solid rgba(255,255,255,.3);border-radius:10px;background:rgba(255,255,255,.12);color:#fff;font:inherit;font-size:10.5px;font-weight:900;cursor:pointer;transition:background .15s ease,transform .15s ease}.dashboard-hero-action:hover{background:rgba(255,255,255,.22);transform:translateY(-1px)}
-.dashboard-hero-metric{position:relative;z-index:2;display:flex;flex:none;flex-direction:column;align-items:center;justify-content:center;min-width:130px;min-height:116px;padding:14px 17px;border:1px solid rgba(255,255,255,.22);border-radius:16px;background:rgba(4,18,28,.17);backdrop-filter:blur(5px);text-align:center}.dashboard-hero-metric strong{font-size:29px;line-height:1;font-weight:950;letter-spacing:-1px}.dashboard-hero-metric span{margin-top:7px;font-size:10.5px;font-weight:850}.dashboard-hero-metric small{margin-top:10px;color:rgba(255,255,255,.72);font-size:8.5px;font-weight:700}
-.hero-orbit{position:absolute;border:1px solid rgba(255,255,255,.18);border-radius:50%;pointer-events:none}.hero-orbit-one{width:250px;height:250px;inset-inline-end:-54px;top:-82px}.hero-orbit-two{width:165px;height:165px;inset-inline-end:88px;bottom:-102px;border-color:rgba(255,255,255,.13)}
-.hero-arrow{position:absolute;z-index:3;top:50%;display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;cursor:pointer;transform:translateY(-50%);transition:background .15s ease}.hero-arrow:hover{background:rgba(255,255,255,.3)}.hero-prev{left:14px}.hero-next{right:14px}.hero-dots{position:absolute;z-index:3;right:28px;bottom:15px;display:flex;gap:6px}.hero-dot{width:7px;height:7px;padding:0;border:0;border-radius:999px;background:rgba(255,255,255,.42);cursor:pointer;transition:width .2s ease,background .2s ease}.hero-dot.active{width:22px;background:#fff}
+.dashboard-filter-row{display:flex;justify-content:flex-end;margin:-7px 0 15px}
 .dashboard-kpis{grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:18px}.overview-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr);gap:18px}.merchant-row{grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr)}.distribution-layout{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:16px;align-items:center}.status-distribution{display:grid;gap:13px}.distribution-row{display:grid;grid-template-columns:90px minmax(44px,1fr) 24px;align-items:center;gap:9px;font-size:11px}.distribution-label{color:var(--ink-soft);font-weight:800}.distribution-track{height:7px;background:var(--surface-2);border-radius:20px;overflow:hidden}.distribution-track i{display:block;height:100%;border-radius:20px;min-width:3px}.distribution-row b{font-size:11px;text-align:end}.donut-wrap{min-width:0}.source-pill,.weekly-total{padding:3px 8px;border-radius:8px;background:var(--surface-2);color:var(--ink-soft);font-size:10px;font-weight:800}.link-button{border:0;background:transparent;font:inherit;font-size:11px;font-weight:800}
 .courier-location-panel{margin-bottom:18px;overflow:hidden}.courier-location-head{align-items:flex-start}.courier-location-head h3{margin:0}.courier-location-head small{display:block;max-width:500px;margin-top:4px;color:var(--ink-faint);font-size:10px;font-weight:700;line-height:1.5}.courier-location-layout{display:grid;grid-template-columns:minmax(220px,.56fr) minmax(0,1.44fr);min-height:328px;border-top:1px solid var(--border)}.courier-location-list{display:grid;align-content:start;max-height:328px;overflow:auto;border-inline-end:1px solid var(--border)}.courier-location-row{display:flex;align-items:center;gap:10px;width:100%;min-width:0;padding:12px 14px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--ink);font:inherit;text-align:start;cursor:pointer;transition:background .15s}.courier-location-row:hover,.courier-location-row.active{background:var(--primary-tint)}.courier-location-avatar{display:grid;place-items:center;width:33px;height:33px;border-radius:11px;background:var(--surface-2);color:var(--primary-strong);font-size:12px;font-weight:950;flex:none}.courier-location-row.active .courier-location-avatar{background:var(--primary);color:#fff}.courier-location-copy{display:grid;min-width:0;flex:1;gap:2px}.courier-location-copy b,.courier-location-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.courier-location-copy b{font-size:11.5px;font-weight:900}.courier-location-copy small{color:var(--ink-faint);font-size:9.5px;font-weight:700}.courier-location-presence{width:9px;height:9px;border-radius:50%;background:var(--ink-faint);box-shadow:0 0 0 4px var(--surface-2);flex:none}.courier-location-presence.online{background:var(--success);box-shadow:0 0 0 4px var(--success-tint)}.courier-location-map-wrap{position:relative;min-width:0;background:var(--surface-2)}.courier-location-map{display:block;width:100%;height:328px;border:0;background:var(--surface-2)}.courier-location-map-info{position:absolute;z-index:2;right:12px;bottom:12px;left:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 11px;border:1px solid color-mix(in srgb,var(--border) 88%,transparent);border-radius:11px;background:color-mix(in srgb,var(--surface) 93%,transparent);box-shadow:0 8px 22px rgba(0,0,0,.16);backdrop-filter:blur(8px)}.courier-location-map-info div{display:grid;min-width:0;gap:2px}.courier-location-map-info b,.courier-location-map-info small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.courier-location-map-info b{font-size:11px;font-weight:950}.courier-location-map-info small{color:var(--ink-soft);font-size:9px;font-weight:700}.courier-location-map-info a{flex:none;padding:7px 9px;border-radius:8px;background:var(--primary);color:#fff;font-size:9.5px;font-weight:900;text-decoration:none}.courier-location-empty{display:flex;align-items:center;gap:12px;padding:30px 18px;color:var(--ink-soft)}.courier-location-empty>span{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:var(--primary-tint);color:var(--primary-strong);font-size:24px}.courier-location-empty div{display:grid;gap:3px}.courier-location-empty b{font-size:12px;color:var(--ink)}.courier-location-empty small{font-size:10px;line-height:1.6}
 .location-directory-link{flex:none;padding:8px 11px;border:1px solid var(--border);border-radius:9px;background:var(--primary);color:#fff;font:850 10.5px var(--font);cursor:pointer;white-space:nowrap}
 .financial-list{padding:3px 18px}.financial-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;border-bottom:1px solid var(--border);font-size:11.5px;font-weight:700;color:var(--ink-soft)}.financial-row:last-child{border-bottom:0}.financial-row b{font-size:12.5px;color:var(--ink)}.financial-row b.positive{color:var(--success)}.financial-row b.accent{color:var(--accent)}.table-wrap{overflow-x:auto}.merchant-cell{display:flex;align-items:center;gap:9px;min-width:175px}.merchant-avatar{display:grid;place-items:center;width:31px;height:31px;border-radius:11px;background:var(--primary-tint);color:var(--primary-strong);font-size:12px;font-weight:950}.merchant-cell b,.merchant-cell small{display:block}.merchant-cell small{margin-top:2px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-faint);font-size:10px}.positive{color:var(--success)}.text-muted{color:var(--ink-faint)}.notification-list{min-height:183px}.notification-list .notif-item{padding:13px 16px}.notif-body{min-width:0}.notif-body b,.notif-body span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.notif-body span{margin-top:3px;color:var(--ink-soft);font-size:10.5px}.notif-time{margin-inline-start:auto;white-space:nowrap;color:var(--ink-faint);font-size:9.5px}.weekly-panel{margin-top:0}.week-chart{height:135px;gap:13px;padding:6px 8px 0}.week-col{position:relative;display:flex;flex:1;min-width:30px;height:100%;align-items:center;flex-direction:column;justify-content:flex-end;gap:7px}.week-rail{position:relative;display:flex;width:100%;height:86px;align-items:flex-end;border-radius:7px;background:var(--surface-2);overflow:hidden}.week-bar{width:100%;border-radius:7px 7px 0 0;background:linear-gradient(180deg,var(--primary),var(--primary-strong))}.week-value{font-size:10px;color:var(--ink-soft)}.week-label{font-size:10px;color:var(--ink-faint);font-weight:800}.tracking{color:var(--primary-strong);font-weight:900}.tbl td small{display:block;margin-top:3px;font-size:10px}.tbl td{white-space:nowrap}
 @media(max-width:1180px){.dashboard-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.overview-grid,.merchant-row{grid-template-columns:1fr}.distribution-layout{grid-template-columns:minmax(0,1fr) 180px}.courier-location-layout{grid-template-columns:250px minmax(0,1fr)}}
-@media(max-width:760px){.dashboard-hero-slide{padding-inline:52px 52px}.dashboard-hero-metric{min-width:112px;min-height:102px}.dashboard-hero-metric strong{font-size:25px}.dashboard-hero-copy h2{font-size:19px}}
-@media(max-width:650px){.dashboard-hero-carousel{height:200px;margin-inline:-2px;border-radius:17px}.dashboard-hero-slide{padding:23px 20px 25px}.dashboard-hero-copy{max-width:100%}.dashboard-hero-copy h2{font-size:19px}.dashboard-hero-copy p{max-width:310px;font-size:10.5px}.dashboard-hero-action{margin-top:12px;padding:7px 10px}.dashboard-hero-metric{display:none}.hero-arrow{display:none}.hero-dots{right:20px;bottom:13px}.distribution-layout{grid-template-columns:1fr}.donut-wrap{max-width:180px;margin:auto}.financial-list{padding-inline:15px}.week-chart{gap:7px;padding-inline:0}.week-label{font-size:8.5px}.dashboard-kpis{gap:10px}.tbl th,.tbl td{padding:10px}.courier-location-layout{grid-template-columns:1fr}.courier-location-list{display:flex;max-height:none;overflow:auto;border-inline-end:0;border-bottom:1px solid var(--border)}.courier-location-row{min-width:200px;border-bottom:0;border-inline-end:1px solid var(--border)}.courier-location-map,.courier-location-layout{min-height:295px}.courier-location-map{height:295px}.courier-location-map-info{right:9px;bottom:9px;left:9px}.courier-location-map-info small{max-width:190px}}
+@media(max-width:650px){.distribution-layout{grid-template-columns:1fr}.donut-wrap{max-width:180px;margin:auto}.financial-list{padding-inline:15px}.week-chart{gap:7px;padding-inline:0}.week-label{font-size:8.5px}.dashboard-kpis{gap:10px}.tbl th,.tbl td{padding:10px}.courier-location-layout{grid-template-columns:1fr}.courier-location-list{display:flex;max-height:none;overflow:auto;border-inline-end:0;border-bottom:1px solid var(--border)}.courier-location-row{min-width:200px;border-bottom:0;border-inline-end:1px solid var(--border)}.courier-location-map,.courier-location-layout{min-height:295px}.courier-location-map{height:295px}.courier-location-map-info{right:9px;bottom:9px;left:9px}.courier-location-map-info small{max-width:190px}}
+@media(max-width:650px){.dashboard-filter-row{justify-content:stretch;margin:0 0 14px}}
 </style>

@@ -4,6 +4,8 @@ namespace App\Observers;
 
 use App\Models\Notification;
 use App\Services\WebPushNotificationService;
+use App\Services\OneSignalNotificationService;
+use App\Services\PusherChatPublisher;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -12,9 +14,11 @@ use Illuminate\Support\Facades\DB;
  */
 class NotificationPushObserver
 {
-    public function __construct(private readonly WebPushNotificationService $push)
-    {
-    }
+    public function __construct(
+        private readonly WebPushNotificationService $push,
+        private readonly OneSignalNotificationService $oneSignal,
+        private readonly PusherChatPublisher $realtime,
+    ) {}
 
     public function created(Notification $notification): void
     {
@@ -23,11 +27,14 @@ class NotificationPushObserver
             $stored = Notification::withoutGlobalScopes()->find($notificationId);
             if ($stored) {
                 $this->push->send($stored);
+                $this->oneSignal->send($stored);
+                $this->realtime->publishNotification($stored);
             }
         };
 
         if (DB::transactionLevel() > 0) {
             DB::afterCommit($deliver);
+
             return;
         }
 

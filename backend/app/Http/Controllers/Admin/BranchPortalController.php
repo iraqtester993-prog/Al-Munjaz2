@@ -12,6 +12,7 @@ use App\Models\Order;
 use App\Models\Scopes\TenantScope;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Models\Wallet;
 use App\Services\CourierLocationService;
 use App\Services\OrderOperationalAssignmentService;
 use App\Services\OrderPickupRecoveryService;
@@ -25,7 +26,7 @@ use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 
 /**
- * Operational branch portal for a branch owner or branch manager.
+ * Legacy operational portal for a branch owner.
  *
  * This controller is intentionally separate from the platform-wide dashboard.
  * Its branch list is derived from explicit `branch_memberships` records, not
@@ -39,10 +40,7 @@ class BranchPortalController extends Controller
     {
         $user = $request->user();
 
-        abort_unless(
-            $user instanceof User && in_array($user->role, ['owner', 'branch_manager'], true),
-            403,
-        );
+        abort_unless($user instanceof User && $user->role === 'owner', 403);
 
         $branches = $this->allowedBranches($user);
         $branchIds = $branches->pluck('id')->map(fn ($id) => (int) $id)->all();
@@ -50,6 +48,7 @@ class BranchPortalController extends Controller
         $metrics = $this->branchMetrics($branchIds);
         $peopleMetrics = $this->branchPeopleMetrics($branchIds);
         $recentOrders = $this->recentOrders($branchIds);
+        $operationalDashboard = $this->operationalDashboard($branchIds);
 
         $branchPayload = $branches->map(function (Branch $branch) use ($metrics, $peopleMetrics): array {
             $metric = $metrics->get($branch->id);
@@ -97,6 +96,10 @@ class BranchPortalController extends Controller
         return Inertia::render('Admin/BranchPortal', [
             'branches' => $branchPayload,
             'recentOrders' => $recentOrders,
+            // This mirrors the useful operational detail of the main
+            // dashboard, but every aggregate is calculated only after the
+            // branch membership scope has been applied.
+            'operationalDashboard' => $operationalDashboard,
             // Operational lists can contain hundreds of records and their
             // related documents. Keep the first portal response focused on
             // the overview, then resolve each list only when its tab asks for
@@ -170,17 +173,23 @@ class BranchPortalController extends Controller
     public function assignCourier(Request $request, Order $order)
     {
         $actor = $this->operator($request, 'orders');
+        $branchIds = $this->allowedBranchIds($actor);
         $data = $request->validate([
-            'courier_id' => ['required', 'integer', 'exists:users,id'],
+            'courier_id' => ['required', 'integer', Rule::exists('users', 'id')->where(fn ($couriers) => $couriers
+                ->whereIn('branch_id', $branchIds)
+                ->whereIn('role', User::DIRECT_ORDER_COURIER_ROLES)
+                ->where('status', 'active')
+                ->where('courier_verified', true)
+                ->whereNull('deleted_at'))],
             'assignment_role' => ['nullable', Rule::in(OrderOperationalAssignmentService::ASSIGNMENT_ROLES)],
         ]);
-        $branchIds = $this->allowedBranchIds($actor);
         $order = $this->scopedOrderFor($order, $branchIds);
         $courier = User::query()
             ->whereKey($data['courier_id'])
             ->whereIn('branch_id', $branchIds)
             ->whereIn('role', User::DIRECT_ORDER_COURIER_ROLES)
             ->where('status', 'active')
+            ->where('courier_verified', true)
             ->firstOrFail();
 
         app(OrderOperationalAssignmentService::class)->assign(
@@ -304,6 +313,19 @@ class BranchPortalController extends Controller
         if ($user->role === 'merchant' && $data['status'] === 'rejected' && $user->merchant_verified_at) {
             $user->update(['merchant_verified_at' => null, 'merchant_verified_by' => null]);
         }
+        if ($user->role === 'courier' && $data['status'] === 'rejected' && $user->isCourierVerified()) {
+            $user->update([
+                'courier_verified' => false,
+                'courier_verified_at' => null,
+                'courier_verified_by' => null,
+                'is_online' => false,
+            ]);
+            $this->recordUserAction($request, $user, 'branch.courier.verification_revoked', [
+                'reason' => 'document_rejected',
+                'document_id' => $document->id,
+                'document_type' => $document->type,
+            ]);
+        }
         $this->recordUserAction($request, $user, 'branch.user.document_reviewed', [
             'document_id' => $document->id,
             'status' => $data['status'],
@@ -340,6 +362,7 @@ class BranchPortalController extends Controller
             ->where(function (Builder $orders) use ($user): void {
                 if ($user->role === 'merchant') {
                     $orders->where('merchant_id', $user->id)->orWhere('created_by', $user->id);
+
                     return;
                 }
 
@@ -364,10 +387,7 @@ class BranchPortalController extends Controller
     private function operator(Request $request, string $permission): User
     {
         $user = $request->user();
-        abort_unless(
-            $user instanceof User && in_array($user->role, ['owner', 'branch_manager'], true),
-            403,
-        );
+        abort_unless($user instanceof User && $user->role === 'owner', 403);
         abort_unless($user->canUseDashboardPermission($permission), 403);
 
         return $user;
@@ -387,7 +407,7 @@ class BranchPortalController extends Controller
      * Resolve an individual record through the same SQL boundary used for the
      * portal response. A primary-key route parameter alone is never trusted.
      *
-     * @param array<int, int> $branchIds
+     * @param  array<int, int>  $branchIds
      */
     private function scopedOrderFor(Order $order, array $branchIds): Order
     {
@@ -399,7 +419,7 @@ class BranchPortalController extends Controller
     }
 
     /**
-     * @param array<int, int> $branchIds
+     * @param  array<int, int>  $branchIds
      */
     private function scopedOperationalUser(User $user, array $branchIds): User
     {
@@ -433,9 +453,7 @@ class BranchPortalController extends Controller
      */
     private function allowedBranches(User $user): Collection
     {
-        $requiredAccessRole = $user->role === 'owner'
-            ? BranchMembership::OWNER
-            : BranchMembership::MANAGER;
+        $requiredAccessRole = BranchMembership::OWNER;
         $platformTenantId = Tenant::platform()->id;
 
         return Branch::withoutGlobalScope(TenantScope::class)
@@ -467,7 +485,7 @@ class BranchPortalController extends Controller
      * Build metrics with a SQL union so a cross-branch route contributes once
      * to each permitted endpoint but never leaks an unauthorised endpoint.
      *
-     * @param array<int, int> $branchIds
+     * @param  array<int, int>  $branchIds
      * @return Collection<int, object>
      */
     private function branchMetrics(array $branchIds): Collection
@@ -534,7 +552,7 @@ class BranchPortalController extends Controller
      * independent tenants, so using tenant ids here would leak or omit people
      * in a shared operations network.
      *
-     * @param array<int, int> $branchIds
+     * @param  array<int, int>  $branchIds
      * @return Collection<int, array{merchants:int,couriers:int,online_couriers:int}>
      */
     private function branchPeopleMetrics(array $branchIds): Collection
@@ -570,7 +588,97 @@ class BranchPortalController extends Controller
     }
 
     /**
-     * @param array<int, int> $branchIds
+     * The detailed dashboard payload for a branch manager. It deliberately
+     * has the same operational indicators as the platform home, without
+     * exposing global settings, other governorates, or another branch's
+     * financial data.
+     *
+     * @param  array<int, int>  $branchIds
+     * @return array<string, mixed>
+     */
+    private function operationalDashboard(array $branchIds): array
+    {
+        if ($branchIds === []) {
+            return [
+                'statusCounts' => collect(Order::STATUSES)->mapWithKeys(fn (string $status) => [$status => 0])->all(),
+                'financials' => ['value' => 0, 'deliveredValue' => 0, 'fees' => 0, 'merchantBalance' => 0, 'courierBudget' => 0],
+                'week' => [],
+                'topMerchants' => [],
+            ];
+        }
+
+        $orders = $this->scopedOrders($branchIds);
+        $stats = (clone $orders)
+            ->selectRaw('COALESCE(SUM(price), 0) as order_value')
+            ->selectRaw("COALESCE(SUM(CASE WHEN status = 'delivered' THEN price ELSE 0 END), 0) as delivered_value")
+            ->selectRaw('COALESCE(SUM(fee), 0) as delivery_fees');
+
+        foreach (Order::STATUSES as $status) {
+            $stats->selectRaw('COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as status_'.$status, [$status]);
+        }
+
+        $stats = $stats->toBase()->first();
+        $statusCounts = collect(Order::STATUSES)->mapWithKeys(fn (string $status) => [
+            $status => (int) ($stats->{'status_'.$status} ?? 0),
+        ])->all();
+
+        $weekCounts = (clone $orders)
+            ->whereBetween('date', [today()->copy()->subDays(6)->toDateString(), today()->toDateString()])
+            ->selectRaw('date, COUNT(*) as total')
+            ->groupBy('date')
+            ->pluck('total', 'date');
+        $week = collect(range(6, 0))->map(function (int $daysAgo) use ($weekCounts): array {
+            $date = today()->copy()->subDays($daysAgo);
+
+            return [
+                'label' => $date->translatedFormat('D'),
+                'count' => (int) ($weekCounts->get($date->toDateString()) ?? 0),
+            ];
+        })->values();
+
+        $merchantStats = (clone $orders)
+            ->selectRaw('COALESCE(merchant_id, created_by) as merchant_id')
+            ->selectRaw('COUNT(*) as orders_count')
+            ->selectRaw("COALESCE(SUM(CASE WHEN status = 'delivered' THEN price ELSE 0 END), 0) as delivered_value")
+            ->whereRaw('COALESCE(merchant_id, created_by) IS NOT NULL')
+            // Do not group by the alias: the branch dashboard later joins
+            // this aggregate to users, and MySQL ONLY_FULL_GROUP_BY then
+            // treats the alias as the users column rather than COALESCE(...).
+            ->groupByRaw('COALESCE(merchant_id, created_by)');
+        $topMerchants = User::query()
+            ->where('role', 'merchant')
+            ->whereIn('branch_id', $branchIds)
+            ->leftJoinSub($merchantStats, 'branch_merchant_stats', fn ($join) => $join->on('branch_merchant_stats.merchant_id', '=', 'users.id'))
+            ->orderByDesc('branch_merchant_stats.orders_count')
+            ->orderBy('users.name')
+            ->limit(5)
+            ->get(['users.id', 'users.name', 'users.shop_name', 'branch_merchant_stats.orders_count', 'branch_merchant_stats.delivered_value'])
+            ->map(fn (User $merchant): array => [
+                'id' => $merchant->id,
+                'name' => $merchant->shop_name ?: $merchant->name,
+                'orders' => (int) ($merchant->orders_count ?? 0),
+                'value' => (int) ($merchant->delivered_value ?? 0),
+            ])
+            ->values();
+
+        $wallets = Wallet::query()->whereHas('user', fn (Builder $users) => $users->whereIn('branch_id', $branchIds));
+
+        return [
+            'statusCounts' => $statusCounts,
+            'financials' => [
+                'value' => (int) ($stats->order_value ?? 0),
+                'deliveredValue' => (int) ($stats->delivered_value ?? 0),
+                'fees' => (int) ($stats->delivery_fees ?? 0),
+                'merchantBalance' => (int) (clone $wallets)->whereHas('user', fn (Builder $users) => $users->where('role', 'merchant'))->sum('balance'),
+                'courierBudget' => (int) (clone $wallets)->whereHas('user', fn (Builder $users) => $users->whereIn('role', User::COURIER_ROLES))->sum('budget'),
+            ],
+            'week' => $week,
+            'topMerchants' => $topMerchants,
+        ];
+    }
+
+    /**
+     * @param  array<int, int>  $branchIds
      * @return Collection<int, array<string, mixed>>
      */
     private function recentOrders(array $branchIds): Collection
@@ -625,7 +733,7 @@ class BranchPortalController extends Controller
      * orders. This keeps the first branch dashboard load responsive while all
      * data is still scoped in SQL before it is serialised to the browser.
      *
-     * @param array<int, int> $branchIds
+     * @param  array<int, int>  $branchIds
      * @return Collection<int, array<string, mixed>>
      */
     private function orders(array $branchIds): Collection
@@ -647,14 +755,16 @@ class BranchPortalController extends Controller
             ->latest('id')
             ->limit(100)
             ->get([
-                'id', 'track_no', 'status', 'customer_name_ar', 'customer_name_en', 'phone', 'address_ar', 'address_en',
-                'notes', 'vehicle_note', 'price', 'fee', 'pickup_deadline_at', 'created_at', 'updated_at',
+                'id', 'track_no', 'status', 'customer_name_ar', 'customer_name_en', 'phone', 'phone2', 'address_ar', 'address_en',
+                'notes', 'delivery_vehicle', 'vehicle_note', 'price', 'fee', 'pickup_deadline_at', 'created_at', 'updated_at',
                 'origin_branch_id', 'destination_branch_id', 'branch_id', 'merchant_id', 'courier_id',
                 'pickup_courier_id', 'delivery_courier_id',
             ])
             ->map(function (Order $order) use ($branchIds): array {
                 $visibleBranches = $this->visibleBranchesForOrder($order, $branchIds);
-                $courier = $order->courier ?: $order->pickupCourier ?: $order->deliveryCourier;
+                // courier_id is authoritative for current direct orders. The
+                // two specialist links are a read-only fallback for history.
+                $courier = $order->courier ?: $order->deliveryCourier ?: $order->pickupCourier;
 
                 return [
                     'id' => $order->id,
@@ -662,8 +772,10 @@ class BranchPortalController extends Controller
                     'status' => $order->status,
                     'customer_name' => $order->customer_name_ar ?: $order->customer_name_en,
                     'phone' => $order->phone,
+                    'phone2' => $order->phone2,
                     'address' => $order->address_ar ?: $order->address_en,
                     'notes' => $order->notes,
+                    'delivery_vehicle' => $order->delivery_vehicle,
                     'vehicle_note' => $order->vehicle_note,
                     'price' => (int) $order->price,
                     'fee' => $order->fee === null ? null : (int) $order->fee,
@@ -684,7 +796,7 @@ class BranchPortalController extends Controller
      * Keep it separate from the courier-management tab, which includes
      * documents and location metadata for review.
      *
-     * @param array<int, int> $branchIds
+     * @param  array<int, int>  $branchIds
      * @return Collection<int, array{id:int,branch_id:int,name:string,role:string,status:string}>
      */
     private function orderCouriers(array $branchIds): Collection
@@ -697,6 +809,7 @@ class BranchPortalController extends Controller
             ->whereIn('branch_id', $branchIds)
             ->whereIn('role', User::DIRECT_ORDER_COURIER_ROLES)
             ->where('status', 'active')
+            ->where('courier_verified', true)
             ->orderBy('name')
             ->limit(200)
             ->get(['id', 'branch_id', 'name', 'role', 'status'])
@@ -711,7 +824,7 @@ class BranchPortalController extends Controller
     }
 
     /**
-     * @param array<int, int> $branchIds
+     * @param  array<int, int>  $branchIds
      * @return Collection<int, array<string, mixed>>
      */
     private function merchants(array $branchIds, Collection $branchLookup): Collection
@@ -738,7 +851,7 @@ class BranchPortalController extends Controller
     }
 
     /**
-     * @param array<int, int> $branchIds
+     * @param  array<int, int>  $branchIds
      * @return Collection<int, array<string, mixed>>
      */
     private function couriers(array $branchIds, Collection $branchLookup): Collection
@@ -765,7 +878,7 @@ class BranchPortalController extends Controller
      * The map needs neither identity documents nor the full courier profile.
      * This compact payload is fetched only when the locations tab is opened.
      *
-     * @param array<int, int> $branchIds
+     * @param  array<int, int>  $branchIds
      * @return Collection<int, array<string, mixed>>
      */
     private function courierLocations(array $branchIds): Collection
@@ -801,7 +914,7 @@ class BranchPortalController extends Controller
      * `OR` group in SQL; filtering only after loading the collection would let
      * a branch account receive another branch's records in the response.
      *
-     * @param array<int, int> $branchIds
+     * @param  array<int, int>  $branchIds
      * @return Builder<Order>
      */
     private function scopedOrders(array $branchIds): Builder
@@ -816,7 +929,7 @@ class BranchPortalController extends Controller
     }
 
     /**
-     * @param array<int, int> $branchIds
+     * @param  array<int, int>  $branchIds
      * @return Collection<int, array{id:int,code:string,name:string}>
      */
     private function visibleBranchesForOrder(Order $order, array $branchIds): Collection
@@ -843,7 +956,7 @@ class BranchPortalController extends Controller
      * This stops a cross-branch order from revealing contact details for the
      * other branch's staff.
      *
-     * @param array<int, int> $branchIds
+     * @param  array<int, int>  $branchIds
      * @return array<string, mixed>|null
      */
     private function visibleRelatedUser(?User $user, array $branchIds, bool $isCourier): ?array
@@ -871,7 +984,7 @@ class BranchPortalController extends Controller
     }
 
     /**
-     * @param Collection<int, Branch> $branchLookup
+     * @param  Collection<int, Branch>  $branchLookup
      * @return array<string, mixed>
      */
     private function merchantPayload(User $merchant, Collection $branchLookup): array
@@ -905,7 +1018,7 @@ class BranchPortalController extends Controller
     }
 
     /**
-     * @param Collection<int, Branch> $branchLookup
+     * @param  Collection<int, Branch>  $branchLookup
      * @return array<string, mixed>
      */
     private function courierPayload(User $courier, Collection $branchLookup): array

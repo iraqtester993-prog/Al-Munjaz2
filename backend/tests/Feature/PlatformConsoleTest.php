@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\DashboardInvitation;
+use App\Models\DashboardPermissionProfile;
 use App\Models\Invoice;
 use App\Models\Plan;
 use App\Models\Subscription;
@@ -179,5 +180,179 @@ class PlatformConsoleTest extends TestCase
             'password_confirmation' => 'StrongPassword123',
         ])->assertStatus(410);
         $this->assertDatabaseMissing('users', ['username' => 'another-admin']);
+    }
+
+    public function test_company_and_subscription_actions_cannot_implicitly_issue_bills(): void
+    {
+        $basic = Plan::where('slug', 'basic')->firstOrFail();
+        $profile = DashboardPermissionProfile::create([
+            'name' => 'منشئ شركات فقط',
+            'permissions' => ['platform' => ['view', 'companies_create']],
+        ]);
+        $operator = User::create([
+            'tenant_id' => Tenant::platform()->id,
+            'name' => 'مشغل الشركات',
+            'username' => 'company-only-operator',
+            'email' => 'company-only@example.test',
+            'phone' => '07991230001',
+            'password' => 'Password123!',
+            'role' => 'admin',
+            'status' => 'active',
+            'permission_profile_id' => $profile->id,
+            'is_super_admin' => false,
+        ]);
+
+        $this->actingAs($operator)
+            ->post('/dashboard/platform/companies', [
+                'name' => 'شركة بلا فاتورة',
+                'slug' => 'company-without-bill',
+                'plan_id' => $basic->id,
+                'status' => 'trial',
+                'billing_period' => 'monthly',
+            ])
+            ->assertRedirect();
+
+        $company = Tenant::where('slug', 'company-without-bill')->firstOrFail();
+        $this->assertDatabaseMissing('subscriptions', ['tenant_id' => $company->id]);
+        $this->assertDatabaseMissing('invoices', ['tenant_id' => $company->id]);
+
+        $profile->update(['permissions' => ['platform' => ['view', 'subscriptions_create']]]);
+        $operator->refresh();
+
+        $this->actingAs($operator)
+            ->post('/dashboard/platform/subscriptions', [
+                'tenant_id' => $company->id,
+                'plan_id' => $basic->id,
+                'status' => 'active',
+                'billing_period' => 'monthly',
+                'auto_renew' => true,
+                // The request may try to ask for a bill, but only the
+                // independent invoices_create action authorizes that effect.
+                'create_invoice' => true,
+            ])
+            ->assertRedirect();
+
+        $subscription = Subscription::where('tenant_id', $company->id)->firstOrFail();
+        $this->assertDatabaseMissing('invoices', ['subscription_id' => $subscription->id]);
+    }
+
+    public function test_platform_financial_read_permission_gates_monetary_console_data_without_breaking_plan_edits(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $basic = Plan::where('slug', 'basic')->firstOrFail();
+        $company = Tenant::create([
+            'plan_id' => $basic->id,
+            'slug' => 'financial-read-company',
+            'name' => 'شركة صلاحيات مالية',
+            'kind' => 'company',
+            'status' => 'active',
+        ]);
+        $subscription = Subscription::create([
+            'tenant_id' => $company->id,
+            'plan_id' => $basic->id,
+            'status' => 'active',
+            'billing_period' => 'monthly',
+            'amount' => 123_000,
+            'starts_at' => now()->subDay(),
+            'ends_at' => now()->addMonth(),
+            'next_invoice_at' => now()->addMonth(),
+            'auto_renew' => true,
+        ]);
+        $invoice = Invoice::create([
+            'tenant_id' => $company->id,
+            'subscription_id' => $subscription->id,
+            'created_by' => $admin->id,
+            'number' => 'INV-FINANCIAL-READ',
+            'status' => 'issued',
+            'amount' => 64_000,
+            'currency' => 'IQD',
+            'issued_at' => now(),
+            'due_at' => now()->addWeek(),
+            'note' => 'ترتيب فوترة خاص',
+        ]);
+
+        $viewer = $this->platformOperator('platform-financial-viewer', ['view'], '07991231001');
+        $viewerProps = $this->actingAs($viewer)
+            ->get('/dashboard/platform')
+            ->assertOk()
+            ->inertiaPage()['props'];
+
+        $this->assertFalse($viewerProps['canViewPlatformFinancials']);
+        $this->assertFalse($viewerProps['canViewPlanPrices']);
+        $this->assertArrayNotHasKey('monthly_revenue', $viewerProps['summary']);
+        $this->assertArrayNotHasKey('outstanding', $viewerProps['summary']);
+        $this->assertArrayNotHasKey('price', collect($viewerProps['plans'])->firstWhere('id', $basic->id));
+        $this->assertArrayNotHasKey('price', collect($viewerProps['companies'])->firstWhere('id', $company->id)['plan']);
+        $this->assertArrayNotHasKey('amount', collect($viewerProps['subscriptions'])->firstWhere('id', $subscription->id));
+        $this->assertArrayNotHasKey('amount', collect($viewerProps['invoices'])->firstWhere('id', $invoice->id));
+        $this->assertArrayNotHasKey('currency', collect($viewerProps['invoices'])->firstWhere('id', $invoice->id));
+        $this->assertArrayNotHasKey('note', collect($viewerProps['invoices'])->firstWhere('id', $invoice->id));
+
+        // A mutation-only operator is normalized to screen access, but must
+        // still not inherit commercial reads merely by changing a status.
+        $statusOperator = $this->platformOperator('platform-subscription-status', ['subscriptions_change_status'], '07991231002');
+        $statusProps = $this->actingAs($statusOperator)
+            ->get('/dashboard/platform')
+            ->assertOk()
+            ->inertiaPage()['props'];
+
+        $this->assertTrue($statusProps['canChangeSubscriptionStatus']);
+        $this->assertFalse($statusProps['canViewPlatformFinancials']);
+        $this->assertFalse($statusProps['canViewPlanPrices']);
+        $this->assertArrayNotHasKey('price', collect($statusProps['plans'])->firstWhere('id', $basic->id));
+        $this->assertArrayNotHasKey('amount', collect($statusProps['subscriptions'])->firstWhere('id', $subscription->id));
+        $this->assertArrayNotHasKey('amount', collect($statusProps['invoices'])->firstWhere('id', $invoice->id));
+
+        // The one intentional exception is a plan editor's own current
+        // price, needed to pre-fill its edit form. Billing amounts stay out.
+        $planEditor = $this->platformOperator('platform-plan-editor', ['plans_edit'], '07991231003');
+        $planEditorProps = $this->actingAs($planEditor)
+            ->get('/dashboard/platform')
+            ->assertOk()
+            ->inertiaPage()['props'];
+
+        $this->assertTrue($planEditorProps['canViewPlanPrices']);
+        $this->assertFalse($planEditorProps['canViewPlatformFinancials']);
+        $this->assertSame((int) $basic->price, collect($planEditorProps['plans'])->firstWhere('id', $basic->id)['price']);
+        $this->assertArrayNotHasKey('monthly_revenue', $planEditorProps['summary']);
+        $this->assertArrayNotHasKey('amount', collect($planEditorProps['subscriptions'])->firstWhere('id', $subscription->id));
+        $this->assertArrayNotHasKey('amount', collect($planEditorProps['invoices'])->firstWhere('id', $invoice->id));
+
+        $financialViewer = $this->platformOperator('platform-financial-viewer-full', ['view_financial'], '07991231004');
+        $financialProps = $this->actingAs($financialViewer)
+            ->get('/dashboard/platform')
+            ->assertOk()
+            ->inertiaPage()['props'];
+
+        $this->assertTrue($financialProps['canViewPlatformFinancials']);
+        $this->assertTrue($financialProps['canViewPlanPrices']);
+        $this->assertArrayHasKey('monthly_revenue', $financialProps['summary']);
+        $this->assertArrayHasKey('outstanding', $financialProps['summary']);
+        $this->assertSame((int) $basic->price, collect($financialProps['plans'])->firstWhere('id', $basic->id)['price']);
+        $this->assertSame(123_000, collect($financialProps['subscriptions'])->firstWhere('id', $subscription->id)['amount']);
+        $this->assertSame(64_000, collect($financialProps['invoices'])->firstWhere('id', $invoice->id)['amount']);
+        $this->assertSame('ترتيب فوترة خاص', collect($financialProps['invoices'])->firstWhere('id', $invoice->id)['note']);
+    }
+
+    /** @param array<int, string> $permissions */
+    private function platformOperator(string $username, array $permissions, string $phone): User
+    {
+        $profile = DashboardPermissionProfile::create([
+            'name' => $username,
+            'permissions' => DashboardPermissionProfile::normalizePermissions(['platform' => $permissions]),
+        ]);
+
+        return User::create([
+            'tenant_id' => Tenant::platform()->id,
+            'name' => $username,
+            'username' => $username,
+            'email' => $username.'@example.test',
+            'phone' => $phone,
+            'password' => 'Password123!',
+            'role' => 'admin',
+            'status' => 'active',
+            'permission_profile_id' => $profile->id,
+            'is_super_admin' => false,
+        ]);
     }
 }

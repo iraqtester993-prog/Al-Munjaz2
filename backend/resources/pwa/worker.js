@@ -1,3 +1,4 @@
+// Release: 2026-09-04 mobile-direct-input-r4
 // Laravel replaces __PWA_VERSION__ at the dynamic /pwa/worker route. Keeping
 // the source as a placeholder guarantees its cache name matches app.blade.php.
 const CACHE_NAME = 'almunjaz-shell-__PWA_VERSION__';
@@ -48,7 +49,14 @@ self.addEventListener('push', (event) => {
   }
 
   const data = payload.data || {};
-  const url = data.url || payload.url || '/app/notifications';
+  const notificationId = data.notificationId || data.notification_id || payload.notificationId || payload.notification_id;
+  const inboxUrl = notificationId
+    ? `/app/notifications?open=${encodeURIComponent(notificationId)}`
+    : '/app/notifications';
+  // A notification may intentionally target a specific order or chat. When
+  // no target was provided, open its own inbox item so the recipient sees
+  // the complete title, body and actions.
+  const url = data.url || payload.url || inboxUrl;
 
   event.waitUntil(self.registration.showNotification(payload.title || 'المنجز السريع', {
     body: payload.body || '',
@@ -102,11 +110,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (requestUrl.pathname.startsWith('/build/') || requestUrl.pathname.startsWith('/assets/')) {
-    event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request).then((response) => {
-      const copy = response.clone();
-      if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-      return response;
-    })));
-  }
+  // JavaScript and style bundles intentionally stay network-only. A legacy
+  // worker once used cache-first for every request, leaving installed Android
+  // copies on an old registration screen. Content-hashed Vite files are fast
+  // to fetch and the offline page above remains available when disconnected.
 });

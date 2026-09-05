@@ -9,6 +9,9 @@ const props = defineProps({
     isCourier: { type: Boolean, default: false },
     balance: { type: Number, default: 0 },
     budget: { type: Number, default: 0 },
+    // The declared budget never changes while an order is in progress.
+    // `budget_balance` is the part still available for accepting orders.
+    budget_balance: { type: Number, default: null },
     summary: { type: Object, default: () => ({}) },
     transactions: { type: Array, default: () => [] },
     requests: { type: Array, default: () => [] },
@@ -27,6 +30,7 @@ const showQiComingSoon = ref(false)
 const withdraw = ref({ amount: '', gateway: '' })
 const handover = ref({ amount: '', branch_id: '', note: '' })
 const budgetCash = ref({ amount: '', note: '' })
+const budgetAction = ref('add')
 
 function moneyDigits(value) {
     return String(value ?? '').replace(/[^0-9]/g, '')
@@ -58,6 +62,7 @@ const typeMap = {
     collected: { key: 'Collected', tint: 'var(--success-tint)', color: 'var(--success)', icon: 'in' },
     returned: { key: 'Returned', tint: 'var(--st-returned-tint)', color: 'var(--st-returned)', icon: 'out' },
     commission: { key: 'Delivery Commission', tint: 'var(--accent-tint)', color: 'var(--accent)', icon: 'fee' },
+    commission_refund: { key: 'Administration Deduction Refund', tint: 'var(--success-tint)', color: 'var(--success)', icon: 'in' },
 }
 
 const requestMap = {
@@ -89,8 +94,20 @@ const transactionGroups = computed(() => {
 const lastSettlement = computed(() => props.summary.last_settlement || null)
 const pendingRequests = computed(() => props.requests.filter((request) => request.status === 'pending'))
 const cashOnHand = computed(() => Number(props.summary.cash_on_hand || 0))
-const remainingBudget = computed(() => Math.max(0, Number(props.budget || 0) - cashOnHand.value))
+// Do not derive availability from collected cash. A courier can have cash on
+// hand while all of their declared budget remains available (and vice versa).
+// The server owns this balance because it is reserved/released transactionally.
+const remainingBudget = computed(() => Math.max(0, Number(props.budget_balance ?? props.budget ?? 0)))
 const loyaltyEntries = computed(() => Array.isArray(props.loyalty?.entries) ? props.loyalty.entries : [])
+const budgetAmount = computed(() => Number.parseInt(budgetCash.value.amount, 10) || 0)
+const canSubmitBudget = computed(() => budgetAmount.value >= 1000
+    && (budgetAction.value === 'add' || budgetAmount.value <= remainingBudget.value))
+const budgetManagerSubtitle = computed(() => budgetAction.value === 'reduce'
+    ? t('Reduce only the amount currently available. Active-order funds cannot be reduced.')
+    : t('Add the cash you currently hold. It will be available immediately for receiving merchant orders.'))
+const budgetActionLabel = computed(() => budgetAction.value === 'reduce'
+    ? t('Reduce Budget')
+    : t('Add Cash Budget'))
 
 function loyaltyLabel(entry) {
     if (entry?.type === 'delivery_reward') return t('Completed delivery reward')
@@ -173,14 +190,22 @@ function submitHandover() {
 }
 
 function submitBudget() {
-    submit('app.wallet.budget', budgetCash.value, () => {
-        showBudget.value = false
-        budgetCash.value = { amount: '', note: '' }
+    if (!canSubmitBudget.value) return
+
+    submit(budgetAction.value === 'reduce' ? 'app.wallet.budget.reduce' : 'app.wallet.budget', budgetCash.value, () => {
+        closeBudget()
     })
 }
 
 function openBudget() {
+    budgetAction.value = 'add'
     showBudget.value = true
+}
+
+function closeBudget() {
+    showBudget.value = false
+    budgetAction.value = 'add'
+    budgetCash.value = { amount: '', note: '' }
 }
 
 function openQiComingSoon() {
@@ -255,14 +280,17 @@ onMounted(() => {
             </section>
 
             <section class="courier-overview-grid">
-                <article class="courier-overview-card courier-points-card">
+                <article class="courier-overview-card courier-stats-card">
                     <span class="courier-overview-orb" aria-hidden="true"></span>
-                    <span>{{ t('Courier Points') }}</span>
-                    <strong class="mono">{{ fmt(loyalty.balance || 0) }} <small>{{ t('Point') }}</small></strong>
-                </article>
-                <article class="courier-overview-card courier-deliveries-card">
-                    <span>{{ t('Number of Deliveries') }}</span>
-                    <strong class="mono">{{ fmt(summary.completed_deliveries || 0) }} <small>{{ t('Times') }}</small></strong>
+                    <div class="courier-stat-item">
+                        <span>{{ t('Courier Points') }}</span>
+                        <strong class="mono">{{ fmt(loyalty.balance || 0) }} <small>{{ t('Point') }}</small></strong>
+                    </div>
+                    <span class="courier-stat-divider" aria-hidden="true"></span>
+                    <div class="courier-stat-item">
+                        <span>{{ t('Number of Deliveries') }}</span>
+                        <strong class="mono">{{ fmt(summary.completed_deliveries || 0) }} <small>{{ t('Times') }}</small></strong>
+                    </div>
                 </article>
             </section>
 
@@ -283,7 +311,6 @@ onMounted(() => {
                         <span>{{ t('Remaining budget') }}</span>
                         <b class="mono">{{ fmt(remainingBudget) }} {{ t('IQD') }}</b>
                     </div>
-                    <button class="courier-budget-add" type="button" @click="openBudget">{{ t('Add Cash Budget') }}</button>
                 </div>
             </section>
         </template>
@@ -378,18 +405,29 @@ onMounted(() => {
             </button>
         </SheetModal>
 
-        <SheetModal :open="showBudget" :title="t('Add Cash Budget')" :subtitle="t('Add the cash you currently hold. It will be available immediately for receiving merchant orders.')" @close="showBudget = false">
-            <div class="field">
-                <label>{{ t('Amount') }}</label>
-                <input v-model="budgetCashAmountInput" type="text" inputmode="numeric" :placeholder="t('Amount')" dir="ltr" />
+        <SheetModal :open="showBudget" :title="t('Manage Budget')" :subtitle="budgetManagerSubtitle" @close="closeBudget">
+            <div class="budget-manager">
+                <div class="budget-action-picker" role="group" :aria-label="t('Manage Budget')">
+                    <button type="button" :class="{ active: budgetAction === 'add' }" :disabled="busy" @click="budgetAction = 'add'">{{ t('Add Cash Budget') }}</button>
+                    <button type="button" :class="{ active: budgetAction === 'reduce' }" :disabled="busy" @click="budgetAction = 'reduce'">{{ t('Reduce Budget') }}</button>
+                </div>
+                <div class="budget-manager-balances">
+                    <span><small>{{ t('Budget Amount') }}</small><b class="mono">{{ fmt(budget) }} {{ t('IQD') }}</b></span>
+                    <span><small>{{ t('Available Budget') }}</small><b class="mono">{{ fmt(remainingBudget) }} {{ t('IQD') }}</b></span>
+                </div>
+                <div class="field">
+                    <label>{{ t('Amount') }}</label>
+                    <input v-model="budgetCashAmountInput" type="text" inputmode="numeric" :placeholder="t('Amount')" dir="ltr" />
+                    <small v-if="budgetAction === 'reduce' && budgetAmount > remainingBudget" class="field-error">{{ t('Budget reduction cannot exceed available budget.') }}</small>
+                </div>
+                <div class="field">
+                    <label>{{ t('Note (optional)') }}</label>
+                    <textarea v-model="budgetCash.note" rows="3" :placeholder="t('Cash budget note')"></textarea>
+                </div>
+                <button class="btn btn-primary withdraw-submit" :disabled="busy || !canSubmitBudget" @click="submitBudget">
+                    <span v-if="busy" class="loader"></span>{{ budgetActionLabel }}
+                </button>
             </div>
-            <div class="field">
-                <label>{{ t('Note (optional)') }}</label>
-                <textarea v-model="budgetCash.note" rows="3" :placeholder="t('Cash budget note')"></textarea>
-            </div>
-            <button class="btn btn-primary withdraw-submit" :disabled="busy || !budgetCash.amount" @click="submitBudget">
-                <span v-if="busy" class="loader"></span>{{ t('Add Cash Budget') }}
-            </button>
         </SheetModal>
 
         <SheetModal :open="showQiComingSoon" :title="t('Recharge Balance')" @close="showQiComingSoon = false">
@@ -445,4 +483,61 @@ onMounted(() => {
 .tx-mid b{font-size:12px;font-weight:700}
 .tx-mid small{margin-top:2px;color:var(--ink-faint);font-size:10px;font-weight:600}
 .tx-amt{font-size:12.5px;font-weight:800;direction:inherit}
+
+/* Keep the wallet within the same calm teal/orange visual system as orders. */
+.courier-wallet-balance{border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border));background:linear-gradient(135deg,color-mix(in srgb,var(--primary-tint) 70%,var(--surface)),var(--surface));box-shadow:0 7px 17px rgba(6,84,78,.045)}
+.courier-deliveries-card{border-color:color-mix(in srgb,var(--primary) 25%,var(--border));background:linear-gradient(135deg,#e3f4f0,#f9fcfb)}.courier-deliveries-card>span:not(.courier-overview-orb){color:var(--ink-soft)}.courier-deliveries-card strong{color:var(--primary-strong)}.courier-deliveries-card strong small{color:var(--ink-faint)}
+.courier-points-card{background:linear-gradient(135deg,#f6a00d,#e98200);box-shadow:0 9px 19px rgba(211,127,0,.13)}.courier-budget-card{background:linear-gradient(135deg,#075f5a,var(--primary));box-shadow:0 12px 26px rgba(5,91,85,.17)}
+
+/* One shared premium card language for the wallet and order summaries. */
+.courier-wallet-balance{position:relative;overflow:hidden;min-height:118px;padding:19px;border:1px solid rgba(100,213,203,.26);border-radius:25px;background:linear-gradient(145deg,#071b1a,#0a2927);box-shadow:0 14px 30px rgba(3,31,29,.18)}.courier-wallet-balance::after{position:absolute;inset:auto -23px -38px auto;width:116px;height:116px;border-radius:50%;background:rgba(63,198,188,.12);content:'';pointer-events:none}.courier-wallet-balance>*{position:relative;z-index:1}.courier-wallet-icon{width:50px;height:50px;border:1px solid rgba(104,223,214,.15);border-radius:17px;background:rgba(74,211,201,.14);color:#52d9d0}.courier-wallet-balance>div>span{color:rgba(218,247,244,.68);font-size:11px}.courier-wallet-balance strong{color:#fff;font-size:25px;letter-spacing:-.025em}.courier-wallet-balance strong small{color:rgba(218,247,244,.6)}.courier-overview-grid{display:block;margin-bottom:14px}.courier-overview-card{position:relative;overflow:hidden;min-height:118px;padding:17px 18px;border:1px solid rgba(100,213,203,.24);border-radius:25px;background:linear-gradient(145deg,#0a2624,#0c3431);box-shadow:0 10px 23px rgba(3,31,29,.13)}.courier-overview-orb{width:104px;height:104px;background:rgba(80,215,205,.1)}.courier-stats-card{display:grid;grid-template-columns:minmax(0,1fr) 1px minmax(0,1fr);align-items:center;gap:14px}.courier-stat-item{position:relative;z-index:1;min-width:0}.courier-stat-item>span{display:block;overflow:hidden;color:rgba(218,247,244,.7);font-size:10.5px;font-weight:800;text-overflow:ellipsis;white-space:nowrap}.courier-stat-item strong{display:flex;align-items:baseline;gap:4px;margin-top:8px;color:#52d9d0;font-size:29px;font-weight:900;letter-spacing:-.04em}.courier-stat-item strong small{color:rgba(218,247,244,.6);font-family:var(--font);font-size:10px;font-weight:800}.courier-stat-divider{position:relative;z-index:1;width:1px;height:54px;background:rgba(161,237,229,.18)}.courier-budget-card{border:1px solid rgba(100,213,203,.3);border-radius:28px;background:linear-gradient(145deg,#073b38,#087b73);box-shadow:0 14px 30px rgba(3,70,66,.2)}.courier-budget-card .wallet-icon{width:46px;height:46px;border:1px solid rgba(255,255,255,.12);border-radius:16px;background:rgba(104,231,222,.16)}.budget-title b{font-size:15px}.budget-label{font-size:11px}.budget-value{font-size:34px;letter-spacing:-.04em}.budget-bottom-row b{font-size:27px;letter-spacing:-.04em}.courier-budget-add{min-height:44px;border-radius:14px;font-size:12px;box-shadow:0 5px 13px rgba(0,0,0,.1)}:global([data-theme="dark"] .courier-wallet-balance){border-color:rgba(112,224,214,.2);background:linear-gradient(145deg,#0c201e,#122f2c)}:global([data-theme="dark"] .courier-overview-card){border-color:rgba(112,224,214,.18);background:linear-gradient(145deg,#102825,#153633)}@media(max-width:350px){.courier-stats-card{gap:10px;padding:15px}.courier-stat-item strong{font-size:25px}.courier-stat-divider{height:48px}}
+
+/* Do not allow the old light mint delivery card to leak into dark mode. */
+:global([data-theme="dark"] .courier-deliveries-card){border-color:rgba(102,211,202,.22);background:linear-gradient(145deg,#102825,#153633);box-shadow:0 10px 23px rgba(3,31,29,.13)}
+:global([data-theme="dark"] .courier-deliveries-card>span:not(.courier-overview-orb)){color:rgba(218,247,244,.7)}
+:global([data-theme="dark"] .courier-deliveries-card strong){color:#52d9d0}
+:global([data-theme="dark"] .courier-deliveries-card strong small){color:rgba(218,247,244,.6)}
+
+/* Compact courier wallet — the overview stays easy to scan without using a
+   large part of the screen before the actual transaction history. */
+.courier-wallet-balance{min-height:0;margin-bottom:10px;padding:13px 15px;border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border));border-radius:18px;background:linear-gradient(135deg,color-mix(in srgb,var(--primary-tint) 72%,var(--surface)),var(--surface));box-shadow:0 7px 17px rgba(6,84,78,.055)}
+.courier-wallet-balance::after{width:82px;height:82px;inset:auto -18px -28px auto;background:color-mix(in srgb,var(--primary) 10%,transparent)}
+.courier-wallet-icon{width:40px;height:40px;border:0;border-radius:13px;background:var(--primary-tint);color:var(--primary-strong)}
+.courier-wallet-balance>div>span{margin-bottom:1px;color:var(--ink-soft);font-size:10px;font-weight:800}
+.courier-wallet-balance strong{color:var(--ink);font-size:22px;line-height:1.15;letter-spacing:-.03em}
+.courier-wallet-balance strong small{color:var(--ink-faint);font-size:10px}
+.courier-overview-grid{margin-bottom:10px}
+.courier-overview-card{min-height:0;padding:13px 14px;border:1px solid color-mix(in srgb,var(--accent) 27%,var(--border));border-radius:18px;background:linear-gradient(135deg,#fff8e9,#fffdf7);box-shadow:0 7px 16px rgba(164,105,7,.07)}
+.courier-overview-orb{width:74px;height:74px;top:-24px;inset-inline-end:-17px;background:rgba(232,148,13,.1)}
+.courier-stats-card{gap:11px}
+.courier-stat-item>span{color:var(--ink-soft);font-size:9.5px}
+.courier-stat-item strong{margin-top:4px;color:#bd7505;font-size:22px;line-height:1.05;letter-spacing:-.035em}
+.courier-stat-item strong small{color:var(--ink-faint);font-size:9px}
+.courier-stat-divider{height:39px;background:color-mix(in srgb,var(--accent) 21%,var(--border))}
+.courier-budget-card{min-height:0;padding:15px 16px 14px;border:1px solid rgba(69,190,181,.35);border-radius:21px;background:linear-gradient(145deg,#075f5a,#0b877f);box-shadow:0 10px 23px rgba(4,83,77,.16)}
+.courier-budget-card .wallet-orbit-one{top:-36px;inset-inline-start:-34px;width:100px;height:100px}
+.courier-budget-card .wallet-orbit-two{right:-24px;bottom:-47px;width:116px;height:116px}
+.courier-budget-card .wallet-icon{width:38px;height:38px;border-radius:13px}
+.budget-title{margin-bottom:9px}.budget-title b{font-size:13px}.budget-label{font-size:9.5px}.budget-value{margin-top:2px;font-size:27px;line-height:1.12}.budget-value small{font-size:11px}
+.courier-budget-card .wallet-divider{margin:10px 0 9px}.budget-bottom-row{font-size:9.5px}.budget-bottom-row b{font-size:19px}.courier-budget-add{min-height:36px;margin-top:11px;border-radius:11px;font-size:10.5px}
+
+:global([data-theme="dark"] .courier-wallet-balance){border-color:rgba(112,224,214,.2);background:linear-gradient(145deg,#0c201e,#122f2c);box-shadow:0 10px 22px rgba(0,0,0,.18)}
+:global([data-theme="dark"] .courier-wallet-balance::after){background:rgba(63,198,188,.12)}
+:global([data-theme="dark"] .courier-wallet-icon){background:rgba(74,211,201,.14);color:#52d9d0}
+:global([data-theme="dark"] .courier-wallet-balance>div>span){color:rgba(218,247,244,.68)}
+:global([data-theme="dark"] .courier-wallet-balance strong){color:#fff}
+:global([data-theme="dark"] .courier-wallet-balance strong small){color:rgba(218,247,244,.6)}
+:global([data-theme="dark"] .courier-overview-card){border-color:rgba(245,181,69,.22);background:linear-gradient(145deg,#2d2615,#181b17);box-shadow:0 10px 22px rgba(0,0,0,.16)}
+:global([data-theme="dark"] .courier-stat-item>span){color:rgba(253,239,205,.66)}
+:global([data-theme="dark"] .courier-stat-item strong){color:#ffc35a}
+:global([data-theme="dark"] .courier-stat-item strong small){color:rgba(253,239,205,.55)}
+:global([data-theme="dark"] .courier-stat-divider){background:rgba(255,206,112,.18)}
+:global([data-theme="dark"] .courier-budget-card){border-color:rgba(100,213,203,.28);background:linear-gradient(145deg,#073b38,#087b73)}
+
+/* Numeric values stay on the physical right edge of every wallet card in
+   Arabic and Kurdish layouts; their digit direction remains left-to-right. */
+.merchant-wallet-card .wc-value,.merchant-wallet-card .merchant-finance-grid>div,.courier-wallet-balance>div,.courier-stat-item,.courier-budget-card .budget-value{direction:ltr;text-align:right}
+.courier-wallet-balance{direction:ltr}.courier-wallet-balance>div{margin-right:auto;direction:rtl;text-align:right}
+.courier-stat-item strong{direction:ltr;justify-content:flex-start}.courier-budget-card .budget-bottom-row b{direction:ltr;text-align:right}
+.budget-manager{display:grid;gap:13px}.budget-action-picker{display:grid;grid-template-columns:1fr 1fr;gap:7px;padding:4px;border-radius:12px;background:var(--surface-2)}.budget-action-picker button{min-height:38px;border:0;border-radius:9px;background:transparent;color:var(--ink-soft);font:850 11px var(--font);cursor:pointer}.budget-action-picker button.active{background:var(--surface);color:var(--primary-strong);box-shadow:var(--shadow)}.budget-action-picker button:disabled{cursor:wait;opacity:.65}.budget-manager-balances{display:grid;grid-template-columns:1fr 1fr;gap:8px}.budget-manager-balances>span{display:grid;gap:4px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)}.budget-manager-balances small{color:var(--ink-faint);font-size:9.5px;font-weight:800}.budget-manager-balances b{font-size:12px;color:var(--ink)}.budget-manager-balances>span:last-child b{color:var(--primary-strong)}.field-error{display:block;margin-top:5px;color:var(--danger);font-size:9px;font-weight:750}
 </style>

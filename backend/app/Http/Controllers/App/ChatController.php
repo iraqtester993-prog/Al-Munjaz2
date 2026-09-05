@@ -9,10 +9,15 @@ use App\Models\Notification;
 use App\Models\Order;
 use App\Models\Scopes\TenantScope;
 use App\Models\User;
+use App\Services\BranchDashboardContext;
+use App\Services\BranchDashboardScope;
 use App\Services\CourierOrderAccess;
+use App\Services\DashboardBranchFilter;
+use App\Services\PusherChatPublisher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Inertia\Inertia;
 
 class ChatController extends Controller
@@ -83,7 +88,8 @@ class ChatController extends Controller
             'last_message' => $request->input('text'),
             'last_at' => now(),
         ]);
-        $this->notifyMessageRecipients($chat, $request->user());
+        $recipients = $this->notifyMessageRecipients($chat, $request->user());
+        app(PusherChatPublisher::class)->publish($message, $recipients);
 
         return response()->json($this->messagePayload(
             $message->load('sender:id,name,role'),
@@ -116,6 +122,25 @@ class ChatController extends Controller
             // page as read, so no extra COUNT query is needed on each poll.
             'unread' => 0,
         ], 200, ['Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0']);
+    }
+
+    /** Keeps a short server-side presence lease while this exact thread is visible. */
+    public function presence(Request $request, Chat $chat)
+    {
+        $this->ensureParticipant($request, $chat);
+        Cache::put($this->presenceKey($chat, (int) $request->user()->id), true, now()->addSeconds(75));
+
+        return response()->noContent();
+    }
+
+    /** Used by the permanent bottom-chat badge without navigating to chat. */
+    public function unread(Request $request)
+    {
+        $count = $this->withViewerUnreadCount($this->chatsFor($request->user()), $request->user())
+            ->get()
+            ->sum('viewer_unread');
+
+        return response()->json(['unread' => (int) $count]);
     }
 
     public function open(Request $request)
@@ -164,10 +189,9 @@ class ChatController extends Controller
                 return redirect()->route('app.chats.show', $chat);
             }
 
-            // An order may have a pickup courier and a delivery courier. Each
-            // one receives an isolated direct conversation with the merchant;
-            // a courier always opens their own conversation, while the
-            // merchant opens the current operational courier by default.
+            // A direct order has one courier from pickup through delivery. A
+            // courier opens their own conversation; a merchant opens the one
+            // operational courier conversation for the order.
             if ($courierId = $this->directCourierIdFor($order, $user)) {
                 $merchantId = $this->merchantIdForOrder($order, $user);
                 abort_unless($merchantId, 422, 'لا يوجد حساب تاجر صالح لهذه الطلبية.');
@@ -268,24 +292,34 @@ class ChatController extends Controller
 
     public function adminIndex(Request $request)
     {
-        return Inertia::render('Admin/Chat', $this->adminInboxProps($request->user()));
+        $scope = $this->branchScope($request);
+        $branchFilter = app(DashboardBranchFilter::class);
+        $selectedBranchId = $branchFilter->selectedBranchId($request, $scope);
+
+        return Inertia::render('Admin/Chat', $this->adminInboxProps($request->user(), $scope, $selectedBranchId) + [
+            'branchFilter' => $branchFilter->payload($request, $scope),
+        ]);
     }
 
     public function adminShow(Request $request, Chat $chat)
     {
-        $this->ensureAdminChat($chat);
-        $messages = $this->messagesFor($chat, $request->user());
-        $this->markRead($chat, $request->user());
+        $scope = $this->branchScope($request);
+        $branchFilter = app(DashboardBranchFilter::class);
+        $selectedBranchId = $branchFilter->selectedBranchId($request, $scope);
+        $this->ensureAdminChat($chat, $scope, $selectedBranchId);
+        $messages = $this->messagesFor($chat, $request->user(), null, $scope);
+        $this->markRead($chat, $request->user(), $scope);
 
         $chat->loadMissing([
-            'user:id,name,phone,role,shop_name',
-            'counterparty:id,name,phone,role,shop_name',
-            'order:id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status',
+            'user:id,branch_id,name,phone,role,shop_name',
+            'counterparty:id,branch_id,name,phone,role,shop_name',
+            'order:id,branch_id,origin_branch_id,destination_branch_id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status',
         ]);
 
-        return Inertia::render('Admin/Chat', $this->adminInboxProps($request->user()) + [
-            'activeChat' => $this->adminChatPayload($chat, $request->user()),
+        return Inertia::render('Admin/Chat', $this->adminInboxProps($request->user(), $scope, $selectedBranchId) + [
+            'activeChat' => $this->adminChatPayload($chat, $request->user(), $scope),
             'messages' => $messages,
+            'branchFilter' => $branchFilter->payload($request, $scope),
         ]);
     }
 
@@ -294,7 +328,10 @@ class ChatController extends Controller
         // The merchant/courier tab is a transparent audit view. The
         // dashboard must never become an unnoticed third participant in a
         // private order conversation.
-        $this->ensureAdminSupportChat($chat);
+        $scope = $this->branchScope($request);
+        $selectedBranchId = app(DashboardBranchFilter::class)->selectedBranchId($request, $scope);
+        $this->ensureAdminSupportChat($chat, $scope, $selectedBranchId);
+        $this->ensureAdminReplyRecipient($chat, $scope);
         $request->validate(['text' => ['required', 'string', 'max:1000']]);
 
         $message = ChatMessage::create([
@@ -308,23 +345,27 @@ class ChatController extends Controller
             'last_message' => $request->input('text'),
             'last_at' => now(),
         ]);
-        $this->notifyMessageRecipients($chat, $request->user());
+        $recipients = $this->notifyMessageRecipients($chat, $request->user(), true);
+        app(PusherChatPublisher::class)->publish($message, $recipients);
 
         return response()->json($this->messagePayload(
-            $message->load('sender:id,name,role'),
+            $message->load('sender:id,branch_id,name,role'),
             $request->user(),
+            $scope,
         ));
     }
 
     public function adminMessages(Request $request, Chat $chat)
     {
-        $this->ensureAdminChat($chat);
+        $scope = $this->branchScope($request);
+        $selectedBranchId = app(DashboardBranchFilter::class)->selectedBranchId($request, $scope);
+        $this->ensureAdminChat($chat, $scope, $selectedBranchId);
 
         $data = $request->validate([
             'after_id' => ['nullable', 'integer', 'min:0'],
         ]);
-        $messages = $this->messagesFor($chat, $request->user(), $data['after_id'] ?? null);
-        $this->markReadFromMessages($chat, $request->user(), $messages);
+        $messages = $this->messagesFor($chat, $request->user(), $data['after_id'] ?? null, $scope);
+        $this->markReadFromMessages($chat, $request->user(), $messages, $scope);
 
         return response()->json([
             'messages' => $messages,
@@ -338,29 +379,41 @@ class ChatController extends Controller
      * support (reply allowed) and merchant/courier order chats (review only).
      * Unknown historical chat markers remain excluded by the model scope.
      */
-    private function adminChats(): Builder
+    private function adminChats(?BranchDashboardScope $scope = null, ?int $selectedBranchId = null): Builder
     {
-        return Chat::withoutGlobalScope(TenantScope::class)->adminDashboardInbox();
+        return $this->scopeAdminChats(
+            Chat::withoutGlobalScope(TenantScope::class)->adminDashboardInbox(),
+            $scope,
+            $selectedBranchId,
+        );
     }
 
-    private function adminSupportChats(): Builder
+    private function adminSupportChats(?BranchDashboardScope $scope = null, ?int $selectedBranchId = null): Builder
     {
-        return Chat::withoutGlobalScope(TenantScope::class)->adminSupportInbox();
+        return $this->scopeAdminChats(
+            Chat::withoutGlobalScope(TenantScope::class)->adminSupportInbox(),
+            $scope,
+            $selectedBranchId,
+        );
     }
 
-    private function adminMerchantCourierChats(): Builder
+    private function adminMerchantCourierChats(?BranchDashboardScope $scope = null, ?int $selectedBranchId = null): Builder
     {
-        return Chat::withoutGlobalScope(TenantScope::class)->adminMerchantCourierInbox();
+        return $this->scopeAdminChats(
+            Chat::withoutGlobalScope(TenantScope::class)->adminMerchantCourierInbox(),
+            $scope,
+            $selectedBranchId,
+        );
     }
 
-    private function ensureAdminChat(Chat $chat): void
+    private function ensureAdminChat(Chat $chat, ?BranchDashboardScope $scope = null, ?int $selectedBranchId = null): void
     {
-        abort_unless($this->adminChats()->whereKey($chat->id)->exists(), 404);
+        abort_unless($this->adminChats($scope, $selectedBranchId)->whereKey($chat->id)->exists(), 404);
     }
 
-    private function ensureAdminSupportChat(Chat $chat): void
+    private function ensureAdminSupportChat(Chat $chat, ?BranchDashboardScope $scope = null, ?int $selectedBranchId = null): void
     {
-        abort_unless($this->adminSupportChats()->whereKey($chat->id)->exists(), 404);
+        abort_unless($this->adminSupportChats($scope, $selectedBranchId)->whereKey($chat->id)->exists(), 404);
     }
 
     /**
@@ -370,25 +423,25 @@ class ChatController extends Controller
      *
      * @return array<string, mixed>
      */
-    private function adminInboxProps(User $viewer): array
+    private function adminInboxProps(User $viewer, ?BranchDashboardScope $scope = null, ?int $selectedBranchId = null): array
     {
-        $supportChats = $this->withViewerUnreadCount($this->adminSupportChats(), $viewer)
+        $supportChats = $this->withViewerUnreadCount($this->adminSupportChats($scope, $selectedBranchId), $viewer, $scope)
             ->with($this->adminChatRelations())
             ->orderByDesc('last_at')
             ->limit(self::CHAT_LIST_LIMIT)
             ->get()
-            ->map(fn (Chat $chat) => $this->adminChatPayload($chat, $viewer));
+            ->map(fn (Chat $chat) => $this->adminChatPayload($chat, $viewer, $scope));
 
         // Fetch each inbox independently. A burst of support messages must
         // not hide operational order conversations (or the reverse), while
         // the fixed recent window prevents the dashboard boot from loading
         // years of chat rows and their message-count queries.
-        $merchantCourierChats = $this->withViewerUnreadCount($this->adminMerchantCourierChats(), $viewer)
+        $merchantCourierChats = $this->withViewerUnreadCount($this->adminMerchantCourierChats($scope, $selectedBranchId), $viewer, $scope)
             ->with($this->adminChatRelations())
             ->orderByDesc('last_at')
             ->limit(self::CHAT_LIST_LIMIT)
             ->get()
-            ->map(fn (Chat $chat) => $this->adminChatPayload($chat, $viewer));
+            ->map(fn (Chat $chat) => $this->adminChatPayload($chat, $viewer, $scope));
 
         return [
             // Kept for the pre-tab dashboard client.
@@ -406,10 +459,111 @@ class ChatController extends Controller
     private function adminChatRelations(): array
     {
         return [
-            'user:id,name,phone,role,shop_name',
-            'counterparty:id,name,phone,role,shop_name',
-            'order:id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status',
+            'user:id,branch_id,name,phone,role,shop_name',
+            'counterparty:id,branch_id,name,phone,role,shop_name',
+            'order:id,branch_id,origin_branch_id,destination_branch_id,track_no,customer_name_ar,customer_name_en,phone,address_ar,address_en,status',
         ];
+    }
+
+    /**
+     * A chat row is not branch-owned itself, so its boundary comes from the
+     * people and operational entity it represents. An order thread is local
+     * only when both participants belong to this branch and the order
+     * touches it. A general support thread belongs to its local requester.
+     * This intentionally hides cross-branch conversations rather than merely
+     * hiding names: a message body can itself contain private branch data.
+     */
+    private function scopeAdminChats(Builder $chats, ?BranchDashboardScope $scope, ?int $selectedBranchId = null): Builder
+    {
+        $branchId = $scope?->hasBranchScope() ? $scope->branchId() : $selectedBranchId;
+
+        if (! $branchId) {
+            return $chats;
+        }
+
+        $chatTable = (new Chat)->getTable();
+        $orderTable = (new Order)->getTable();
+        $userTable = (new User)->getTable();
+
+        $orders = Order::withoutGlobalScope(TenantScope::class)
+            ->withTrashed()
+            ->selectRaw('1')
+            ->whereColumn("{$orderTable}.id", "{$chatTable}.order_id");
+        app(DashboardBranchFilter::class)->restrictOrders($orders, $branchId);
+
+        $localRequester = User::query()
+            ->selectRaw('1')
+            ->whereColumn("{$userTable}.id", "{$chatTable}.user_id")
+            ->where("{$userTable}.branch_id", $branchId);
+
+        $localCounterparty = User::query()
+            ->selectRaw('1')
+            ->whereColumn("{$userTable}.id", "{$chatTable}.counterparty_id")
+            ->where("{$userTable}.branch_id", $branchId);
+
+        // A selected branch is an audit filter for the super administrator.
+        // Unlike the local dashboard boundary, it must retain cross-branch
+        // order conversations whenever the order or either participant
+        // belongs to the selected branch.
+        if (! $scope?->hasBranchScope()) {
+            return $chats->where(function (Builder $visible) use ($orders, $localRequester, $localCounterparty): void {
+                $visible
+                    ->whereExists($orders->toBase())
+                    ->orWhereExists($localRequester->toBase())
+                    ->orWhereExists($localCounterparty->toBase());
+            });
+        }
+
+        return $chats->where(function (Builder $visible) use ($orders, $localRequester, $localCounterparty, $chatTable): void {
+            $visible
+                ->where(function (Builder $orderChats) use ($orders, $localRequester, $localCounterparty, $chatTable): void {
+                    $orderChats
+                        ->where("{$chatTable}.counterparty_type", 'order_chat')
+                        ->whereExists($orders->toBase())
+                        ->whereExists($localRequester->toBase())
+                        ->whereExists($localCounterparty->toBase());
+                })
+                ->orWhere(function (Builder $support) use ($orders, $localRequester, $chatTable): void {
+                    $support
+                        ->whereIn("{$chatTable}.counterparty_type", ['support', 'order_support'])
+                        ->whereExists($localRequester->toBase())
+                        ->where(function (Builder $supportOrder) use ($orders, $chatTable): void {
+                            $supportOrder
+                                ->whereNull("{$chatTable}.order_id")
+                                ->orWhereExists($orders->toBase());
+                        });
+                });
+        });
+    }
+
+    private function branchScope(Request $request): BranchDashboardScope
+    {
+        $scope = app(BranchDashboardContext::class)->fromRequest($request);
+
+        if ($scope->requiresBranchScope()) {
+            abort_unless($scope->hasBranchScope(), 403);
+        }
+
+        // Keep the non-branch platform scope rather than returning null.
+        // DashboardBranchFilter needs this object to distinguish a regular
+        // employee (no selector) from a super administrator (selector
+        // enabled), while the existing optional-scope helpers continue to
+        // treat it as unrestricted data scope.
+        return $scope;
+    }
+
+    private function ensureAdminReplyRecipient(Chat $chat, ?BranchDashboardScope $scope): void
+    {
+        if (! $scope?->hasBranchScope()) {
+            return;
+        }
+
+        $recipient = User::query()->select(['id', 'branch_id'])->find($chat->user_id);
+
+        // A branch dashboard can inspect an inter-branch order thread for
+        // its own operational endpoint, but it must not send a support reply
+        // to an account owned by another branch.
+        abort_unless($this->visibleAdminParticipant($recipient, $scope), 404);
     }
 
     private function ensureParticipant(Request $request, Chat $chat): void
@@ -431,9 +585,10 @@ class ChatController extends Controller
         abort_unless($isAssignedCourier, 403);
     }
 
-    private function markRead(Chat $chat, $user): void
+    private function markRead(Chat $chat, User $user, ?BranchDashboardScope $scope = null): void
     {
-        $key = $this->readColumnFor($chat, $user);
+        $isDashboardOperator = $this->isDashboardChatOperator($user, $scope);
+        $key = $this->readColumnFor($chat, $user, $scope);
         $readAt = $chat->{$key};
 
         // A thread that is already caught up should be entirely read-only.
@@ -450,14 +605,14 @@ class ChatController extends Controller
         }
 
         $attributes = [$key => now()];
-        if ($user->isAdmin()) {
+        if ($isDashboardOperator) {
             $attributes['unread'] = 0;
         }
 
         $chat->forceFill($attributes)->save();
     }
 
-    private function unreadFor(Chat $chat, $user): int
+    private function unreadFor(Chat $chat, User $user, ?BranchDashboardScope $scope = null): int
     {
         // List queries attach this aggregate once for every row, avoiding an
         // N+1 message COUNT while the inbox is being rendered.
@@ -465,7 +620,7 @@ class ChatController extends Controller
             return (int) $chat->getAttribute('viewer_unread');
         }
 
-        $readAt = $chat->{$this->readColumnFor($chat, $user)};
+        $readAt = $chat->{$this->readColumnFor($chat, $user, $scope)};
 
         return $chat->messages()
             ->where('sender_id', '!=', $user->id)
@@ -473,9 +628,10 @@ class ChatController extends Controller
             ->count();
     }
 
-    private function markReadFromMessages(Chat $chat, User $user, $messages): void
+    private function markReadFromMessages(Chat $chat, User $user, $messages, ?BranchDashboardScope $scope = null): void
     {
-        $key = $this->readColumnFor($chat, $user);
+        $isDashboardOperator = $this->isDashboardChatOperator($user, $scope);
+        $key = $this->readColumnFor($chat, $user, $scope);
         $readAt = $chat->{$key};
 
         $latestIncomingAt = collect($messages)
@@ -490,17 +646,17 @@ class ChatController extends Controller
         }
 
         $attributes = [$key => now()];
-        if ($user->isAdmin()) {
+        if ($isDashboardOperator) {
             $attributes['unread'] = 0;
         }
 
         $chat->forceFill($attributes)->save();
     }
 
-    private function messagesFor(Chat $chat, User $user, ?int $afterId = null)
+    private function messagesFor(Chat $chat, User $user, ?int $afterId = null, ?BranchDashboardScope $scope = null)
     {
         $messages = $chat->messages()
-            ->with('sender:id,name,role')
+            ->with('sender:id,branch_id,name,role')
             ->when($afterId !== null && $afterId > 0, fn (Builder $query) => $query->where('id', '>', $afterId));
 
         if ($afterId !== null && $afterId > 0) {
@@ -508,7 +664,7 @@ class ChatController extends Controller
                 ->orderBy('id')
                 ->limit(self::INCREMENTAL_MESSAGE_LIMIT)
                 ->get()
-                ->map(fn (ChatMessage $message) => $this->messagePayload($message, $user))
+                ->map(fn (ChatMessage $message) => $this->messagePayload($message, $user, $scope))
                 ->values();
         }
 
@@ -519,7 +675,7 @@ class ChatController extends Controller
             ->limit(self::INITIAL_MESSAGE_LIMIT)
             ->get()
             ->sortBy('id')
-            ->map(fn (ChatMessage $message) => $this->messagePayload($message, $user))
+            ->map(fn (ChatMessage $message) => $this->messagePayload($message, $user, $scope))
             ->values();
     }
 
@@ -528,16 +684,17 @@ class ChatController extends Controller
      * chat row. It is intentionally calculated using the same cursor rule
      * as readColumnFor(), including the second side of direct order chats.
      */
-    private function withViewerUnreadCount(Builder $chats, User $viewer): Builder
+    private function withViewerUnreadCount(Builder $chats, User $viewer, ?BranchDashboardScope $scope = null): Builder
     {
         $chatTable = (new Chat)->getTable();
         $messageTable = (new ChatMessage)->getTable();
+        $isDashboardOperator = $this->isDashboardChatOperator($viewer, $scope);
 
         return $chats->withCount([
-            'messages as viewer_unread' => function (Builder $messages) use ($viewer, $chatTable, $messageTable): void {
+            'messages as viewer_unread' => function (Builder $messages) use ($viewer, $chatTable, $messageTable, $isDashboardOperator): void {
                 $messages->where("{$messageTable}.sender_id", '!=', $viewer->id)
-                    ->where(function (Builder $unread) use ($viewer, $chatTable, $messageTable): void {
-                        if ($viewer->isAdmin()) {
+                    ->where(function (Builder $unread) use ($viewer, $chatTable, $messageTable, $isDashboardOperator): void {
+                        if ($isDashboardOperator) {
                             $this->applyUnreadReadCursor($unread, "{$chatTable}.admin_read_at", "{$messageTable}.created_at");
 
                             return;
@@ -578,13 +735,18 @@ class ChatController extends Controller
     }
 
     /** @return array<string, mixed> */
-    private function messagePayload(ChatMessage $message, User $viewer): array
+    private function messagePayload(ChatMessage $message, User $viewer, ?BranchDashboardScope $scope = null): array
     {
+        $senderIsVisible = ! $scope?->hasBranchScope()
+            || $this->visibleAdminParticipant($message->sender, $scope);
+
         return [
             'id' => $message->id,
-            'sender_id' => $message->sender_id,
-            'sender_name' => $message->sender?->name ?: 'مستخدم محذوف',
-            'sender_role' => $message->sender?->role ?: 'unknown',
+            'sender_id' => $senderIsVisible ? $message->sender_id : null,
+            'sender_name' => $senderIsVisible
+                ? ($message->sender?->name ?: 'مستخدم محذوف')
+                : 'مستخدم من فرع آخر',
+            'sender_role' => $senderIsVisible ? ($message->sender?->role ?: 'unknown') : 'unknown',
             'from_me' => $message->sender_id === $viewer->id,
             'text' => $message->text,
             'time' => $message->created_at->format('H:i'),
@@ -598,13 +760,13 @@ class ChatController extends Controller
      * both mobile participants. Support conversations remain private to the
      * originating user and are never broadcast to every operator.
      */
-    private function notifyMessageRecipients(Chat $chat, User $sender): void
+    private function notifyMessageRecipients(Chat $chat, User $sender, bool $senderIsDashboardOperator = false): array
     {
         $recipientIds = [];
 
         if ($chat->counterparty_type === 'order_chat') {
             $recipientIds = [$chat->user_id, $chat->counterparty_id];
-        } elseif ($sender->isAdmin() && $chat->user_id && $chat->user_id !== $sender->id) {
+        } elseif (($sender->isAdmin() || $senderIsDashboardOperator) && $chat->user_id && $chat->user_id !== $sender->id) {
             $recipientIds = [$chat->user_id];
         }
 
@@ -615,7 +777,7 @@ class ChatController extends Controller
             ->values();
 
         if ($recipientIds->isEmpty()) {
-            return;
+            return [];
         }
 
         User::query()
@@ -623,6 +785,22 @@ class ChatController extends Controller
             ->where('status', 'active')
             ->get()
             ->each(function (User $recipient) use ($chat): void {
+                // An open thread already receives its Pusher event and is
+                // marked read on arrival; never create a noisy device push.
+                if (Cache::has($this->presenceKey($chat, (int) $recipient->id))) {
+                    return;
+                }
+
+                // A message burst in one background conversation creates one
+                // actionable notification, not a phone alert per message.
+                $alreadyNotified = Notification::query()
+                    ->where('user_id', $recipient->id)
+                    ->where('type', 'chat')
+                    ->where('created_at', '>=', now()->subMinutes(2))
+                    ->whereJsonContains('data->chat_id', $chat->id)
+                    ->exists();
+                if ($alreadyNotified) return;
+
                 Notification::create([
                     'tenant_id' => $recipient->tenant_id,
                     'user_id' => $recipient->id,
@@ -636,6 +814,13 @@ class ChatController extends Controller
                     'data' => ['url' => '/app/chats/'.$chat->id, 'chat_id' => $chat->id],
                 ]);
             });
+
+        return $recipientIds->all();
+    }
+
+    private function presenceKey(Chat $chat, int $userId): string
+    {
+        return 'chat:presence:'.$chat->id.':'.$userId;
     }
 
     /**
@@ -689,7 +874,7 @@ class ChatController extends Controller
             return;
         }
 
-        abort_unless($user->isCourierRole(), 403);
+        abort_unless($user->role === 'courier', 403);
 
         $access = app(CourierOrderAccess::class);
         $canAccess = $access->assigned($user)->whereKey($order->id)->exists()
@@ -701,11 +886,7 @@ class ChatController extends Controller
     /** @return array<int, int> */
     private function assignedCourierIds(Order $order): array
     {
-        return collect([
-            $order->courier_id,
-            $order->delivery_courier_id,
-            $order->pickup_courier_id,
-        ])
+        return collect([$order->courier_id])
             ->filter()
             ->map(fn ($id) => (int) $id)
             ->unique()
@@ -717,20 +898,18 @@ class ChatController extends Controller
     {
         $courierIds = $this->assignedCourierIds($order);
 
-        if ($actor->isCourierRole() && in_array((int) $actor->id, $courierIds, true)) {
+        if ($actor->role === 'courier' && in_array((int) $actor->id, $courierIds, true)) {
             return (int) $actor->id;
         }
 
         // For an available offer the authenticated courier is the intended
         // counterparty for a pre-acceptance clarification conversation.
-        if ($actor->isCourierRole() && $courierIds === []) {
+        if ($actor->role === 'courier' && $courierIds === []) {
             return (int) $actor->id;
         }
 
-        // The merchant must be connected to the same operational courier
-        // shown on the order card: pickup courier while waiting at the shop,
-        // then delivery courier once the parcel is with a courier.  This
-        // avoids a card/chat mismatch for specialised assignments.
+        // The merchant is connected to the same accountable courier shown on
+        // the order card.
         return $this->operationalCourierId($order);
     }
 
@@ -768,9 +947,9 @@ class ChatController extends Controller
         return $merchantId ? (int) $merchantId : null;
     }
 
-    private function readColumnFor(Chat $chat, User $user): string
+    private function readColumnFor(Chat $chat, User $user, ?BranchDashboardScope $scope = null): string
     {
-        if ($user->isAdmin()) {
+        if ($this->isDashboardChatOperator($user, $scope)) {
             return 'admin_read_at';
         }
 
@@ -779,9 +958,9 @@ class ChatController extends Controller
             : 'user_read_at';
     }
 
-    private function adminOrderContext(?Order $order): ?array
+    private function adminOrderContext(?Order $order, ?BranchDashboardScope $scope = null): ?array
     {
-        return $order ? [
+        return $this->visibleAdminOrder($order, $scope) ? [
             'id' => $order->id,
             'track_no' => $order->track_no,
             'customer_name' => $order->customer_name_ar ?: $order->customer_name_en,
@@ -791,18 +970,10 @@ class ChatController extends Controller
         ] : null;
     }
 
-    /**
-     * Resolve the courier whose work is currently visible on an order. This
-     * is deliberately stage-aware so a merchant chats with the pickup
-     * courier first and with the delivery courier after handover.
-     */
+    /** Resolve the one courier shown for an order, with legacy read fallback. */
     private function operationalCourierId(Order $order): ?int
     {
-        return match ($order->status) {
-            'approved' => $order->pickup_courier_id ?: $order->courier_id ?: $order->delivery_courier_id,
-            'courier' => $order->delivery_courier_id ?: $order->courier_id ?: $order->pickup_courier_id,
-            default => $order->courier_id ?: $order->pickup_courier_id ?: $order->delivery_courier_id,
-        } ?: null;
+        return $order->courier_id ?: $order->delivery_courier_id ?: $order->pickup_courier_id;
     }
 
     private function operationalCourierFor(Order $order): ?User
@@ -919,9 +1090,9 @@ class ChatController extends Controller
     }
 
     /** @return array<string, mixed> */
-    private function adminChatPayload(Chat $chat, User $viewer): array
+    private function adminChatPayload(Chat $chat, User $viewer, ?BranchDashboardScope $scope = null): array
     {
-        $order = $chat->order;
+        $order = $this->visibleAdminOrder($chat->order, $scope) ? $chat->order : null;
         $isMerchantCourierChat = $chat->counterparty_type === 'order_chat';
         $merchant = ($chat->user?->role === 'merchant' || $chat->user?->role === 'owner')
             ? $chat->user
@@ -936,51 +1107,87 @@ class ChatController extends Controller
             $courier = $chat->counterparty;
         }
 
-        $merchantName = $merchant?->name;
-        $courierName = $courier?->name;
+        $merchantName = $this->visibleAdminParticipant($merchant, $scope) ? $merchant?->name : null;
+        $courierName = $this->visibleAdminParticipant($courier, $scope) ? $courier?->name : null;
+        $isScopedBranchDashboard = $scope?->hasBranchScope() ?? false;
 
         if ($chat->counterparty_type === 'order_support') {
-            $displayTitle = $chat->title_ar ?: 'دعم الطلب'.($order?->track_no ? ' — '.$order->track_no : '');
+            $displayTitle = ($isScopedBranchDashboard ? 'دعم الطلب' : ($chat->title_ar ?: 'دعم الطلب'))
+                .($order?->track_no ? ' — '.$order->track_no : '');
         } elseif ($isMerchantCourierChat) {
             $displayTitle = 'محادثة الطلب — '.($merchantName ?: 'تاجر').' ↔ '.($courierName ?: 'مندوب').($order?->track_no ? ' — '.$order->track_no : '');
         } else {
-            $displayTitle = $chat->title_ar ?: ($merchantName ?: 'الدعم الفني');
+            $displayTitle = $isScopedBranchDashboard
+                ? ($merchantName ?: 'الدعم الفني')
+                : ($chat->title_ar ?: ($merchantName ?: 'الدعم الفني'));
         }
 
         return [
             'id' => $chat->id,
-            'title_ar' => $chat->title_ar,
-            'title_en' => $chat->title_en,
+            // Historical order-support titles include the other participant's
+            // name. Never serialise those raw values into a branch dashboard.
+            'title_ar' => $isScopedBranchDashboard ? $displayTitle : $chat->title_ar,
+            'title_en' => $isScopedBranchDashboard ? null : $chat->title_en,
             'display_title' => $displayTitle,
             'last_message' => $chat->last_message,
             'last_at' => $chat->last_at?->diffForHumans(),
-            'unread' => $this->unreadFor($chat, $viewer),
+            'unread' => $this->unreadFor($chat, $viewer, $scope),
             'channel' => $isMerchantCourierChat ? 'merchant_courier' : 'support',
             'read_only' => $isMerchantCourierChat,
-            'can_reply' => ! $isMerchantCourierChat && $viewer->canUseAdminPermission('chat', 'create'),
-            'user' => $this->adminParticipantPayload($chat->user),
-            'counterparty' => $this->adminParticipantPayload($chat->counterparty),
-            'merchant' => $this->adminParticipantPayload($merchant),
-            'courier' => $this->adminParticipantPayload($courier),
+            'can_reply' => ! $isMerchantCourierChat
+                && $viewer->canUseAdminPermission('chat', 'reply')
+                && $this->visibleAdminParticipant($chat->user, $scope),
+            'user' => $this->adminParticipantPayload($chat->user, $scope),
+            'counterparty' => $this->adminParticipantPayload($chat->counterparty, $scope),
+            'merchant' => $this->adminParticipantPayload($merchant, $scope),
+            'courier' => $this->adminParticipantPayload($courier, $scope),
             'merchant_name' => $merchantName,
             'courier_name' => $courierName,
             'counterparty_type' => $chat->counterparty_type,
-            'order_id' => $chat->order_id,
+            'order_id' => $order?->id,
             'track_no' => $order?->track_no,
             'tracking_no' => $order?->track_no,
-            'order' => $this->adminOrderContext($order),
+            'order' => $this->adminOrderContext($order, $scope),
         ];
     }
 
     /** @return array<string, int|string|null>|null */
-    private function adminParticipantPayload(?User $user): ?array
+    private function adminParticipantPayload(?User $user, ?BranchDashboardScope $scope = null): ?array
     {
-        return $user ? [
+        return $this->visibleAdminParticipant($user, $scope) ? [
             'id' => $user->id,
             'name' => $user->name,
             'phone' => $user->phone,
             'role' => $user->role,
             'shop_name' => $user->shop_name,
         ] : null;
+    }
+
+    private function visibleAdminParticipant(?User $user, ?BranchDashboardScope $scope = null): bool
+    {
+        return $user !== null
+            && (! $scope?->hasBranchScope() || (int) $user->branch_id === (int) $scope->branchId());
+    }
+
+    private function visibleAdminOrder(?Order $order, ?BranchDashboardScope $scope = null): bool
+    {
+        if (! $order) {
+            return false;
+        }
+
+        if (! $scope?->hasBranchScope()) {
+            return true;
+        }
+
+        return in_array((int) $scope->branchId(), [
+            (int) $order->branch_id,
+            (int) $order->origin_branch_id,
+            (int) $order->destination_branch_id,
+        ], true);
+    }
+
+    private function isDashboardChatOperator(User $user, ?BranchDashboardScope $scope = null): bool
+    {
+        return $user->isAdmin() || $scope?->hasBranchScope() === true;
     }
 }

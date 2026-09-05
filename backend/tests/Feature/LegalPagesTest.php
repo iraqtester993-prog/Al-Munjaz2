@@ -2,8 +2,8 @@
 
 namespace Tests\Feature;
 
-use Inertia\Testing\AssertableInertia as Assert;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
 class LegalPagesTest extends TestCase

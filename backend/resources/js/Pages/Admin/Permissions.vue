@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
+import BranchFilter from '../../Components/BranchFilter.vue'
 
 const props = defineProps({
     profiles: { type: Array, default: () => [] },
@@ -11,10 +12,13 @@ const props = defineProps({
     // The backend is the authority for this flag. Keeping a permissive
     // fallback makes the page compatible while older deployments roll out.
     canManageProfiles: { type: Boolean, default: false },
+    branchAudit: { type: Boolean, default: false },
+    branchFilter: { type: Object, default: () => ({}) },
 })
 
 const page = usePage()
 const locale = computed(() => page.props.locale || 'ar')
+const isBranchScoped = computed(() => Boolean(page.props.branchDashboard?.active))
 const editorMode = ref(null)
 const selectedProfileId = ref(null)
 const submitting = ref(false)
@@ -37,10 +41,12 @@ const labels = {
     namePlaceholder: { ar: 'مثال: مدير العمليات', en: 'Example: Operations manager', ku: 'نموونە: بەڕێوەبەری کارپێکردن' },
     nameRequired: { ar: 'اكتب اسمًا للصلاحية أولًا.', en: 'Enter a permission profile name first.', ku: 'سەرەتا ناوی پڕۆفایلی دەسەڵات بنووسە.' },
     fullAccess: { ar: 'صلاحية كاملة', en: 'Full access', ku: 'دەسەڵاتی تەواو' },
-    fullAccessHelp: { ar: 'منح جميع الصلاحيات في هذه المصفوفة.', en: 'Grant every permission in this matrix.', ku: 'هەموو دەسەڵاتەکانی ئەم خشتەیە بدە.' },
+    fullAccessHelp: { ar: 'منح جميع الإجراءات في جميع أقسام الداشبورد.', en: 'Grant every action in every dashboard area.', ku: 'هەموو کردارەکانی هەموو بەشەکانی داشبۆرد بدە.' },
     selectAll: { ar: 'اختر الكل', en: 'Select all', ku: 'هەموو هەڵبژێرە' },
     clearAll: { ar: 'إلغاء تحديد الكل', en: 'Clear all', ku: 'هەموو لاببە' },
     module: { ar: 'الصلاحيات', en: 'Modules', ku: 'بەشەکان' },
+    moduleActions: { ar: 'إجراءات هذا القسم', en: 'Actions in this area', ku: 'کردارەکانی ئەم بەشە' },
+    selectModule: { ar: 'تحديد كل إجراءات القسم', en: 'Select all actions in this area', ku: 'هەموو کردارەکانی ئەم بەشە هەڵبژێرە' },
     selected: { ar: 'محددة', en: 'selected', ku: 'هەڵبژێردراو' },
     notSelected: { ar: 'غير محددة', en: 'not selected', ku: 'هەڵنەبژێردراو' },
     save: { ar: 'حفظ', en: 'Save', ku: 'پاشەکەوتکردن' },
@@ -62,6 +68,7 @@ const labels = {
     assignmentFailed: { ar: 'تعذر حفظ إسناد الصلاحية. حاول مرة أخرى.', en: 'The permission assignment could not be saved. Please try again.', ku: 'نەتوانرا دانانی دەسەڵات پاشەکەوت بکرێت. تکایە دووبارە هەوڵبدە.' },
     statusActive: { ar: 'نشط', en: 'Active', ku: 'چالاک' },
     statusInactive: { ar: 'موقوف', en: 'Inactive', ku: 'ناچالاک' },
+    branchAudit: { ar: 'هذا عرض مراجعة لموظفي الفرع وملفات صلاحياته فقط. تبقى إدارة الصلاحيات من لوحة الفرع نفسها.', en: 'This is a read-only review of the branch staff and permission profiles. Manage them from the branch dashboard.', ku: 'ئەمە تەنها پیشاندانی پێداچوونەوەی کارمەند و پڕۆفایلەکانی دەسەڵاتی لقە. بەڕێوەبردنیان لە داشبۆردی هەمان لق ئەنجام بدە.' },
 }
 
 const actionLabels = {
@@ -93,27 +100,22 @@ function actionKey(action) {
 }
 
 function actionsFor(module) {
-    const actions = Array.isArray(module?.actions) ? module.actions : []
+    const actions = Array.isArray(module?.actions)
+        ? module.actions
+        : Object.entries(module?.actions || {}).map(([key, action]) => {
+            if (action && typeof action === 'object' && !Array.isArray(action)) {
+                return { ...action, key: action.key || key }
+            }
+
+            return { key, label: action }
+        })
+
     return actions.map((action) => ({ raw: action, key: actionKey(action) })).filter((action) => action.key)
 }
 
 const permissionModules = computed(() => props.modules
     .map((module) => ({ ...module, key: String(module.key || module.slug || module.name || ''), actions: actionsFor(module) }))
     .filter((module) => module.key && module.actions.length))
-
-const actionColumns = computed(() => {
-    const seen = new Set()
-    const result = []
-    permissionModules.value.forEach((module) => {
-        module.actions.forEach((action) => {
-            if (!seen.has(action.key)) {
-                seen.add(action.key)
-                result.push(action)
-            }
-        })
-    })
-    return result
-})
 
 function moduleLabel(module) {
     return module[`name_${locale.value}`]
@@ -123,12 +125,13 @@ function moduleLabel(module) {
 }
 
 function actionLabel(action) {
-    const custom = typeof action.raw === 'object' ? localized(action.raw.label || action.raw.labels || action.raw.name) : ''
+    const custom = typeof action.raw === 'object' ? localized(action.raw.label || action.raw.labels || action.raw.name || action.raw) : ''
     return custom || actionLabels[action.key]?.[locale.value] || actionLabels[action.key]?.ar || action.key
 }
 
-function moduleHasAction(module, action) {
-    return module.actions.some((item) => item.key === action.key)
+function actionDescription(action) {
+    if (typeof action.raw !== 'object' || !action.raw) return ''
+    return localized(action.raw.description || action.raw.help || action.raw.hint)
 }
 
 function emptyPermissions() {
@@ -176,7 +179,6 @@ const canManage = computed(() => props.canManageProfiles)
 const totalAvailableActions = computed(() => permissionModules.value.reduce((total, module) => total + module.actions.length, 0))
 const selectedActionCount = computed(() => Object.values(form.permissions).reduce((total, actions) => total + (Array.isArray(actions) ? actions.length : 0), 0))
 const hasFullAccess = computed(() => totalAvailableActions.value > 0 && selectedActionCount.value === totalAvailableActions.value)
-const matrixStyle = computed(() => ({ '--permission-columns': Math.max(actionColumns.value.length, 1) }))
 
 function resetForm() {
     form.name = ''
@@ -223,6 +225,10 @@ function toggleAction(module, action) {
 
 function moduleIsComplete(module) {
     return module.actions.every((action) => hasAction(module, action))
+}
+
+function selectedModuleActionCount(module) {
+    return module.actions.filter((action) => hasAction(module, action)).length
 }
 
 function toggleModule(module) {
@@ -306,10 +312,16 @@ function syncAssignments(users) {
 watch(() => props.users, syncAssignments, { immediate: true, deep: true })
 
 function assignProfile(user, event) {
-    if (!canManage.value || user.is_super_admin || assigning.value[user.id]) return
+    // The principal account owns the branch itself and is never converted
+    // into a profile-bound employee from this assignment surface.
+    if (!canManage.value || user.is_super_admin || user.is_protected_manager || assigning.value[user.id]) return
 
     const previous = assignmentFor(user)
     const next = event.target.value || ''
+    if (isBranchScoped.value && !next) {
+        assignmentValues.value = { ...assignmentValues.value, [user.id]: previous }
+        return
+    }
     assignmentValues.value = { ...assignmentValues.value, [user.id]: next }
     assigning.value = { ...assigning.value, [user.id]: true }
     assignmentErrors.value = { ...assignmentErrors.value, [user.id]: '' }
@@ -345,6 +357,15 @@ function userStatus(user) {
 function initials(name) {
     return String(name || 'إ').trim().charAt(0).toUpperCase()
 }
+
+function changeBranchFilter(branchId) {
+    closeEditor()
+    router.get(route('admin.permissions'), branchId ? { branch_id: branchId } : {}, {
+        preserveScroll: true,
+        preserveState: false,
+        replace: true,
+    })
+}
 </script>
 
 <template>
@@ -355,8 +376,16 @@ function initials(name) {
                 <h2>{{ l('title') }}</h2>
                 <span>{{ l('subtitle') }}</span>
             </div>
-            <button v-if="canManage" class="primary-button" type="button" @click="openCreate">＋ {{ l('add') }}</button>
+            <div class="page-heading-actions">
+                <BranchFilter :filter="branchFilter" @change="changeBranchFilter" />
+                <button v-if="canManage" class="primary-button" type="button" @click="openCreate">＋ {{ l('add') }}</button>
+            </div>
         </header>
+
+        <section v-if="branchAudit" class="branch-audit-note" role="note">
+            <span aria-hidden="true">◌</span>
+            <p>{{ l('branchAudit') }}</p>
+        </section>
 
         <div class="permission-layout">
             <section class="panel profiles-panel" aria-labelledby="permission-profiles-title">
@@ -422,28 +451,38 @@ function initials(name) {
                         </button>
                     </div>
 
-                    <div v-if="permissionModules.length" class="permission-table-wrap">
-                        <div class="permission-table" :style="matrixStyle">
-                            <div class="permission-row permission-table-head">
-                                <span>{{ l('module') }}</span>
-                                <span v-for="action in actionColumns" :key="action.key">{{ actionLabel(action) }}</span>
-                            </div>
+                    <div v-if="permissionModules.length" class="permission-modules">
+                        <section v-for="module in permissionModules" :key="module.key" class="permission-module-card">
+                            <header class="permission-module-heading">
+                                <div>
+                                    <p>{{ l('moduleActions') }}</p>
+                                    <h4>{{ moduleLabel(module) }}</h4>
+                                    <small>{{ selectedModuleActionCount(module) }} / {{ module.actions.length }} {{ l('selected') }}</small>
+                                </div>
+                                <label class="module-toggle" :title="l('selectModule')">
+                                    <input type="checkbox" :checked="moduleIsComplete(module)" :disabled="!canManage" @change="toggleModule(module)" />
+                                    <span aria-hidden="true">✓</span>
+                                    <b>{{ l('selectAll') }}</b>
+                                </label>
+                            </header>
 
-                            <div v-for="module in permissionModules" :key="module.key" class="permission-row">
-                                <button class="module-label" type="button" :disabled="!canManage" @click="toggleModule(module)">
-                                    <b>{{ moduleLabel(module) }}</b>
-                                    <small>{{ moduleIsComplete(module) ? l('selected') : l('notSelected') }}</small>
-                                </button>
-                                <template v-for="action in actionColumns" :key="`${module.key}-${action.key}`">
-                                    <label v-if="moduleHasAction(module, action)" class="permission-control" :title="`${moduleLabel(module)} — ${actionLabel(action)}`">
-                                        <input type="checkbox" :checked="hasAction(module, action)" :disabled="!canManage" @change="toggleAction(module, action)" />
-                                        <span aria-hidden="true">✓</span>
-                                        <i class="sr-only">{{ actionLabel(action) }}</i>
-                                    </label>
-                                    <span v-else class="permission-empty" aria-hidden="true">—</span>
-                                </template>
+                            <div class="permission-actions" :aria-label="`${moduleLabel(module)} — ${l('moduleActions')}`">
+                                <label
+                                    v-for="action in module.actions"
+                                    :key="`${module.key}-${action.key}`"
+                                    class="permission-action"
+                                    :class="{ selected: hasAction(module, action) }"
+                                    :title="`${moduleLabel(module)} — ${actionLabel(action)}`"
+                                >
+                                    <input type="checkbox" :checked="hasAction(module, action)" :disabled="!canManage" @change="toggleAction(module, action)" />
+                                    <span class="action-checkbox" aria-hidden="true">✓</span>
+                                    <span class="action-copy">
+                                        <b>{{ actionLabel(action) }}</b>
+                                        <small v-if="actionDescription(action)">{{ actionDescription(action) }}</small>
+                                    </span>
+                                </label>
                             </div>
-                        </div>
+                        </section>
                     </div>
                     <div v-else class="matrix-empty">{{ l('noProfiles') }}</div>
 
@@ -486,10 +525,10 @@ function initials(name) {
                     </div>
                     <label class="assignment-select">
                         <span class="sr-only">{{ l('profile') }}</span>
-                        <select :value="assignmentFor(user)" :disabled="!canManage || user.is_super_admin || Boolean(assigning[user.id])" @change="assignProfile(user, $event)">
-                            <option value="">{{ l('noProfile') }}</option>
+                        <PopupSelect :model-value="assignmentFor(user)" :disabled="!canManage || user.is_super_admin || user.is_protected_manager || Boolean(assigning[user.id])" @change="assignProfile(user, $event)">
+                            <option v-if="!isBranchScoped" value="">{{ l('noProfile') }}</option>
                             <option v-for="profile in profiles" :key="profile.id" :value="String(profile.id)">{{ profile.name }}</option>
-                        </select>
+                        </PopupSelect>
                         <i v-if="assigning[user.id]">{{ l('saving') }}</i>
                     </label>
                     <p v-if="assignmentErrors[user.id]" class="assignment-error" role="alert">{{ assignmentErrors[user.id] }}</p>
@@ -505,4 +544,6 @@ function initials(name) {
 
 <style scoped>
 .page-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:18px}.page-heading p{margin:0 0 4px;color:var(--primary);font-size:10px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.page-heading h2{margin:0;color:var(--ink);font-size:24px;font-weight:900}.page-heading span{display:block;max-width:730px;margin-top:5px;color:var(--ink-faint);font-size:11px;font-weight:650;line-height:1.75}.primary-button,.secondary-button,.clear-button,.delete-button{border:0;border-radius:10px;font:800 11px var(--font);cursor:pointer;transition:transform .16s ease,opacity .16s ease,background .16s ease}.primary-button{min-height:39px;padding:9px 14px;color:#062033;background:linear-gradient(135deg,var(--primary),#0ea5e9)}.primary-button:hover:not(:disabled),.secondary-button:hover:not(:disabled),.clear-button:hover:not(:disabled),.delete-button:hover:not(:disabled){transform:translateY(-1px)}.primary-button:disabled,.secondary-button:disabled,.delete-button:disabled{cursor:wait;opacity:.62}.permission-layout{display:grid;grid-template-columns:minmax(250px,.73fr) minmax(0,1.9fr);gap:16px;align-items:start}.panel{border:1px solid var(--border);border-radius:17px;background:var(--surface);box-shadow:var(--shadow)}.profiles-panel{overflow:hidden}.panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:16px;border-bottom:1px solid var(--border)}.panel-heading h3{margin:0;color:var(--ink);font-size:13px;font-weight:900}.panel-heading p{max-width:600px;margin:4px 0 0;color:var(--ink-faint);font-size:9.5px;font-weight:650;line-height:1.65}.profile-total{display:grid;min-width:25px;height:25px;place-items:center;border-radius:8px;color:var(--primary-strong);background:var(--primary-tint);font-size:10px;font-weight:900}.profile-list{display:grid;padding:9px;gap:6px;max-height:560px;overflow:auto}.profile-card{width:100%;display:flex;align-items:center;gap:9px;padding:10px;border:1px solid transparent;border-radius:12px;color:var(--ink);background:transparent;font:inherit;text-align:start;cursor:pointer;transition:border-color .16s ease,background .16s ease}.profile-card:hover{background:var(--surface-2)}.profile-card.active{border-color:color-mix(in srgb,var(--primary) 54%,var(--border));background:var(--primary-tint)}.profile-mark,.user-avatar{display:grid;place-items:center;flex:none;border-radius:10px;color:#062033;background:linear-gradient(135deg,var(--primary),#0ea5e9);font-size:11px;font-weight:900}.profile-mark{width:34px;height:34px}.profile-content{display:grid;min-width:0;flex:1;gap:2px}.profile-content strong{overflow:hidden;font-size:11px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.profile-content small{overflow:hidden;color:var(--ink-faint);font-size:8.5px;font-weight:750;text-overflow:ellipsis;white-space:nowrap}.profile-users{display:grid;justify-items:center;gap:1px;min-width:33px;color:var(--ink);font-size:12px;font-weight:900}.profile-users small{color:var(--ink-faint);font-size:7.5px;font-weight:750}.empty-state{display:grid;justify-items:center;gap:7px;padding:30px 17px;color:var(--ink-faint);text-align:center}.empty-state>span{display:grid;width:35px;height:35px;place-items:center;border-radius:11px;color:var(--primary);background:var(--primary-tint);font-size:17px;font-weight:900}.empty-state p{max-width:245px;margin:0;font-size:10px;font-weight:700;line-height:1.75}.empty-state button{border:0;border-radius:8px;padding:6px 9px;color:var(--primary-strong);background:var(--primary-tint);font:800 9.5px var(--font);cursor:pointer}.editor-panel{min-height:360px;overflow:hidden}.editor-panel form{display:grid;gap:15px;padding:19px}.editor-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:13px}.editor-heading p{margin:0;color:var(--primary);font-size:10px;font-weight:900}.editor-heading h3{margin:3px 0 0;color:var(--ink);font-size:18px;font-weight:900}.editor-heading span{display:block;max-width:600px;margin-top:5px;color:var(--ink-faint);font-size:10px;font-weight:650;line-height:1.7}.delete-button{min-height:31px;flex:none;padding:7px 9px;color:var(--danger);background:var(--danger-tint);font-size:9.5px}.delete-button:disabled{cursor:not-allowed;color:var(--ink-faint);background:var(--surface-2)}.name-field{display:grid;gap:6px}.name-field>span{color:var(--ink-soft);font-size:10.5px;font-weight:850}.name-field b{color:var(--danger)}.name-field input,.assignment-select select{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:10px;outline:none;color:var(--ink);background:var(--surface-2);font:700 11px var(--font)}.name-field input{min-height:42px;padding:9px 10px}.name-field input:focus,.assignment-select select:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-tint)}.field-error,.form-error{color:var(--danger);font-size:9.5px;font-weight:750}.matrix-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 11px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2)}.full-access-control{display:flex;align-items:center;gap:8px;cursor:pointer}.full-access-control input,.permission-control input{position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none}.full-access-control .custom-checkbox,.permission-control>span{display:grid;place-items:center;width:18px;height:18px;flex:none;border:1px solid var(--border);border-radius:5px;color:transparent;background:var(--surface);font-size:12px;font-weight:900;line-height:1;transition:color .15s,background .15s,border-color .15s}.full-access-control input:checked + .custom-checkbox,.permission-control input:checked + span{border-color:var(--primary);color:#062033;background:var(--primary)}.full-access-control>span:last-child{display:grid;gap:1px}.full-access-control b{color:var(--ink);font-size:10.5px}.full-access-control small{color:var(--ink-faint);font-size:8.5px;font-weight:700}.clear-button{padding:6px 8px;color:var(--primary-strong);background:var(--primary-tint);font-size:9px}.permission-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}.permission-table{min-width:620px}.permission-row{display:grid;grid-template-columns:minmax(170px,1fr) repeat(var(--permission-columns),minmax(80px,1fr));min-height:52px;border-top:1px solid var(--border)}.permission-row:first-child{border-top:0}.permission-table-head{min-height:37px;color:var(--ink-faint);background:var(--surface-2);font-size:9.5px;font-weight:900}.permission-table-head>span{display:grid;place-items:center;padding:6px;text-align:center}.permission-table-head>span:first-child{justify-content:start;padding-inline:13px}.module-label{display:grid;align-content:center;justify-items:start;gap:2px;border:0;border-inline-end:1px solid var(--border);padding:9px 13px;color:var(--ink);background:transparent;font:inherit;text-align:start;cursor:pointer;transition:background .15s}.module-label:hover{background:var(--primary-tint)}.module-label b{font-size:10.5px;font-weight:900}.module-label small{color:var(--ink-faint);font-size:8px;font-weight:700}.permission-control,.permission-empty{display:grid;place-items:center;border-inline-end:1px solid var(--border)}.permission-control:last-child,.permission-empty:last-child{border-inline-end:0}.permission-control{cursor:pointer}.permission-empty{color:var(--ink-faint);font-size:11px}.matrix-empty{padding:20px;border:1px dashed var(--border);border-radius:12px;color:var(--ink-faint);font-size:10px;font-weight:700;text-align:center}.editor-footer{display:flex;justify-content:flex-end;gap:8px;padding-top:2px}.secondary-button{min-height:39px;padding:9px 13px;border:1px solid var(--border);color:var(--ink-soft);background:var(--surface-2)}.editor-empty{min-height:360px;display:grid;place-content:center;justify-items:center;gap:10px;padding:26px;color:var(--ink-faint);text-align:center}.editor-empty>span{display:grid;width:44px;height:44px;place-items:center;border-radius:14px;color:var(--primary);background:var(--primary-tint);font-size:20px}.editor-empty p{max-width:290px;margin:0;font-size:11px;font-weight:700;line-height:1.75}.assignments-panel{margin-top:16px;overflow:hidden}.assignment-heading{border-bottom:1px solid var(--border)}.assignment-list{display:grid}.assignment-row{position:relative;display:grid;grid-template-columns:auto minmax(150px,1fr) minmax(140px,.7fr) minmax(180px,.8fr);align-items:center;gap:12px;padding:12px 16px;border-top:1px solid var(--border)}.assignment-row:first-child{border-top:0}.user-avatar{width:35px;height:35px;border-radius:50%}.user-details{display:grid;min-width:0;gap:3px}.user-details>div{display:flex;align-items:center;gap:6px;min-width:0}.user-details strong{overflow:hidden;color:var(--ink);font-size:11px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.user-details>small{overflow:hidden;color:var(--ink-faint);font-size:8.5px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}.user-status{flex:none;padding:2px 5px;border-radius:999px;color:var(--success);background:var(--success-tint);font-size:7.5px;font-weight:850}.user-status.inactive{color:var(--danger);background:var(--danger-tint)}.assigned-summary{display:grid;min-width:0;gap:2px}.assigned-summary b{overflow:hidden;color:var(--ink-soft);font-size:10px;font-weight:850;text-overflow:ellipsis;white-space:nowrap}.assigned-summary small{color:var(--ink-faint);font-size:8px;font-weight:700}.assignment-select{position:relative;min-width:0}.assignment-select select{min-height:37px;padding:7px 27px 7px 9px;font-size:10px;cursor:pointer}.assignment-select select:disabled{cursor:wait;opacity:.65}.assignment-select i{position:absolute;inset-inline-end:8px;top:50%;max-width:65px;overflow:hidden;color:var(--primary-strong);font-size:7.5px;font-weight:900;text-overflow:ellipsis;transform:translateY(-50%);white-space:nowrap;pointer-events:none}.assignment-error{grid-column:2/-1;margin:0;color:var(--danger);font-size:8.5px;font-weight:750}.assignment-empty{padding:28px}.sr-only{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(max-width:1000px){.permission-layout{grid-template-columns:1fr}.profiles-panel{max-height:none}.profile-list{max-height:250px}.assignment-row{grid-template-columns:auto minmax(140px,1fr) minmax(180px,.9fr)}.assigned-summary{display:none}}@media(max-width:680px){.page-heading{align-items:stretch;flex-direction:column}.page-heading .primary-button{align-self:flex-start}.editor-panel form{padding:15px}.editor-heading{align-items:stretch;flex-direction:column}.delete-button{align-self:flex-start}.matrix-toolbar{align-items:flex-start;flex-direction:column}.permission-row{grid-template-columns:minmax(142px,1fr) repeat(var(--permission-columns),minmax(67px,1fr))}.permission-table{min-width:520px}.assignment-row{grid-template-columns:auto minmax(0,1fr);gap:8px 10px;padding:12px}.assignment-select{grid-column:2}.assignment-error{grid-column:2}.user-details>div{flex-wrap:wrap}.assignment-heading{align-items:flex-start}.panel-heading{padding:14px}.primary-button{font-size:10px}}@media(max-width:430px){.editor-footer{display:grid;grid-template-columns:1fr 1fr}.editor-footer button{width:100%}.page-heading h2{font-size:21px}}
+.permission-modules{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:10px}.permission-module-card{overflow:hidden;border:1px solid var(--border);border-radius:12px;background:var(--surface-2)}.permission-module-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 12px;border-bottom:1px solid var(--border);background:var(--surface)}.permission-module-heading p{margin:0 0 2px;color:var(--primary);font-size:7.5px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}.permission-module-heading h4{margin:0;color:var(--ink);font-size:11px;font-weight:900}.permission-module-heading small{display:block;margin-top:3px;color:var(--ink-faint);font-size:8px;font-weight:750}.module-toggle{display:flex;align-items:center;flex:none;gap:5px;color:var(--primary-strong);font-size:8.5px;font-weight:850;cursor:pointer}.module-toggle input,.permission-action input{position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none}.module-toggle>span,.action-checkbox{display:grid;place-items:center;width:17px;height:17px;flex:none;border:1px solid var(--border);border-radius:5px;color:transparent;background:var(--surface);font-size:11px;font-weight:900;line-height:1;transition:color .15s,background .15s,border-color .15s}.module-toggle input:checked + span,.permission-action input:checked + .action-checkbox{border-color:var(--primary);color:#062033;background:var(--primary)}.module-toggle input:disabled + span,.permission-action input:disabled + .action-checkbox{opacity:.58}.permission-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:6px;padding:9px}.permission-action{display:flex;align-items:flex-start;gap:7px;min-width:0;padding:8px;border:1px solid var(--border);border-radius:9px;color:var(--ink);background:var(--surface);cursor:pointer;transition:border-color .15s,background .15s,transform .15s}.permission-action:hover{border-color:color-mix(in srgb,var(--primary) 52%,var(--border));background:var(--primary-tint);transform:translateY(-1px)}.permission-action.selected{border-color:color-mix(in srgb,var(--primary) 60%,var(--border));background:var(--primary-tint)}.action-copy{display:grid;min-width:0;gap:2px}.action-copy b{overflow:hidden;font-size:9.5px;font-weight:850;line-height:1.35;text-overflow:ellipsis}.action-copy small{color:var(--ink-faint);font-size:7.8px;font-weight:650;line-height:1.45}@media(max-width:680px){.permission-modules{grid-template-columns:1fr}.permission-actions{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:430px){.permission-actions{grid-template-columns:1fr}.module-toggle b{display:none}}
+.page-heading-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:9px}.branch-audit-note{display:flex;align-items:flex-start;gap:9px;margin:-4px 0 16px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--accent) 45%,var(--border));border-radius:14px;background:var(--accent-tint)}.branch-audit-note>span{display:grid;place-items:center;flex:none;width:19px;height:19px;border-radius:50%;color:#fff;background:var(--accent);font-size:13px;font-weight:900}.branch-audit-note p{margin:0;color:var(--ink-soft);font-size:10px;font-weight:800;line-height:1.7}@media(max-width:680px){.page-heading-actions{align-items:stretch;width:100%}.page-heading-actions .primary-button{flex:1}}
 </style>

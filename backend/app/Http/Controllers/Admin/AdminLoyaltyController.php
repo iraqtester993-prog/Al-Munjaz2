@@ -8,7 +8,11 @@ use App\Models\LoyaltyEntry;
 use App\Models\Setting;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\BranchDashboardContext;
+use App\Services\BranchDashboardScope;
+use App\Services\DashboardBranchFilter;
 use App\Services\LoyaltyPointService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -23,12 +27,20 @@ use Inertia\Inertia;
  */
 class AdminLoyaltyController extends Controller
 {
-    public function index(LoyaltyPointService $loyalty)
+    public function index(Request $request, LoyaltyPointService $loyalty)
     {
-        $couriers = User::withoutGlobalScopes()
+        $user = $request->user();
+        $scope = $this->branchScope($request);
+        $branchFilter = app(DashboardBranchFilter::class);
+        $selectedBranchId = $branchFilter->selectedBranchId($request, $scope);
+
+        $courierQuery = User::withoutGlobalScopes()
             ->whereIn('role', User::COURIER_ROLES)
             ->where('status', 'active')
-            ->with('loyaltyAccount:user_id,balance')
+            ->with('loyaltyAccount:user_id,balance');
+        $this->restrictCouriersToScope($courierQuery, $scope, $selectedBranchId);
+
+        $couriers = $courierQuery
             ->orderBy('name')
             ->get(['id', 'name', 'phone', 'role', 'tenant_id'])
             ->map(fn (User $courier) => [
@@ -42,11 +54,18 @@ class AdminLoyaltyController extends Controller
 
         // The ledger deliberately includes an inactive courier's previous
         // movements.  Suspending an account must never hide audit history.
-        $entries = LoyaltyEntry::query()
-            ->whereHas('user', fn ($query) => $query
-                ->withoutGlobalScopes()
-                ->withTrashed()
-                ->whereIn('role', User::COURIER_ROLES))
+        $entryQuery = LoyaltyEntry::query()
+            ->whereHas('user', function (Builder $courierUsers) use ($scope, $selectedBranchId): void {
+                $courierUsers
+                    ->withoutGlobalScopes()
+                    ->withTrashed()
+                    ->whereIn('role', User::COURIER_ROLES);
+                $this->restrictCouriersToScope($courierUsers, $scope, $selectedBranchId);
+            });
+
+        $ledgerEntries = (clone $entryQuery)->count();
+
+        $entries = $entryQuery
             ->with([
                 'user' => fn ($query) => $query
                     ->withoutGlobalScopes()
@@ -84,8 +103,18 @@ class AdminLoyaltyController extends Controller
                 'active_couriers' => $couriers->count(),
                 'points_in_circulation' => (int) $couriers->sum('points_balance'),
                 'couriers_with_points' => $couriers->filter(fn (array $courier) => $courier['points_balance'] > 0)->count(),
-                'ledger_entries' => LoyaltyEntry::query()->count(),
+                'ledger_entries' => ($scope->hasBranchScope() || $selectedBranchId)
+                    ? $ledgerEntries
+                    : LoyaltyEntry::query()->count(),
             ],
+            // Delivery reward is a shared platform setting, never a branch
+            // setting. A branch manager can adjust only their own couriers'
+            // compensating point entries.
+            'canUpdateRewardSetting' => ! $scope->hasBranchScope()
+                && ! $selectedBranchId
+                && $user->canUseAdminPermission('loyalty', 'update_reward_setting'),
+            'canAdjustPoints' => $user->canUseAdminPermission('loyalty', 'adjust_points'),
+            'branchFilter' => $branchFilter->payload($request, $scope),
         ]);
     }
 
@@ -94,6 +123,9 @@ class AdminLoyaltyController extends Controller
      */
     public function store(Request $request, LoyaltyPointService $loyalty)
     {
+        $scope = $this->branchScope($request);
+        abort_if($scope->hasBranchScope(), 403);
+
         $data = $request->validate([
             'points_per_delivery' => ['required', 'integer', 'min:0', 'max:1000000'],
         ]);
@@ -125,6 +157,7 @@ class AdminLoyaltyController extends Controller
      */
     public function adjust(Request $request, LoyaltyPointService $loyalty)
     {
+        $scope = $this->branchScope($request);
         $data = $request->validate([
             'courier_id' => [
                 'required',
@@ -146,10 +179,19 @@ class AdminLoyaltyController extends Controller
             ]);
         }
 
-        $courier = User::withoutGlobalScopes()
+        $courierQuery = User::withoutGlobalScopes()
             ->whereIn('role', User::COURIER_ROLES)
             ->where('status', 'active')
-            ->findOrFail($data['courier_id']);
+            ->whereKey($data['courier_id']);
+        $this->restrictCouriersToScope($courierQuery, $scope);
+        $courier = $courierQuery->first();
+
+        if (! $courier) {
+            throw ValidationException::withMessages([
+                // Do not reveal whether a courier in another branch exists.
+                'courier_id' => [__('Choose an active courier from your branch.')],
+            ]);
+        }
 
         $points = (int) $data['points'];
         $entry = $data['operation'] === 'credit'
@@ -175,5 +217,24 @@ class AdminLoyaltyController extends Controller
         return back()->with('success', $data['operation'] === 'credit'
             ? __('Courier points added successfully.')
             : __('Courier points deducted successfully.'));
+    }
+
+    private function branchScope(Request $request): BranchDashboardScope
+    {
+        $scope = app(BranchDashboardContext::class)->fromRequest($request);
+
+        abort_if($scope->requiresBranchScope() && ! $scope->hasBranchScope(), 403);
+
+        return $scope;
+    }
+
+    /** @param Builder<User> $couriers */
+    private function restrictCouriersToScope(Builder $couriers, BranchDashboardScope $scope, ?int $selectedBranchId = null): void
+    {
+        if ($scope->hasBranchScope()) {
+            $scope->restrictUsers($couriers);
+        } elseif ($selectedBranchId) {
+            $couriers->where($couriers->getModel()->qualifyColumn('branch_id'), $selectedBranchId);
+        }
     }
 }

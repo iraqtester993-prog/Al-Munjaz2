@@ -2,9 +2,9 @@
 
 namespace App\Models;
 
-use LogicException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use LogicException;
 
 /**
  * Append-only record for loyalty point movement.  Corrections must be made

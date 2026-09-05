@@ -6,7 +6,6 @@ use App\Models\Branch;
 use App\Models\Cashbox;
 use App\Models\CashboxVoucher;
 use App\Models\FinanceRequest;
-use App\Models\Transaction;
 use App\Models\User;
 use App\Tenancy\TenantContext;
 use Database\Seeders\DemoSeeder;
@@ -32,7 +31,13 @@ class FinanceWorkflowTest extends TestCase
     {
         $courier = User::where('username', 'مندوب')->firstOrFail();
         $admin = User::where('role', 'admin')->firstOrFail();
-        $branch = Branch::withoutGlobalScopes()->where('is_active', true)->firstOrFail();
+        $branch = Branch::withoutGlobalScopes()
+            ->where('is_platform_managed', true)
+            ->where('is_active', true)
+            ->firstOrFail();
+        // Legacy demo accounts do not carry a branch assignment. A cash
+        // handover now requires the server-owned operational assignment.
+        $courier->forceFill(['branch_id' => $branch->id])->save();
         $startingBranchCash = (int) $branch->cash_balance;
         $startingBudget = (int) $courier->wallet->budget;
 

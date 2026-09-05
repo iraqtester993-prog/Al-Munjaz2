@@ -14,7 +14,13 @@ class ClientRouteMapTest extends TestCase
         $routes = [
             'admin.orders.reoffer-overdue-pickup',
             'admin.users.merchant-verification',
+            'admin.users.courier-deduction.update',
             'admin.users.destroy',
+            'admin.employees.store',
+            'admin.employees.update',
+            'admin.employees.status',
+            'admin.employees.destroy',
+            'admin.settings.courier-deduction-default.update',
             'admin.branch.orders.status',
             'admin.branch.orders.courier',
             'admin.branch.orders.reoffer-overdue-pickup',
@@ -43,5 +49,24 @@ class ClientRouteMapTest extends TestCase
             "const statusOptions = ['pending', 'approved', 'courier', 'delivered', 'returned', 'cancelled'",
             $source,
         );
+    }
+
+    public function test_slider_management_routes_live_under_settings_and_not_a_dashboard_content_page(): void
+    {
+        $clientMap = (string) file_get_contents(resource_path('js/app.js'));
+        $shell = (string) file_get_contents(resource_path('js/Components/AdminShell.vue'));
+
+        foreach ([
+            'admin.settings.slides.store',
+            'admin.settings.slides.update',
+            'admin.settings.slides.destroy',
+        ] as $name) {
+            $this->assertTrue(Route::has($name), "Laravel route [{$name}] is missing.");
+            $this->assertStringContainsString("'{$name}':", $clientMap, "Client route [{$name}] is missing.");
+        }
+
+        $this->assertFalse(Route::has('admin.content'));
+        $this->assertStringNotContainsString("route: 'admin.content'", $shell);
+        $this->assertStringNotContainsString('admin.branch.content', $clientMap);
     }
 }

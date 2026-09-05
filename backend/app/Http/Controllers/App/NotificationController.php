@@ -11,10 +11,25 @@ class NotificationController extends Controller
 {
     public function index(Request $request)
     {
-        $notifications = $this->visibleNotifications($request->user())
+        $visibleNotifications = $this->visibleNotifications($request->user());
+        $notifications = (clone $visibleNotifications)
             ->latest('id')
             ->limit(60)
-            ->get()
+            ->get();
+
+        // A push can be opened after newer inbox entries arrived. Include the
+        // referenced item even when it has moved beyond the normal 60-item
+        // inbox window, but only if it is visible to the signed-in user.
+        $openId = max(0, $request->integer('open', 0));
+        if ($openId > 0 && ! $notifications->contains('id', $openId)) {
+            $openedNotification = (clone $visibleNotifications)->find($openId);
+            if ($openedNotification) {
+                $notifications->push($openedNotification);
+                $notifications = $notifications->sortByDesc('id')->values();
+            }
+        }
+
+        $notifications = $notifications
             ->map(fn (Notification $notification) => $this->present($notification, $request->user()));
 
         $unread = $notifications->where('read', false)->count();
@@ -151,6 +166,39 @@ class NotificationController extends Controller
             'can_manage' => $isOwner,
             'time' => $notification->created_at->diffForHumans(),
             'created_at' => $notification->created_at?->toIso8601String(),
+            // Keep navigation server-defined. The browser never decides a
+            // target from the notification title/body, and each destination
+            // still enforces its own order/chat access policy.
+            'target_url' => $this->targetUrl($notification),
         ];
+    }
+
+    private function targetUrl(Notification $notification): ?string
+    {
+        $data = is_array($notification->data) ? $notification->data : [];
+        $explicitUrl = $data['url'] ?? null;
+
+        // Existing chat notifications already carry a specific internal URL.
+        // Accept only an application path to prevent a stored notification
+        // from becoming an arbitrary redirect.
+        if (is_string($explicitUrl) && str_starts_with($explicitUrl, '/app/') && ! str_contains($explicitUrl, '//')) {
+            return $explicitUrl;
+        }
+
+        $chatId = filter_var($data['chat_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($chatId) {
+            return '/app/chats/'.$chatId;
+        }
+
+        // Finance and account messages may carry an order id as audit context,
+        // but opening them must show their message sheet rather than jumping
+        // the user away from the inbox. Only an actual order notification
+        // owns the order-details destination.
+        $orderId = filter_var($data['order_id'] ?? null, FILTER_VALIDATE_INT);
+        if ($notification->type === 'order' && $orderId) {
+            return '/app/orders?open='.$orderId.'&list=1';
+        }
+
+        return null;
     }
 }

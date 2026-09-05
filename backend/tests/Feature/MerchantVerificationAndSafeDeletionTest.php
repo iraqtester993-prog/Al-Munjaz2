@@ -131,7 +131,7 @@ class MerchantVerificationAndSafeDeletionTest extends TestCase
             ->post('/profile/verification', [
                 'name' => 'تاجر حجم كبير',
                 'address' => 'بغداد — الكرادة',
-                'phone' => '07900009876',
+                'phone' => '07800009876',
                 'identity_number' => 'ID-UPLOAD-LIMIT',
                 // Each file is valid individually, but the four-file request
                 // must stay below the shared-hosting-safe aggregate limit.

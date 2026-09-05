@@ -14,6 +14,10 @@ const installing = ref(false)
 const showInstructions = ref(false)
 const dismissed = ref(false)
 
+function isNativeApp() {
+    return typeof window !== 'undefined' && Boolean(window.NativeApp?.postMessage)
+}
+
 function isStandalone() {
     const nativeBridge = window.AlMunjazNativeLocation
     const nativeShell = nativeBridge && typeof nativeBridge.start === 'function'
@@ -52,6 +56,14 @@ async function install() {
 }
 
 onMounted(() => {
+    if (isNativeApp()) {
+        // APK users already have the app installed. Do not offer the separate
+        // browser/PWA installation path inside the native shell.
+        installed.value = true
+        emit('installed')
+        return
+    }
+
     const agent = window.navigator.userAgent
     const standalone = isStandalone()
     isIos.value = /iPad|iPhone|iPod/.test(agent) && !standalone

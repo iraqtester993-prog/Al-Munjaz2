@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { router } from '@inertiajs/vue3'
+import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AppShell from '../../Components/AppShell.vue'
 import PushNotificationSettings from '../../Components/PushNotificationSettings.vue'
@@ -10,6 +10,8 @@ const props = defineProps({
     notifications: { type: Array, default: () => [] },
     unread: { type: Number, default: 0 },
 })
+
+const page = usePage()
 
 let refreshTimer
 const selectedNotification = ref(null)
@@ -64,26 +66,53 @@ function removeFromSet(state, id) {
 }
 
 function openNotification(notification) {
-    selectedNotification.value = notification
-    markRead(notification)
-}
+    const reveal = () => {
+        if (notification.target_url) {
+            router.get(notification.target_url, {}, {
+                preserveScroll: false,
+                preserveState: false,
+            })
+            return
+        }
 
-function closeNotification() {
-    selectedNotification.value = null
-}
+        selectedNotification.value = notification
+    }
 
-function markRead(notification) {
-    if (!canManage(notification) || isRead(notification) || readingNotificationIds.value.has(notification.id)) return
+    if (!canManage(notification) || isRead(notification) || readingNotificationIds.value.has(notification.id)) {
+        reveal()
+        return
+    }
 
     addToSet(readNotificationIds, notification.id)
     addToSet(readingNotificationIds, notification.id)
-
     router.patch(route('app.notifications.read', notification.id), {}, {
         preserveScroll: true,
         preserveState: true,
         onError: () => removeFromSet(readNotificationIds, notification.id),
-        onFinish: () => removeFromSet(readingNotificationIds, notification.id),
+        onFinish: () => {
+            removeFromSet(readingNotificationIds, notification.id)
+            reveal()
+        },
     })
+}
+
+function closeNotification() {
+    selectedNotification.value = null
+    const url = new URL(window.location.href)
+    if (!url.searchParams.has('open')) return
+
+    url.searchParams.delete('open')
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+}
+
+function openNotificationFromUrl() {
+    const query = String(page.url || '').split('?')[1] || ''
+    const notificationId = Number(new URLSearchParams(query).get('open'))
+
+    if (!Number.isInteger(notificationId) || notificationId <= 0) return
+
+    const notification = visibleNotifications.value.find((item) => Number(item.id) === notificationId)
+    if (notification) openNotification(notification)
 }
 
 function deleteNotification(notification) {
@@ -137,6 +166,10 @@ function onVisibilityChange() {
 }
 
 onMounted(() => {
+    // Push and foreground alerts open this page with `?open=<id>`. Resolve
+    // the persisted inbox row here so every notification displays its full
+    // content, rather than merely landing on the notifications list.
+    openNotificationFromUrl()
     // Keep the in-app inbox current while the user is actively using it.
     // Background delivery remains the responsibility of the PWA push layer.
     refreshTimer = window.setInterval(refresh, 15000)

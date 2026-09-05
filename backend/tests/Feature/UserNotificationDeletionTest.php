@@ -10,8 +10,8 @@ use Database\Seeders\DemoSeeder;
 use Database\Seeders\PlanSeeder;
 use Database\Seeders\ProvinceSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Laravel\Sanctum\Sanctum;
 use Inertia\Testing\AssertableInertia as Assert;
+use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
 class UserNotificationDeletionTest extends TestCase
@@ -177,6 +177,67 @@ class UserNotificationDeletionTest extends TestCase
 
         $this->assertSoftDeleted('notifications', ['id' => $mine->id]);
         $this->assertDatabaseHas('notification_campaigns', ['id' => $campaign->id]);
+    }
+
+    public function test_open_notification_query_includes_an_older_visible_inbox_item(): void
+    {
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+        $campaign = $this->campaign(61);
+        $openedNotification = $this->delivery($campaign, $merchant);
+
+        // The normal inbox is intentionally capped at 60 items. A browser
+        // notification can be tapped after newer rows arrive, so its original
+        // content must still be present for the client-side sheet to open.
+        for ($index = 0; $index < 60; $index++) {
+            $this->delivery($campaign, $merchant);
+        }
+
+        $this->actingAs($merchant)
+            ->get("/app/notifications?open={$openedNotification->id}")
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Mobile/Notifications')
+                ->has('notifications', 61)
+                ->where('notifications.60.id', $openedNotification->id));
+    }
+
+    public function test_only_order_notifications_navigate_from_an_order_id(): void
+    {
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+        $finance = Notification::create([
+            'tenant_id' => $merchant->tenant_id,
+            'user_id' => $merchant->id,
+            'type' => 'finance',
+            'title_ar' => 'إشعار مالي',
+            'body_ar' => 'يبقى هذا الإشعار في نافذة الرسالة.',
+            'data' => ['order_id' => 901],
+        ]);
+        $order = Notification::create([
+            'tenant_id' => $merchant->tenant_id,
+            'user_id' => $merchant->id,
+            'type' => 'order',
+            'title_ar' => 'طلب',
+            'body_ar' => 'يفتح تفاصيل الطلب.',
+            'data' => ['order_id' => 902],
+        ]);
+        $location = Notification::create([
+            'tenant_id' => $merchant->tenant_id,
+            'user_id' => $merchant->id,
+            'type' => 'announcement',
+            'title_ar' => 'موقع',
+            'body_ar' => 'يفتح وجهة داخل التطبيق.',
+            'data' => ['url' => '/app/chats/12'],
+        ]);
+
+        $notifications = collect($this->actingAs($merchant)
+            ->getJson('/app/notifications/feed')
+            ->assertOk()
+            ->json('notifications'))
+            ->keyBy('id');
+
+        $this->assertNull($notifications->get($finance->id)['target_url']);
+        $this->assertSame('/app/orders?open=902&list=1', $notifications->get($order->id)['target_url']);
+        $this->assertSame('/app/chats/12', $notifications->get($location->id)['target_url']);
     }
 
     private function campaign(int $recipientCount): NotificationCampaign

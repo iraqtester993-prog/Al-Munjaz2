@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\Branch;
-use App\Models\BranchMembership;
 use App\Models\MobileSlide;
 use App\Models\Tenant;
 use App\Models\User;
@@ -26,7 +25,7 @@ class MobileSlideLegacyFieldsTest extends TestCase
         $admin = $this->superAdmin();
 
         $this->actingAs($admin)
-            ->post('/dashboard/content', $this->slideInput([
+            ->post('/dashboard/settings/slides', $this->slideInput([
                 'tag_ar' => 'وسم يجب تجاهله',
                 'cta_ar' => 'زر يجب تجاهله',
                 'action_url' => 'https://example.test/ignored',
@@ -46,7 +45,7 @@ class MobileSlideLegacyFieldsTest extends TestCase
         // must not let an old browser change them or return them to clients.
         $historical = $this->historicalSlide();
         $this->actingAs($admin)
-            ->put('/dashboard/content/'.$historical->id, $this->slideInput([
+            ->put('/dashboard/settings/slides/'.$historical->id, $this->slideInput([
                 'title_ar' => 'عنوان تم تعديله',
                 'tag_ar' => 'قيمة حديثة يجب تجاهلها',
                 'cta_ar' => 'زر حديث يجب تجاهله',
@@ -82,12 +81,12 @@ class MobileSlideLegacyFieldsTest extends TestCase
         $this->assertPayloadHasNoLegacyFields($heroSlide);
 
         $admin = $this->superAdmin();
-        $dashboardResponse = $this->actingAs($admin)->get('/dashboard/content')->assertOk();
+        $dashboardResponse = $this->actingAs($admin)->get('/dashboard/settings')->assertOk();
         $dashboardSlide = $dashboardResponse->inertiaPage()['props']['slides'][0];
         $this->assertPayloadHasNoLegacyFields($dashboardSlide);
     }
 
-    public function test_branch_slider_store_ignores_legacy_tag_and_action_fields(): void
+    public function test_settings_slider_store_ignores_legacy_tag_and_action_fields_for_a_branch(): void
     {
         $platform = Tenant::platform();
         $branch = Branch::withoutGlobalScopes()->create([
@@ -98,21 +97,10 @@ class MobileSlideLegacyFieldsTest extends TestCase
             'is_platform_managed' => true,
             'is_active' => true,
         ]);
-        $manager = User::create([
-            'tenant_id' => $platform->id,
-            'branch_id' => $branch->id,
-            'name' => 'مدير محتوى الفرع',
-            'username' => 'branch-slider-manager',
-            'phone' => '07710009002',
-            'password' => 'password',
-            'role' => 'branch_manager',
-            'status' => 'active',
-            'dashboard_permissions' => ['content'],
-        ]);
-        $branch->members()->attach($manager->id, ['access_role' => BranchMembership::MANAGER]);
+        $admin = $this->superAdmin();
 
-        $this->actingAs($manager)
-            ->post('/dashboard/branch/content', $this->slideInput([
+        $this->actingAs($admin)
+            ->post('/dashboard/settings/slides', $this->slideInput([
                 'branch_id' => $branch->id,
                 'tag_ar' => 'وسم الفرع',
                 'cta_ar' => 'زر الفرع',
@@ -122,11 +110,11 @@ class MobileSlideLegacyFieldsTest extends TestCase
 
         $slide = MobileSlide::query()->where('branch_id', $branch->id)->firstOrFail();
         foreach (self::LEGACY_FIELDS as $field) {
-            $this->assertNull($slide->getAttribute($field), "{$field} must not be stored by the branch content endpoint.");
+            $this->assertNull($slide->getAttribute($field), "{$field} must not be stored by the Settings slider endpoint.");
         }
 
-        $response = $this->actingAs($manager)->get('/dashboard/branch/content')->assertOk();
-        $branchSlide = $response->inertiaPage()['props']['slides'][0];
+        $response = $this->actingAs($admin)->get('/dashboard/settings')->assertOk();
+        $branchSlide = collect($response->inertiaPage()['props']['slides'])->firstWhere('id', $slide->id);
         $this->assertPayloadHasNoLegacyFields($branchSlide);
     }
 

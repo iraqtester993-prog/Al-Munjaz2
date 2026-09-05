@@ -2,6 +2,8 @@
 
 namespace App\Tenancy;
 
+use App\Models\Tenant;
+
 class TenantContext
 {
     protected static ?int $tenantId = null;
@@ -34,7 +36,7 @@ class TenantContext
     public static function tenant(): ?object
     {
         if (static::$tenant === null && static::$tenantId !== null) {
-            static::$tenant = \App\Models\Tenant::find(static::$tenantId);
+            static::$tenant = Tenant::find(static::$tenantId);
         }
 
         return static::$tenant;

@@ -3,6 +3,8 @@
 namespace App\Http\Middleware;
 
 use App\Models\User;
+use App\Services\BranchDashboardAuthorization;
+use App\Services\BranchDashboardContext;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -15,6 +17,12 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class DashboardUserPermissionMiddleware
 {
+    public function __construct(
+        private readonly BranchDashboardContext $branchContext,
+        private readonly BranchDashboardAuthorization $branchAuthorization,
+    ) {
+    }
+
     public function handle(Request $request, Closure $next, string $action): Response
     {
         $subject = $request->route('user');
@@ -31,6 +39,40 @@ class DashboardUserPermissionMiddleware
         abort_unless($module !== null, 404);
 
         $actor = $request->user();
+
+        if ($actor instanceof User) {
+            $scope = $this->branchContext->fromRequest($request);
+
+            if ($scope->requiresBranchScope()) {
+                abort_unless($scope->hasBranchScope(), 403);
+
+                // A route-bound id is never an authorisation boundary. Read
+                // the subject again under the branch's SQL restriction before
+                // a controller can inspect or mutate it.
+                $subject = $scope->restrictUsers(User::query())
+                    ->whereKey($subject->id)
+                    ->where(function ($people) use ($module): void {
+                        if ($module === 'merchants') {
+                            $people->where('role', 'merchant');
+
+                            return;
+                        }
+
+                        $people->whereIn('role', User::COURIER_ROLES);
+                    })
+                    ->firstOrFail();
+                $request->route()->setParameter('user', $subject);
+
+                abort_unless(
+                    $actor->isActiveUser()
+                        && $this->branchAuthorization->allows($actor, $scope, $module, $action),
+                    403,
+                );
+
+                return $next($request);
+            }
+        }
+
         abort_unless(
             $actor
                 && $actor->isAdmin()

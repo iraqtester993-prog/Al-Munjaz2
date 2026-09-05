@@ -10,6 +10,10 @@ use App\Models\Tenant;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Models\Wallet;
+use App\Services\DashboardBranchFilter;
+use App\Services\BranchDashboardContext;
+use App\Services\BranchDashboardScope;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -18,12 +22,16 @@ class AdminDashboardController extends Controller
     public function index(Request $request)
     {
         $today = today();
+        $scope = app(BranchDashboardContext::class)->fromRequest($request);
+        $branchFilter = app(DashboardBranchFilter::class);
+        $selectedBranchId = $branchFilter->selectedBranchId($request, $scope);
         // The platform dashboard is intentionally cross-tenant.  Be
         // explicit rather than relying on the logged-in admin lacking a
-        // tenant_id; this preserves a complete view for future admin setups.
-        $ordersQuery = Order::withoutGlobalScope(TenantScope::class);
-        $transactionsQuery = Transaction::withoutGlobalScope(TenantScope::class);
-        $notificationsQuery = Notification::withoutGlobalScope(TenantScope::class);
+        // tenant_id; a branch account receives the same visual dashboard,
+        // but every aggregate below is constrained before it is read.
+        $ordersQuery = $this->ordersFor($scope, $selectedBranchId, $branchFilter);
+        $transactionsQuery = $this->transactionsFor($scope, $selectedBranchId, $branchFilter);
+        $notificationsQuery = $this->notificationsFor($scope, $selectedBranchId, $branchFilter);
         // Keep the dashboard overview to one aggregate order query. The old
         // implementation ran separate SUM/COUNT queries for every KPI and
         // another query for every day of the weekly chart, which became
@@ -55,18 +63,18 @@ class AdminDashboardController extends Controller
         // The order fee is the source of truth for the platform's delivery fee,
         // while transactions represent the later accounting movement.
         $fees = (int) ($orderStats->fees ?? 0);
-        $merchantCount = Tenant::query()->where('kind', 'merchant')->count();
-        $courierRoles = ['courier', 'pickup_courier', 'delivery_courier', 'transporter'];
-        $rolePlaceholders = implode(',', array_fill(0, count($courierRoles), '?'));
-        $userStats = User::query()
+        $merchantCount = $this->usersFor($scope, User::query(), $selectedBranchId, $branchFilter)
+            ->where('role', 'merchant')
+            ->count();
+        $userStats = $this->usersFor($scope, User::query(), $selectedBranchId, $branchFilter)
             ->selectRaw('COUNT(*) as users_count')
             ->selectRaw(
-                "COALESCE(SUM(CASE WHEN role IN ({$rolePlaceholders}) THEN 1 ELSE 0 END), 0) as couriers_count",
-                $courierRoles,
+                'COALESCE(SUM(CASE WHEN role = ? THEN 1 ELSE 0 END), 0) as couriers_count',
+                ['courier'],
             )
             ->selectRaw(
-                "COALESCE(SUM(CASE WHEN role IN ({$rolePlaceholders}) AND status = ? AND is_online = ? THEN 1 ELSE 0 END), 0) as online_couriers_count",
-                [...$courierRoles, 'active', true],
+                'COALESCE(SUM(CASE WHEN role = ? AND status = ? AND is_online = ? THEN 1 ELSE 0 END), 0) as online_couriers_count',
+                ['courier', 'active', true],
             )
             ->toBase()
             ->first();
@@ -74,10 +82,10 @@ class AdminDashboardController extends Controller
         $onlineCouriers = (int) ($userStats->online_couriers_count ?? 0);
 
         $merchantBalance = (int) Wallet::query()
-            ->whereHas('user', fn ($query) => $query->where('role', 'merchant'))
+            ->whereHas('user', fn (Builder $query) => $this->usersFor($scope, $query, $selectedBranchId, $branchFilter)->where('role', 'merchant'))
             ->sum('balance');
         $courierBudget = (int) Wallet::query()
-            ->whereHas('user', fn ($query) => $query->whereIn('role', $courierRoles))
+            ->whereHas('user', fn (Builder $query) => $this->usersFor($scope, $query, $selectedBranchId, $branchFilter)->where('role', 'courier'))
             ->sum('budget');
         $collected = (int) (clone $transactionsQuery)
             ->where('type', 'collected')
@@ -115,8 +123,10 @@ class AdminDashboardController extends Controller
                 'status' => $o->status,
                 'date' => $o->date->toDateString(),
                 'source' => $o->source,
-                'merchant_name' => $o->merchant?->name ?? $o->tenant?->name,
-                'courier_name' => $o->courier?->name,
+                // A cross-branch route can be visible to this branch, but
+                // contact/account data for the other endpoint is not.
+                'merchant_name' => $this->visibleUserName($o->merchant, $scope) ?? ($scope->hasBranchScope() ? null : $o->tenant?->name),
+                'courier_name' => $this->visibleUserName($o->courier, $scope),
             ]);
 
         $recentNotifs = (clone $notificationsQuery)->latest('id')->limit(5)->get()->map(fn (Notification $n) => [
@@ -132,9 +142,12 @@ class AdminDashboardController extends Controller
             ->selectRaw('COUNT(*) as orders_count')
             ->selectRaw("COALESCE(SUM(CASE WHEN status = 'delivered' THEN price ELSE 0 END), 0) as collected")
             ->whereRaw('COALESCE(merchant_id, created_by) IS NOT NULL')
-            ->groupBy('merchant_user_id');
+            // MySQL in production uses ONLY_FULL_GROUP_BY. Grouping by the
+            // select alias makes it resolve to users.merchant_user_id after
+            // this query is joined, instead of the COALESCE expression.
+            ->groupByRaw('COALESCE(merchant_id, created_by)');
 
-        $topMerchants = User::query()
+        $topMerchants = $this->usersFor($scope, User::query(), $selectedBranchId, $branchFilter)
             ->leftJoinSub($merchantStats, 'merchant_stats', function ($join) {
                 $join->on('merchant_stats.merchant_user_id', '=', 'users.id');
             })
@@ -199,12 +212,15 @@ class AdminDashboardController extends Controller
             'recentOrders' => $recentOrders,
             'recentNotifs' => $recentNotifs,
             'topMerchants' => $topMerchants,
+            'branchFilter' => $branchFilter->payload($request, $scope),
         ]);
     }
 
     public function finance(Request $request)
     {
-        $transactions = Transaction::withoutGlobalScope(TenantScope::class)
+        $scope = app(BranchDashboardContext::class)->fromRequest($request);
+        $transactionsQuery = $this->transactionsFor($scope);
+        $transactions = (clone $transactionsQuery)
             ->with('user:id,name')
             ->latest('date')
             ->limit(200)
@@ -223,17 +239,18 @@ class AdminDashboardController extends Controller
         return Inertia::render('Admin/Finance', [
             'transactions' => $transactions,
             'summary' => [
-                'settlements' => Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'settlement')->where('direction', 1)->sum('amount'),
-                'withdrawals' => Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'withdrawal')->sum('amount'),
-                'fees' => Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'commission')->sum('amount'),
-                'collected' => Transaction::withoutGlobalScope(TenantScope::class)->where('type', 'collected')->where('direction', 1)->sum('amount'),
+                'settlements' => (clone $transactionsQuery)->where('type', 'settlement')->where('direction', 1)->sum('amount'),
+                'withdrawals' => (clone $transactionsQuery)->where('type', 'withdrawal')->sum('amount'),
+                'fees' => (clone $transactionsQuery)->where('type', 'commission')->sum('amount'),
+                'collected' => (clone $transactionsQuery)->where('type', 'collected')->where('direction', 1)->sum('amount'),
             ],
         ]);
     }
 
     public function notifications(Request $request)
     {
-        $notifications = Notification::withoutGlobalScope(TenantScope::class)
+        $scope = app(BranchDashboardContext::class)->fromRequest($request);
+        $notifications = $this->notificationsFor($scope)
             ->latest('id')
             ->limit(100)
             ->get()
@@ -247,5 +264,74 @@ class AdminDashboardController extends Controller
             ]);
 
         return Inertia::render('Admin/Notifications', ['notifications' => $notifications]);
+    }
+
+    /** @return Builder<Order> */
+    private function ordersFor(BranchDashboardScope $scope, ?int $selectedBranchId, DashboardBranchFilter $branchFilter): Builder
+    {
+        $query = Order::withoutGlobalScope(TenantScope::class);
+
+        if ($scope->hasBranchScope()) {
+            return $scope->restrictOrders($query);
+        }
+
+        return $branchFilter->restrictOrders($query, $selectedBranchId);
+    }
+
+    /** @return Builder<User> */
+    private function usersFor(BranchDashboardScope $scope, Builder $query, ?int $selectedBranchId, DashboardBranchFilter $branchFilter): Builder
+    {
+        if ($scope->hasBranchScope()) {
+            return $scope->restrictUsers($query);
+        }
+
+        return $branchFilter->restrictByColumn($query, $selectedBranchId, $query->getModel()->qualifyColumn('branch_id'));
+    }
+
+    /** @return Builder<Transaction> */
+    private function transactionsFor(BranchDashboardScope $scope, ?int $selectedBranchId, DashboardBranchFilter $branchFilter): Builder
+    {
+        $query = Transaction::withoutGlobalScope(TenantScope::class);
+
+        if ($scope->hasBranchScope()) {
+            return $query->where(function (Builder $transactions) use ($scope): void {
+                $transactions
+                    ->whereHas('user', fn (Builder $users) => $scope->restrictUsers($users))
+                    ->orWhereHas('order', fn (Builder $orders) => $scope->restrictOrders($orders));
+            });
+        }
+
+        if (! $selectedBranchId) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $transactions) use ($branchFilter, $selectedBranchId): void {
+            $transactions
+                ->whereHas('user', fn (Builder $users) => $branchFilter->restrictByColumn($users, $selectedBranchId, $users->getModel()->qualifyColumn('branch_id')))
+                ->orWhereHas('order', fn (Builder $orders) => $branchFilter->restrictOrders($orders, $selectedBranchId));
+        });
+    }
+
+    /** @return Builder<Notification> */
+    private function notificationsFor(BranchDashboardScope $scope, ?int $selectedBranchId, DashboardBranchFilter $branchFilter): Builder
+    {
+        $query = Notification::withoutGlobalScope(TenantScope::class);
+
+        if ($scope->hasBranchScope()) {
+            return $query->whereHas('user', fn (Builder $users) => $scope->restrictUsers($users));
+        }
+
+        return $selectedBranchId
+            ? $query->whereHas('user', fn (Builder $users) => $branchFilter->restrictByColumn($users, $selectedBranchId, $users->getModel()->qualifyColumn('branch_id')))
+            : $query;
+    }
+
+    private function visibleUserName(?User $user, BranchDashboardScope $scope): ?string
+    {
+        if (! $user || ($scope->hasBranchScope() && (int) $user->branch_id !== $scope->branchId())) {
+            return null;
+        }
+
+        return $user->name;
     }
 }

@@ -35,7 +35,12 @@ class ActiveUserMiddleware
         $request->session()->invalidate();
         $request->session()->regenerateToken();
 
-        return redirect()->route('login')->withErrors([
+        // Dashboard staff should return to the same dashboard sign-in
+        // surface after their access is disabled, not to the mobile app's
+        // merchant/courier login page.
+        $loginRoute = $request->is('dashboard*') ? 'admin.login' : 'login';
+
+        return redirect()->route($loginRoute)->withErrors([
             'username' => __('auth.account_inactive'),
         ]);
     }

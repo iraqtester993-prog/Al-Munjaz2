@@ -35,6 +35,7 @@ class CashboxCollectionScopeTest extends TestCase
         $courier = User::where('username', 'مندوب')->firstOrFail();
         $admin = User::where('role', 'admin')->firstOrFail();
         $branch = $this->operatingBranch();
+        $this->assignCourierToOperatingBranch($courier, $branch);
 
         $this->actingAs($courier)
             ->post('/app/wallet/handover', [
@@ -265,6 +266,8 @@ class CashboxCollectionScopeTest extends TestCase
 
     private function approveCollectionHandover(User $courier, User $admin, Branch $branch, int $amount): void
     {
+        $this->assignCourierToOperatingBranch($courier, $branch);
+
         $this->actingAs($courier)
             ->post('/app/wallet/handover', [
                 'amount' => $amount,
@@ -284,5 +287,14 @@ class CashboxCollectionScopeTest extends TestCase
                 'branch_id' => $branch->id,
             ])
             ->assertRedirect();
+    }
+
+    private function assignCourierToOperatingBranch(User $courier, Branch $branch): void
+    {
+        // A handover is now accountable to the courier's server-owned
+        // operating branch. The legacy demo courier predates that field, so
+        // make the fixture explicit rather than weakening the production
+        // boundary for old records.
+        $courier->forceFill(['branch_id' => $branch->id])->save();
     }
 }

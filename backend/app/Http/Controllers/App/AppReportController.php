@@ -13,7 +13,7 @@ use Inertia\Inertia;
 class AppReportController extends Controller
 {
     /** @var array<int, string> */
-    private const ARCHIVE_STATUSES = ['delivered', 'returned'];
+    private const ARCHIVE_STATUSES = Order::ARCHIVABLE_STATUSES;
 
     /**
      * The merchant archive is deliberately calculated from the same scoped
@@ -24,7 +24,7 @@ class AppReportController extends Controller
     public function index(Request $request)
     {
         $viewer = $request->user();
-        $isCourier = $viewer->isCourierRole();
+        $isCourier = $viewer->role === 'courier';
         abort_unless($viewer->role === 'merchant' || $isCourier, 403);
 
         $archiveStatuses = self::ARCHIVE_STATUSES;
@@ -32,8 +32,8 @@ class AppReportController extends Controller
             'period' => ['nullable', Rule::in(['all', 'today'])],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', 'after_or_equal:from'],
-            // The archive is intentionally not a second live-order list. It
-            // contains only completed deliveries and completed returns.
+            // Only terminal delivery/return work can enter the archive, and
+            // it must have been archived manually or by the nightly task.
             'status' => ['nullable', Rule::in(['all', ...$archiveStatuses])],
             'province_id' => ['nullable', 'integer', 'exists:provinces,id'],
             // Detail rows are loaded only after the merchant opens one of
@@ -55,7 +55,8 @@ class AppReportController extends Controller
         $query = ($isCourier
             ? app(CourierOrderAccess::class)->assigned($viewer)
             : Order::query())
-            ->whereIn('status', $archiveStatuses);
+            ->whereIn('status', $archiveStatuses)
+            ->whereNotNull('archived_at');
 
         if ($period === 'today') {
             $query->whereDate('date', today());
@@ -82,7 +83,9 @@ class AppReportController extends Controller
                     ->orWhereHas($isCourier ? 'merchant' : 'courier', function ($person) use ($q, $isCourier): void {
                         $person->where('name', 'like', "%{$q}%")
                             ->orWhere('phone', 'like', "%{$q}%");
-                        if ($isCourier) $person->orWhere('shop_name', 'like', "%{$q}%");
+                        if ($isCourier) {
+                            $person->orWhere('shop_name', 'like', "%{$q}%");
+                        }
                     });
             });
         }
@@ -201,4 +204,5 @@ class AppReportController extends Controller
             ])->all(),
         ]);
     }
+
 }

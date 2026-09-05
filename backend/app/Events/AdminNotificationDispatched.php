@@ -17,15 +17,14 @@ class AdminNotificationDispatched
     use SerializesModels;
 
     /**
-     * @param array<int, int> $recipientUserIds
-     * @param array<int, int|null> $recipientTenantIds
-     * @param array<int, int> $notificationIds
+     * @param  array<int, int>  $recipientUserIds
+     * @param  array<int, int|null>  $recipientTenantIds
+     * @param  array<int, int>  $notificationIds
      */
     public function __construct(
         public readonly int $campaignId,
         public readonly array $recipientUserIds,
         public readonly array $recipientTenantIds,
         public readonly array $notificationIds,
-    ) {
-    }
+    ) {}
 }

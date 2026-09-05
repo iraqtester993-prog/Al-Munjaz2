@@ -2,9 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Models\Branch;
-use App\Models\BranchMembership;
-use App\Models\MobileSlide;
 use App\Models\Order;
 use App\Models\Scopes\TenantScope;
 use App\Models\Tenant;
@@ -36,24 +33,11 @@ class BranchContentAndContactPrivacyTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_branch_manager_content_console_only_returns_and_mutates_its_own_branch_slides(): void
+    public function test_branch_manager_cannot_open_the_retired_content_console(): void
     {
         $platform = Tenant::platform();
-        $visibleBranch = Branch::withoutGlobalScope(TenantScope::class)
-            ->where('tenant_id', $platform->id)
-            ->where('is_platform_managed', true)
-            ->firstOrFail();
-        $hiddenBranch = Branch::withoutGlobalScope(TenantScope::class)->create([
-            'tenant_id' => $platform->id,
-            'code' => 'TST-CONTENT',
-            'name_ar' => 'فرع محتوى مخفي',
-            'city' => 'اختبار',
-            'is_platform_managed' => true,
-            'is_active' => true,
-        ]);
         $manager = User::create([
             'tenant_id' => $platform->id,
-            'branch_id' => $visibleBranch->id,
             'name' => 'مدير محتوى',
             'username' => 'content-manager',
             'phone' => '07987110001',
@@ -62,45 +46,10 @@ class BranchContentAndContactPrivacyTest extends TestCase
             'status' => 'active',
             'dashboard_permissions' => ['content'],
         ]);
-        $visibleBranch->members()->attach($manager->id, ['access_role' => BranchMembership::MANAGER]);
-
-        $visibleSlide = MobileSlide::create([
-            'branch_id' => $visibleBranch->id,
-            'audience' => 'courier',
-            'title_ar' => 'منشور الفرع المسموح',
-            'is_active' => true,
-            'sort_order' => 1,
-        ]);
-        $hiddenSlide = MobileSlide::create([
-            'branch_id' => $hiddenBranch->id,
-            'audience' => 'courier',
-            'title_ar' => 'منشور فرع آخر',
-            'is_active' => true,
-            'sort_order' => 1,
-        ]);
 
         $this->actingAs($manager)
             ->get('/dashboard/branch/content')
-            ->assertOk()
-            ->assertInertia(fn ($page) => $page
-                ->component('Admin/MobileContent')
-                ->where('branchMode', true)
-                ->has('slides', 1)
-                ->where('slides.0.id', $visibleSlide->id)
-                ->has('branches', 1)
-                ->where('branches.0.id', $visibleBranch->id));
-
-        $this->actingAs($manager)
-            ->put('/dashboard/branch/content/'.$hiddenSlide->id, [
-                'branch_id' => $visibleBranch->id,
-                'audience' => 'courier',
-                'title_ar' => 'محاولة تعديل غير مسموحة',
-                'is_active' => true,
-                'sort_order' => 1,
-            ])
             ->assertNotFound();
-
-        $this->assertSame('منشور فرع آخر', $hiddenSlide->fresh()->title_ar);
     }
 
     public function test_api_and_pwa_payloads_show_customer_phone_for_every_visible_order_status(): void
@@ -138,6 +87,7 @@ class BranchContentAndContactPrivacyTest extends TestCase
         $pwaBeforePickup = $this->actingAs($courier)->get('/app/orders?list=1')->assertOk();
         $pwaOrderBeforePickup = collect($pwaBeforePickup->inertiaProps('orders'))->firstWhere('id', $order->id);
         $this->assertSame('07870009999', data_get($pwaOrderBeforePickup, 'phone'));
+        $this->assertSame('07870008888', data_get($pwaOrderBeforePickup, 'phone2'));
         $this->assertTrue((bool) data_get($pwaOrderBeforePickup, 'phone_revealed'));
 
         $order->update(['picked_at' => now(), 'status' => 'courier']);
@@ -151,6 +101,7 @@ class BranchContentAndContactPrivacyTest extends TestCase
         $pwaAfterPickup = $this->actingAs($courier)->get('/app/orders?list=1')->assertOk();
         $pwaOrderAfterPickup = collect($pwaAfterPickup->inertiaProps('orders'))->firstWhere('id', $order->id);
         $this->assertSame('07870009999', data_get($pwaOrderAfterPickup, 'phone'));
+        $this->assertSame('07870008888', data_get($pwaOrderAfterPickup, 'phone2'));
         $this->assertTrue((bool) data_get($pwaOrderAfterPickup, 'phone_revealed'));
     }
 }

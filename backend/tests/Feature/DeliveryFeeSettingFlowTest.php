@@ -89,7 +89,31 @@ class DeliveryFeeSettingFlowTest extends TestCase
         $this->assertSame($rule->id, (int) $order->pricing_rule_id);
     }
 
-    private function saveDefaultDeliveryFee(User $admin, int $fee): void
+    public function test_dashboard_order_acceptance_time_controls_new_offers_and_courier_countdown_payload(): void
+    {
+        $admin = User::where('role', 'admin')->firstOrFail();
+        $merchant = User::where('username', 'تاجر')->firstOrFail();
+        $courier = User::where('username', 'مندوب')->firstOrFail();
+
+        // Use the actual dashboard endpoint rather than writing the setting
+        // directly, so this protects the administrator-to-mobile contract.
+        $this->saveDefaultDeliveryFee($admin, 6250, 45);
+
+        $order = $this->createMobileOrder($merchant, 'عميل وقت قبول الطلب');
+
+        $this->assertSame(45, (int) Setting::get('order_expiry_minutes'));
+        $this->assertNotNull($order->offer_opened_at);
+        $this->assertEquals(45 * 60, $order->offer_opened_at->diffInSeconds($order->pickup_deadline_at));
+
+        $this->actingAs($courier)
+            ->get('/app')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Mobile/CourierHome')
+                ->where('orderExpiryMinutes', 45));
+    }
+
+    private function saveDefaultDeliveryFee(User $admin, int $fee, int $orderExpiryMinutes = 30): void
     {
         $this->actingAs($admin)
             ->post('/dashboard/settings', [
@@ -99,7 +123,7 @@ class DeliveryFeeSettingFlowTest extends TestCase
                 'support_email' => 'support@example.test',
                 'currency' => 'IQD',
                 'delivery_fee' => $fee,
-                'order_expiry_minutes' => 30,
+                'order_expiry_minutes' => $orderExpiryMinutes,
                 'pickup_eta_minutes' => 20,
             ])
             ->assertRedirect();

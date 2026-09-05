@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { router, useForm, usePage } from '@inertiajs/vue3'
+import { Link, router, useForm, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import Flash from '../../Components/Flash.vue'
 import PwaInstallBanner from '../../Components/PwaInstallBanner.vue'
@@ -117,7 +117,6 @@ function icon(name) {
             </div>
 
             <PwaInstallBanner />
-            <p class="existing-account-link"><button type="button" @click="view = 'login'">{{ t('Already have an account?') }} {{ t('Sign In') }}</button></p>
         </section>
 
         <section v-else class="login-pane">
@@ -163,9 +162,9 @@ function icon(name) {
                 <b>{{ developerName }}</b>
             </button>
             <nav class="auth-legal-links" :aria-label="t('Legal links')">
-                <a :href="route('legal.privacy')">{{ t('Privacy Policy') }}</a>
+                <Link :href="route('legal.privacy')" :view-transition="false">{{ t('Privacy Policy') }}</Link>
                 <span aria-hidden="true">•</span>
-                <a :href="route('legal.terms')">{{ t('Terms of Use') }}</a>
+                <Link :href="route('legal.terms')" :view-transition="false">{{ t('Terms of Use') }}</Link>
             </nav>
         </footer>
 
@@ -213,6 +212,5 @@ function icon(name) {
 .login-submit { width:100%; min-height:46px; margin-top:3px; border-radius:12px; background:#fff; color:var(--primary-strong); font:inherit; font-size:13px; font-weight:900; box-shadow:0 8px 20px -6px rgba(0,0,0,.28); }
 .register-link-ref { margin:17px 0 0; text-align:center; color:rgba(255,255,255,.76); font-size:11.5px; font-weight:600; }
 .register-link-ref a { color:#fff; font-weight:900; text-decoration:underline; cursor:pointer; }
-.existing-account-link{margin:18px 0 0;text-align:center}.existing-account-link button{color:rgba(255,255,255,.9);font:800 11px var(--font);text-decoration:underline;text-underline-offset:3px}
 .auth-product-footer{display:grid;gap:9px;padding:4px 22px calc(15px + env(safe-area-inset-bottom,0px));text-align:center}.developer-footer-button{display:grid;gap:1px;color:rgba(255,255,255,.86);font:inherit}.developer-footer-button span{font-size:9px;font-weight:700}.developer-footer-button b{color:#fff;font-size:10.5px;font-weight:900}.auth-legal-links{display:flex;align-items:center;justify-content:center;gap:8px;color:rgba(255,255,255,.64);font-size:9.5px;font-weight:750}.auth-legal-links a{color:inherit;text-decoration:underline;text-underline-offset:3px}.auth-legal-links a:active{color:#fff}
 </style>

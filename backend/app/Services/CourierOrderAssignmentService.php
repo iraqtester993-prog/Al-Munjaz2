@@ -2,11 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\Notification;
 use App\Models\Order;
 use App\Models\Scopes\TenantScope;
-use App\Models\Setting;
 use App\Models\Transaction;
-use App\Models\Notification;
 use App\Models\User;
 use App\Models\Wallet;
 use Illuminate\Support\Facades\DB;
@@ -42,7 +41,14 @@ class CourierOrderAssignmentService
                 $courier->role === 'courier' && $courier->status === 'active',
                 'المستخدم المختار ليس مندوباً نشطاً.'
             );
-            $this->ensure(! $requireOnDuty || $courier->is_online, 'فعّل حالة الاستلام أولاً لاستلام الطلب.');
+            $this->ensure(
+                $courier->isCourierVerified(),
+                'حساب المندوب بانتظار توثيق الإدارة قبل استلام الطلبات.'
+            );
+            $this->ensure(
+                ! $requireOnDuty || $courier->is_online,
+                __('You cannot accept this order while you are unavailable. Turn on “Available for Work” from the home page, then try again.')
+            );
 
             // A self-claimed delivery is an operational action by the
             // courier, unlike a dashboard assignment by an administrator.
@@ -67,45 +73,90 @@ class CourierOrderAssignmentService
                     'user_id' => $courier->id,
                     'balance' => 0,
                     'budget' => 0,
+                    'budget_balance' => 0,
                 ]);
             }
 
-            $budgetHold = max(0, (int) $delivery->price) + max(0, (int) $delivery->fee);
-            $this->ensure($wallet->budget >= $budgetHold, 'ميزانية المندوب أقل من إجمالي الطلب والتوصيل.');
+            // A claim is the financial commitment for this job.  The
+            // declared budget remains a stable ceiling; only its available
+            // balance is reserved, and delivery pricing must never consume
+            // the cash used to pay the merchant for the product itself.
+            $budgetHold = max(0, (int) $delivery->price);
+            $adminDeduction = max(0, (int) $courier->admin_deduction_per_order);
+            // A courier-specific value takes priority. The global setting is
+            // the administrator-managed default for couriers that have not
+            // been given an individual deduction yet; delivery_fee is never
+            // used as an implicit fallback.
+            if ($adminDeduction === 0) {
+                $adminDeduction = max(0, min((int) $this->settingForOrder($delivery, 'admin_deduction_fee', 0), 1_000_000));
+            }
 
-            // Administration configures a fixed deduction for each courier.
-            // The order keeps a snapshot below, so future account edits do
-            // not alter this accepted order's financial outcome.
-            $companyFee = max(0, (int) $courier->admin_deduction_per_order);
             $this->ensure(
-                (int) $wallet->balance >= $companyFee,
-                'رصيد المندوب لا يغطي رسوم الشركة لهذا الطلب.'
+                (int) $wallet->budget_balance >= $budgetHold,
+                'رصيد ميزانية المندوب لا يغطي سعر الطلب دون أجرة التوصيل.'
             );
+            $this->ensure(
+                (int) $wallet->balance >= $adminDeduction,
+                'رصيد Qi المتاح لا يغطي مبلغ استقطاع الإدارة لهذا الطلب.'
+            );
+
+            if ($budgetHold > 0) {
+                $wallet->decrement('budget_balance', $budgetHold);
+
+                Transaction::create([
+                    'tenant_id' => $courier->tenant_id ?? $delivery->tenant_id,
+                    'user_id' => $courier->id,
+                    'type' => 'paid_order',
+                    'amount' => $budgetHold,
+                    'direction' => -1,
+                    'ref' => $delivery->track_no,
+                    'order_id' => $delivery->id,
+                    'date' => today(),
+                    'note' => 'حجز سعر الطلب من رصيد الميزانية عند قبول الطلب (لا يشمل أجرة التوصيل).',
+                ]);
+            }
+
+            if ($adminDeduction > 0) {
+                $wallet->decrement('balance', $adminDeduction);
+
+                Transaction::create([
+                    'tenant_id' => $courier->tenant_id ?? $delivery->tenant_id,
+                    'user_id' => $courier->id,
+                    'type' => 'commission',
+                    'amount' => $adminDeduction,
+                    'direction' => -1,
+                    'ref' => $delivery->track_no,
+                    'order_id' => $delivery->id,
+                    'date' => today(),
+                    'note' => 'استقطاع الإدارة الثابت عند قبول الطلب.',
+                ]);
+
+                Notification::create([
+                    'tenant_id' => $courier->tenant_id,
+                    'user_id' => $courier->id,
+                    'type' => 'finance',
+                    'title_ar' => 'استقطاع الإدارة',
+                    'title_en' => 'Platform deduction',
+                    'title_ku' => 'کەمکردنەوەی بەڕێوەبەرایەتی',
+                    'body_ar' => 'تم استقطاع '.number_format($adminDeduction).' د.ع من رصيد Qi عند قبول الطلب '.$delivery->track_no.'.',
+                    'body_en' => number_format($adminDeduction).' IQD was deducted from your Qi balance when accepting '.$delivery->track_no.'.',
+                    'body_ku' => number_format($adminDeduction).' د.ع لە باڵانسی Qi ـت کەم کرایەوە لە کاتی وەرگرتنی '.$delivery->track_no.'.',
+                    'data' => ['order_id' => $delivery->id, 'type' => 'commission', 'amount' => $adminDeduction],
+                ]);
+            }
 
             // A pending order has an availability deadline. Once assigned,
             // the same field becomes the expected pickup deadline configured
             // by the administrator.
-            $pickupMinutes = max(5, min((int) Setting::get('pickup_eta_minutes', 30), 240));
+            $pickupMinutes = max(5, min((int) $this->settingForOrder($delivery, 'pickup_eta_minutes', 30), 240));
             $delivery->update([
                 'courier_id' => $courier->id,
                 'pickup_deadline_at' => now()->addMinutes($pickupMinutes),
-                'admin_deduction_applied' => $companyFee,
+                // Immutable snapshot: later edits to the courier's profile
+                // cannot alter the net delivery earning for this order.
+                'admin_deduction_applied' => $adminDeduction,
             ]);
             app(OrderWorkflowService::class)->changeStatus($delivery, 'approved', $actor, $note);
-
-            $wallet->decrement('budget', $budgetHold);
-
-            Transaction::create([
-                'tenant_id' => $courier->tenant_id,
-                'user_id' => $courier->id,
-                'type' => 'paid_order',
-                'amount' => $budgetHold,
-                'direction' => -1,
-                'ref' => $delivery->track_no,
-                'order_id' => $delivery->id,
-                'date' => today(),
-                'note' => 'حجز ميزانية الطلب والتوصيل لاستلام الطلب',
-            ]);
 
             Notification::create([
                 'tenant_id' => $courier->tenant_id,
@@ -127,5 +178,13 @@ class CourierOrderAssignmentService
         if (! $condition) {
             throw ValidationException::withMessages(['order' => [$message]]);
         }
+    }
+
+    private function settingForOrder(Order $order, string $key, mixed $default): mixed
+    {
+        $branchId = (int) ($order->branch_id ?: $order->origin_branch_id);
+
+        return app(BranchSettingsResolver::class)
+            ->getForOperationalBranch($branchId > 0 ? $branchId : null, $key, $default);
     }
 }

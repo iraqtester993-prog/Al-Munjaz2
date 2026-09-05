@@ -48,6 +48,8 @@ class RepublishOrderTest extends TestCase
         $this->assertSame('pending', $order->status);
         $this->assertNull($order->courier_id);
         $this->assertNotNull($order->pickup_deadline_at);
+        $this->assertNotNull($order->offer_opened_at);
+        $this->assertEquals(45 * 60, $order->offer_opened_at->diffInSeconds($order->pickup_deadline_at));
         $this->assertTrue($order->pickup_deadline_at->greaterThan(now()->addMinutes(44)));
         $this->assertDatabaseHas('activity_logs', [
             'action' => 'order.republished',
@@ -76,5 +78,28 @@ class RepublishOrderTest extends TestCase
             ->assertStatus(422);
 
         $this->assertTrue($order->fresh()->pickup_deadline_at->greaterThan(now()));
+    }
+
+    public function test_merchant_cannot_republish_a_returned_order(): void
+    {
+        $merchant = User::query()->where('username', 'تاجر')->firstOrFail();
+        $order = Order::withoutGlobalScopes()
+            ->where('tenant_id', $merchant->tenant_id)
+            ->where('status', 'returned')
+            ->firstOrFail();
+        $originalCount = Order::withoutGlobalScopes()->count();
+
+        $this->actingAs($merchant)
+            ->post(route('app.orders.recreate', $order))
+            ->assertStatus(422);
+
+        $order->refresh();
+
+        $this->assertSame($originalCount, Order::withoutGlobalScopes()->count());
+        $this->assertSame('returned', $order->status);
+        $this->assertDatabaseMissing('activity_logs', [
+            'action' => 'order.republished_from_return',
+            'subject_id' => $order->id,
+        ]);
     }
 }

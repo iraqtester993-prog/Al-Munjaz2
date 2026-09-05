@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\FinanceRequest;
 use App\Models\Order;
+use App\Models\Scopes\TenantScope;
 use App\Models\Transaction;
 use App\Models\Wallet;
 use App\Services\CourierOrderAccess;
@@ -18,8 +19,11 @@ class AppWalletController extends Controller
     public function index(Request $request, FinanceRequestService $finance)
     {
         $user = $request->user();
-        $wallet = $user->wallet ?: Wallet::create(['user_id' => $user->id, 'balance' => 0, 'budget' => 0]);
-        $isCourier = $user->isCourierRole();
+        $wallet = $user->wallet ?: Wallet::create(['user_id' => $user->id, 'balance' => 0, 'budget' => 0, 'budget_balance' => 0]);
+        // Retired operational roles retain their historical ledger records in
+        // administration, but only the direct one-courier account may use
+        // the live courier wallet controls.
+        $isCourier = $user->role === 'courier';
 
         $ledger = Transaction::query()
             ->where('user_id', $user->id)
@@ -62,12 +66,15 @@ class AppWalletController extends Controller
                 ] : null,
             ]);
 
-        $branches = $isCourier
-            ? Branch::withoutGlobalScopes()
-                ->where('is_active', true)
-                ->orderBy('city')
-                ->orderBy('name_ar')
-                ->get(['id', 'name_ar', 'city'])
+        // Physical cash is accountable to the courier's one operational
+        // branch. Do not send a global branch directory to the phone: it
+        // would invite a handover to another governorate.
+        $operationalBranch = $isCourier
+            ? $finance->operationalBranchForCourier($user)
+            : null;
+
+        $branches = $operationalBranch
+            ? collect([$operationalBranch])
                 ->map(fn (Branch $branch) => [
                     'id' => $branch->id,
                     'name' => $branch->name_ar,
@@ -97,6 +104,7 @@ class AppWalletController extends Controller
             // net collections so the company-fee deduction is transparent.
             'balance' => (int) $wallet->balance,
             'budget' => (int) $wallet->budget,
+            'budget_balance' => (int) $wallet->budget_balance,
             'transactions' => $transactions,
             'requests' => $requests,
             'branches' => $branches,
@@ -165,11 +173,15 @@ class AppWalletController extends Controller
             'completed_deliveries' => (int) ($deliveryTotals->completed_deliveries ?? 0),
             'returned_deliveries' => (int) ($deliveryTotals->returned_deliveries ?? 0),
             'collections_total' => $collections,
-            'company_fees_total' => (int) Transaction::withoutGlobalScope(\App\Models\Scopes\TenantScope::class)
+            'company_fees_total' => max(0, (int) Transaction::withoutGlobalScope(TenantScope::class)
                 ->where('user_id', $user->id)
                 ->where('type', 'commission')
                 ->where('direction', -1)
-                ->sum('amount'),
+                ->sum('amount') - (int) Transaction::withoutGlobalScope(TenantScope::class)
+                    ->where('user_id', $user->id)
+                    ->where('type', 'commission_refund')
+                    ->where('direction', 1)
+                    ->sum('amount')),
             'cash_on_hand' => $finance->cashOnHand($user->id),
         ];
     }
@@ -202,7 +214,7 @@ class AppWalletController extends Controller
     public function handover(Request $request, FinanceRequestService $finance)
     {
         $user = $request->user();
-        abort_unless($user->isCourierRole(), 403);
+        abort_unless($user->role === 'courier', 403, 'تسليم النقدية متاح للمندوب فقط.');
 
         $data = $request->validate([
             'amount' => ['required', 'integer', 'min:1000'],
@@ -210,11 +222,24 @@ class AppWalletController extends Controller
             'note' => ['nullable', 'string', 'max:1000'],
         ]);
 
+        $operationalBranch = $finance->operationalBranchForCourier($user);
+        if (! $operationalBranch) {
+            return back()->withErrors([
+                'branch_id' => 'هذا المندوب غير مرتبط بفرع تشغيلي نشط لتسليم النقدية.',
+            ]);
+        }
+
+        if (isset($data['branch_id']) && (int) $data['branch_id'] !== (int) $operationalBranch->id) {
+            return back()->withErrors([
+                'branch_id' => 'يمكن تسليم النقدية إلى فرع المندوب التشغيلي فقط.',
+            ]);
+        }
+
         $finance->submit(
             $user,
             FinanceRequest::CASH_HANDOVER,
             (int) $data['amount'],
-            isset($data['branch_id']) ? (int) $data['branch_id'] : null,
+            (int) $operationalBranch->id,
             $data['note'] ?? null,
         );
 
@@ -224,7 +249,7 @@ class AppWalletController extends Controller
     public function recharge(Request $request, FinanceRequestService $finance)
     {
         $user = $request->user();
-        abort_unless($user->isCourierRole(), 403);
+        abort_unless($user->role === 'courier', 403, 'شحن الرصيد متاح للمندوب فقط.');
 
         $data = $request->validate([
             'amount' => ['required', 'integer', 'min:1000'],
@@ -252,7 +277,7 @@ class AppWalletController extends Controller
     public function budget(Request $request, FinanceRequestService $finance)
     {
         $user = $request->user();
-        abort_unless($user->isCourierRole(), 403);
+        abort_unless($user->role === 'courier', 403, 'إضافة الميزانية متاحة للمندوب فقط.');
 
         $data = $request->validate([
             'amount' => ['required', 'integer', 'min:1000'],
@@ -266,5 +291,24 @@ class AppWalletController extends Controller
         );
 
         return back()->with('success', __('Budget added successfully.'));
+    }
+
+    public function reduceBudget(Request $request, FinanceRequestService $finance)
+    {
+        $user = $request->user();
+        abort_unless($user->role === 'courier', 403, 'إنقاص الميزانية متاح للمندوب فقط.');
+
+        $data = $request->validate([
+            'amount' => ['required', 'integer', 'min:1000'],
+            'note' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $finance->reduceCourierBudget(
+            $user,
+            (int) $data['amount'],
+            $data['note'] ?? null,
+        );
+
+        return back()->with('success', __('Budget reduced successfully.'));
     }
 }

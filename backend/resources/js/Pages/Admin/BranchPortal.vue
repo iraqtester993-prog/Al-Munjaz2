@@ -16,6 +16,7 @@ const props = defineProps({
     couriers: { type: Array, default: () => [] },
     courierLocations: { type: Array, default: () => [] },
     summary: { type: Object, default: () => ({}) },
+    operationalDashboard: { type: Object, default: () => ({}) },
 })
 
 const page = usePage()
@@ -41,7 +42,7 @@ const accountForm = useForm({
     vehicle: '',
 })
 const orderStatusForm = useForm({ status: '', note: '' })
-const courierAssignmentForm = useForm({ courier_id: '', assignment_role: '' })
+const courierAssignmentForm = useForm({ courier_id: '', assignment_role: 'courier' })
 
 const copy = {
     ar: {
@@ -52,6 +53,16 @@ const copy = {
         branches: 'الفروع',
         activeBranches: 'الفروع النشطة',
         totalOrders: 'إجمالي الطلبات',
+        operationalDetails: 'تفاصيل التشغيل',
+        statusSummary: 'ملخص حالات الطلبات',
+        financialSummary: 'الملخص المالي',
+        weeklyActivity: 'نشاط الطلبات الأسبوعي',
+        topMerchants: 'أعلى التجار نشاطاً',
+        orderValue: 'قيمة الطلبات',
+        deliveredValue: 'قيمة الطلبات المسلّمة',
+        deliveryFees: 'أجور التوصيل',
+        merchantBalance: 'أرصدة التجار',
+        courierBudget: 'ميزانيات المندوبين',
         activeOrders: 'طلبات قيد التشغيل',
         deliveredOrders: 'الطلبات المسلّمة',
         todayOrders: 'طلبات اليوم',
@@ -157,6 +168,16 @@ const copy = {
         branches: 'Branches',
         activeBranches: 'Active branches',
         totalOrders: 'Total orders',
+        operationalDetails: 'Operational detail',
+        statusSummary: 'Order status summary',
+        financialSummary: 'Financial summary',
+        weeklyActivity: 'Weekly order activity',
+        topMerchants: 'Top merchants',
+        orderValue: 'Order value',
+        deliveredValue: 'Delivered value',
+        deliveryFees: 'Delivery fees',
+        merchantBalance: 'Merchant balances',
+        courierBudget: 'Courier budgets',
         activeOrders: 'Active orders',
         deliveredOrders: 'Delivered orders',
         todayOrders: 'Today’s orders',
@@ -262,6 +283,16 @@ const copy = {
         branches: 'لقەکان',
         activeBranches: 'لقە چالاکەکان',
         totalOrders: 'کۆی داواکارییەکان',
+        operationalDetails: 'وردەکاریی کارپێکردن',
+        statusSummary: 'کورتەی دۆخی داواکارییەکان',
+        financialSummary: 'کورتەی دارایی',
+        weeklyActivity: 'چالاکیی هەفتانەی داواکارییەکان',
+        topMerchants: 'چالاکترین بازرگانەکان',
+        orderValue: 'بەهای داواکارییەکان',
+        deliveredValue: 'بەهای داواکارییە گەیەنراوەکان',
+        deliveryFees: 'کرێی گەیاندن',
+        merchantBalance: 'باڵانسی بازرگانەکان',
+        courierBudget: 'بودجەی گەیەنەران',
         activeOrders: 'داواکارییە چالاکەکان',
         deliveredOrders: 'داواکارییە گەیەنراوەکان',
         todayOrders: 'داواکارییەکانی ئەمڕۆ',
@@ -422,6 +453,33 @@ const metrics = computed(() => [
     { key: 'couriers', label: text('couriersCount'), value: dashboardSummary.value.couriers || 0, icon: 'courier' },
 ])
 
+const branchStatusRows = computed(() => {
+    const counts = props.operationalDashboard?.statusCounts || {}
+    const statuses = ['pending', 'approved', 'courier', 'delivered', 'returned']
+    const maximum = Math.max(1, ...statuses.map((status) => Number(counts[status] || 0)))
+
+    return statuses.map((status) => ({
+        status,
+        label: statusLabel(status),
+        value: Number(counts[status] || 0),
+        percent: Math.max(3, Math.round((Number(counts[status] || 0) / maximum) * 100)),
+    }))
+})
+
+const branchFinancialRows = computed(() => {
+    const values = props.operationalDashboard?.financials || {}
+
+    return [
+        { label: text('orderValue'), value: values.value || 0, tone: 'default' },
+        { label: text('deliveredValue'), value: values.deliveredValue || 0, tone: 'positive' },
+        { label: text('deliveryFees'), value: values.fees || 0, tone: 'accent' },
+        { label: text('merchantBalance'), value: values.merchantBalance || 0, tone: 'default' },
+        { label: text('courierBudget'), value: values.courierBudget || 0, tone: 'default' },
+    ]
+})
+
+const weekMax = computed(() => Math.max(1, ...(props.operationalDashboard?.week || []).map((item) => Number(item.count || 0))))
+
 const visibleOrders = computed(() => {
     if (isAllBranches.value) return props.orders
     const branchId = Number(selectedBranchKey.value)
@@ -562,8 +620,10 @@ function accountStatusTone(status) {
 function courierRoleLabel(role) {
     return {
         courier: { ar: 'مندوب', en: 'Courier', ku: 'گەیەنەر' },
-        pickup_courier: { ar: 'مندوب استلام', en: 'Pickup courier', ku: 'گەیەنەری وەرگرتن' },
-        delivery_courier: { ar: 'مندوب توصيل', en: 'Delivery courier', ku: 'گەیەنەری گەیاندن' },
+        // Legacy account records remain visible for audit, but direct orders
+        // use one courier and the portal must not advertise split roles.
+        pickup_courier: { ar: 'مندوب', en: 'Courier', ku: 'گەیەنەر' },
+        delivery_courier: { ar: 'مندوب', en: 'Courier', ku: 'گەیەنەر' },
         transporter: { ar: 'ناقل فروع', en: 'Branch transporter', ku: 'گواستەرەوەی لق' },
     }[role]?.[locale.value] || role || '—'
 }
@@ -697,7 +757,7 @@ function openOrder(order) {
     selectedOrder.value = order
     orderStatusForm.defaults({ status: order.status || 'pending', note: '' })
     orderStatusForm.reset()
-    courierAssignmentForm.defaults({ courier_id: order.courier?.id || '', assignment_role: '' })
+    courierAssignmentForm.defaults({ courier_id: order.courier?.id || '', assignment_role: 'courier' })
     courierAssignmentForm.reset()
 }
 
@@ -709,6 +769,7 @@ function closeOrder() {
 
 function saveOrderStatus() {
     if (!selectedOrder.value || orderStatusForm.processing) return
+    if (!confirm(`${text('save')}: ${statusLabel(orderStatusForm.status)}?`)) return
     orderStatusForm.post(route('admin.branch.orders.status', selectedOrder.value.id), {
         preserveScroll: true,
         onSuccess: () => {
@@ -763,13 +824,13 @@ function toggleTheme() {
     const next = previous === 'dark' ? 'light' : 'dark'
     theme.value = next
     applyTheme(next)
-    router.post(route('admin.branch.preferences.theme'), { theme: next }, {
-        preserveScroll: true,
-        preserveState: true,
-        onError: () => {
-            theme.value = previous
-            applyTheme(previous)
-        },
+
+    // Saving a visual preference must not reload the isolated branch portal.
+    window.axios.post(route('admin.branch.preferences.theme'), { theme: next }).catch(() => {
+        if (theme.value !== next) return
+
+        theme.value = previous
+        applyTheme(previous)
     })
 }
 
@@ -841,9 +902,9 @@ onMounted(() => applyTheme(theme.value))
             <div class="portal-top-actions">
                 <label class="language-picker">
                     <span class="sr-only">{{ text('language') }}</span>
-                    <select :value="locale" :aria-label="text('language')" @change="changeLocale">
+                    <PopupSelect :model-value="locale" :aria-label="text('language')" @change="changeLocale">
                         <option v-for="code in locales" :key="code" :value="code">{{ { ar: 'العربية', en: 'English', ku: 'کوردی' }[code] || code }}</option>
-                    </select>
+                    </PopupSelect>
                 </label>
                 <button class="icon-button" type="button" :aria-label="theme === 'dark' ? text('light') : text('dark')" @click="toggleTheme">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path :d="icon(theme === 'dark' ? 'sun' : 'moon')" /></svg>
@@ -871,10 +932,10 @@ onMounted(() => applyTheme(theme.value))
             <section v-if="branches.length" class="portal-controls" aria-label="Branch selector">
                 <label>
                     <span>{{ text('branches') }}</span>
-                    <select v-model="selectedBranchKey">
+                    <PopupSelect v-model="selectedBranchKey">
                         <option value="all">{{ text('allBranches') }}</option>
                         <option v-for="branch in branches" :key="branch.id" :value="String(branch.id)">{{ localizedBranch(branch) }} · {{ branch.code }}</option>
-                    </select>
+                    </PopupSelect>
                 </label>
                 <p>{{ text('lastUpdated') }}</p>
             </section>
@@ -898,6 +959,41 @@ onMounted(() => applyTheme(theme.value))
                     <article v-for="metric in metrics" :key="metric.key" class="metric-card">
                         <span class="metric-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path :d="icon(metric.icon)" /></svg></span>
                         <div><strong class="mono">{{ fmt(metric.value) }}</strong><span>{{ metric.label }}</span></div>
+                    </article>
+                </section>
+
+                <section class="branch-dashboard-details" :aria-label="text('operationalDetails')">
+                    <article class="branch-detail-panel status-summary-panel">
+                        <div class="section-heading"><div><span class="eyebrow">{{ text('operationalDetails') }}</span><h2>{{ text('statusSummary') }}</h2></div></div>
+                        <div class="status-summary-list">
+                            <div v-for="row in branchStatusRows" :key="row.status" class="status-summary-row">
+                                <span class="status-pill" :class="statusTone(row.status)">{{ row.label }}</span>
+                                <div class="status-meter"><i :class="statusTone(row.status)" :style="{ width: `${row.percent}%` }" /></div>
+                                <b class="mono">{{ fmt(row.value) }}</b>
+                            </div>
+                        </div>
+                    </article>
+
+                    <article class="branch-detail-panel financial-summary-panel">
+                        <div class="section-heading"><div><span class="eyebrow">{{ text('operationalDetails') }}</span><h2>{{ text('financialSummary') }}</h2></div></div>
+                        <div class="branch-financial-grid">
+                            <div v-for="row in branchFinancialRows" :key="row.label" :class="row.tone"><span>{{ row.label }}</span><b class="money mono">{{ formatMoney(row.value) }}</b></div>
+                        </div>
+                    </article>
+
+                    <article class="branch-detail-panel weekly-panel">
+                        <div class="section-heading"><div><span class="eyebrow">{{ text('operationalDetails') }}</span><h2>{{ text('weeklyActivity') }}</h2></div></div>
+                        <div class="week-bars">
+                            <div v-for="item in operationalDashboard.week || []" :key="item.label" class="week-bar"><b class="mono">{{ fmt(item.count) }}</b><span><i :style="{ height: `${Math.max(6, Math.round((Number(item.count || 0) / weekMax) * 100))}%` }" /></span><small>{{ item.label }}</small></div>
+                        </div>
+                    </article>
+
+                    <article class="branch-detail-panel merchants-summary-panel">
+                        <div class="section-heading"><div><span class="eyebrow">{{ text('operationalDetails') }}</span><h2>{{ text('topMerchants') }}</h2></div></div>
+                        <div v-if="operationalDashboard.topMerchants?.length" class="top-merchant-list">
+                            <div v-for="merchant in operationalDashboard.topMerchants" :key="merchant.id"><span>{{ merchant.name }}</span><small>{{ fmt(merchant.orders) }} {{ text('orders') }}</small><b class="money mono">{{ formatMoney(merchant.value) }}</b></div>
+                        </div>
+                        <div v-else class="compact-empty">{{ text('noData') }}</div>
                     </article>
                 </section>
 
@@ -1068,9 +1164,9 @@ onMounted(() => applyTheme(theme.value))
                     <form v-if="canManageOrders" class="portal-action-form" @submit.prevent="saveOrderStatus">
                         <h4>{{ text('updateStatus') }}</h4>
                         <label>{{ text('status') }}
-                            <select v-model="orderStatusForm.status">
+                            <PopupSelect v-model="orderStatusForm.status">
                                 <option v-for="state in Object.keys(statusCopy)" :key="state" :value="state">{{ statusLabel(state) }}</option>
-                            </select>
+                            </PopupSelect>
                         </label>
                         <label>{{ text('administrativeNote') }}<textarea v-model="orderStatusForm.note" rows="2" maxlength="255"></textarea></label>
                         <small v-if="orderStatusForm.errors.status" class="portal-error">{{ orderStatusForm.errors.status }}</small>
@@ -1080,18 +1176,10 @@ onMounted(() => applyTheme(theme.value))
                     <form v-if="canManageOrders && !['delivered', 'returned', 'cancelled', 'damaged', 'rejected'].includes(selectedOrder.status)" class="portal-action-form" @submit.prevent="assignOrderCourier">
                         <h4>{{ text('assignCourier') }}</h4>
                         <label>{{ text('chooseCourier') }}
-                            <select v-model="courierAssignmentForm.courier_id" required>
+                            <PopupSelect v-model="courierAssignmentForm.courier_id" required>
                                 <option value="">{{ text('chooseCourier') }}</option>
                                 <option v-for="courier in selectedOrderCouriers" :key="courier.id" :value="courier.id">{{ courier.name }} · {{ courierRoleLabel(courier.role) }}</option>
-                            </select>
-                        </label>
-                        <label>{{ text('role') }}
-                            <select v-model="courierAssignmentForm.assignment_role">
-                                <option value="">{{ text('noData') }}</option>
-                                <option value="courier">{{ courierRoleLabel('courier') }}</option>
-                                <option value="pickup_courier">{{ courierRoleLabel('pickup_courier') }}</option>
-                                <option value="delivery_courier">{{ courierRoleLabel('delivery_courier') }}</option>
-                            </select>
+                            </PopupSelect>
                         </label>
                         <small v-if="courierAssignmentForm.errors.courier_id" class="portal-error">{{ courierAssignmentForm.errors.courier_id }}</small>
                         <button type="submit" class="manage-button primary" :disabled="courierAssignmentForm.processing">{{ text('assignCourier') }}</button>
@@ -1149,7 +1237,7 @@ onMounted(() => applyTheme(theme.value))
                     <label>{{ text('phone') }}<input v-model="accountForm.phone" required maxlength="30" dir="ltr" inputmode="tel" /></label>
                     <label>{{ text('email') }}<input v-model="accountForm.email" type="email" maxlength="255" dir="ltr" /></label>
                     <label v-if="editingKind === 'merchant'">{{ text('shop') }}<input v-model="accountForm.shop_name" maxlength="120" /></label>
-                    <label v-else>{{ text('vehicle') }}<select v-model="accountForm.vehicle"><option value="">—</option><option value="bike">{{ vehicleLabel('bike') }}</option><option value="sedan">{{ vehicleLabel('sedan') }}</option><option value="suv">SUV</option><option value="truck">{{ vehicleLabel('truck') }}</option></select></label>
+                    <label v-else>{{ text('vehicle') }}<PopupSelect v-model="accountForm.vehicle"><option value="">—</option><option value="bike">{{ vehicleLabel('bike') }}</option><option value="sedan">{{ vehicleLabel('sedan') }}</option><option value="suv">SUV</option><option value="truck">{{ vehicleLabel('truck') }}</option></PopupSelect></label>
                     <label class="wide">{{ text('address') }}<textarea v-model="accountForm.address" rows="2" maxlength="255"></textarea></label>
                     <small v-if="Object.keys(accountForm.errors).length" class="portal-error">{{ Object.values(accountForm.errors)[0] }}</small>
                     <button type="submit" class="manage-button primary" :disabled="accountForm.processing">{{ text('save') }}</button>
@@ -1199,6 +1287,8 @@ onMounted(() => applyTheme(theme.value))
 .manage-button{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 11px;border:1px solid color-mix(in srgb,var(--primary) 28%,var(--border));border-radius:9px;color:var(--primary-strong);background:var(--primary-tint);font:inherit;font-size:10px;font-weight:900;cursor:pointer}.manage-button:hover{filter:brightness(.97)}.manage-button:disabled{opacity:.55;cursor:not-allowed}.manage-button.primary{color:#fff;background:var(--primary);border-color:var(--primary)}.manage-button.success{color:var(--success);background:var(--success-tint);border-color:color-mix(in srgb,var(--success) 30%,var(--border))}.manage-button.warning{color:var(--warning);background:var(--warning-tint);border-color:color-mix(in srgb,var(--warning) 36%,var(--border))}.manage-button.danger{color:var(--danger);background:var(--danger-tint);border-color:color-mix(in srgb,var(--danger) 36%,var(--border))}
 .verified-mark{display:inline-flex;align-items:center;gap:4px;color:var(--success);font-size:9px;font-weight:900}.portal-sheet{display:grid;gap:13px}.sheet-order-summary,.person-sheet-head,.sheet-actions{display:flex;align-items:center;gap:10px}.sheet-order-summary{justify-content:space-between;padding:11px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2)}.sheet-data-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}.sheet-data-grid>div{min-width:0;padding:10px;border:1px solid var(--border);border-radius:11px;background:var(--surface-2)}.sheet-data-grid .wide{grid-column:span 2}.sheet-data-grid dt{color:var(--ink-faint);font-size:9px;font-weight:900}.sheet-data-grid dd{margin:5px 0 0;overflow-wrap:anywhere;color:var(--ink);font-size:11px;font-weight:800;line-height:1.55}.sheet-data-grid dd small{display:block;margin-top:3px;color:var(--ink-faint);font-size:9px}.note-value{color:var(--ink-soft)!important}.person-sheet-head{padding:12px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2)}.person-sheet-head>div{display:grid;flex:1;gap:2px;min-width:0}.person-sheet-head>div b{overflow:hidden;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.person-sheet-head>div span{color:var(--ink-faint);font-size:9px;font-weight:800}.person-sheet-head .person-avatar{width:39px;height:39px}.verification-state{display:inline-flex;padding:4px 7px;border-radius:999px;color:var(--warning);background:var(--warning-tint);font-size:9px;font-weight:900}.verification-state.verified{color:var(--success);background:var(--success-tint)}.verification-state.rejected{color:var(--danger);background:var(--danger-tint)}.portal-action-form,.edit-person-form{display:grid;gap:9px;padding:13px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2)}.portal-action-form h4{margin:0;color:var(--ink);font-size:12px}.portal-action-form label,.edit-person-form label{display:grid;gap:5px;color:var(--ink-soft);font-size:9px;font-weight:900}.portal-action-form select,.portal-action-form textarea,.edit-person-form input,.edit-person-form select,.edit-person-form textarea{box-sizing:border-box;width:100%;border:1px solid var(--border);border-radius:9px;outline:0;padding:8px 9px;color:var(--ink);background:var(--surface);font:inherit;font-size:11px;font-weight:700}.portal-action-form textarea,.edit-person-form textarea{resize:vertical}.portal-error{color:var(--danger);font-size:10px;font-weight:800}.documents-area{padding:12px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2)}.documents-area h4{margin:0 0 9px;font-size:12px}.document-row{display:flex;align-items:center;gap:7px;padding:8px 0;border-top:1px solid var(--border)}.document-row:first-of-type{border-top:0}.document-row>button{min-width:0;overflow:hidden;border:0;color:var(--primary-strong);background:transparent;font:inherit;font-size:9.5px;font-weight:900;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}.document-row>span{margin-inline-start:auto;padding:4px 6px;border-radius:999px;color:var(--warning);background:var(--warning-tint);font-size:8px;font-weight:900}.document-row>span.approved{color:var(--success);background:var(--success-tint)}.document-row>span.rejected{color:var(--danger);background:var(--danger-tint)}.document-actions{display:flex;gap:4px}.document-actions button{border:0;border-radius:7px;padding:4px 6px;color:var(--success);background:var(--success-tint);font:inherit;font-size:8px;font-weight:900;cursor:pointer}.document-actions button:last-child{color:var(--danger);background:var(--danger-tint)}.sheet-actions{flex-wrap:wrap}.edit-person-form{grid-template-columns:repeat(2,minmax(0,1fr))}.edit-person-form .wide{grid-column:span 2}.edit-person-form .manage-button{width:max-content}
 .location-overview-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;padding:19px;border:1px solid color-mix(in srgb,var(--primary) 25%,var(--border));border-radius:16px;background:linear-gradient(135deg,var(--primary-tint),var(--surface-2))}.location-overview-icon{display:grid;place-items:center;width:48px;height:48px;border-radius:14px;color:var(--primary-strong);background:var(--surface)}.location-overview-card>div{display:grid;gap:4px}.location-overview-card b{font-size:13px}.location-overview-card p{margin:0;color:var(--ink-soft);font-size:10.5px;font-weight:700;line-height:1.65}.location-overview-action{min-height:38px;gap:7px;white-space:nowrap}
+.branch-dashboard-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:0 0 18px}.branch-detail-panel{padding:18px;border:1px solid var(--border);border-radius:18px;background:var(--surface);box-shadow:0 10px 30px rgba(21,66,73,.05)}.branch-detail-panel .section-heading{margin-bottom:13px}.branch-detail-panel h2{font-size:14px}.status-summary-list{display:grid;gap:10px}.status-summary-row{display:grid;grid-template-columns:minmax(86px,.8fr) minmax(70px,2fr) auto;align-items:center;gap:8px}.status-meter{height:7px;overflow:hidden;border-radius:99px;background:var(--surface-2)}.status-meter i{display:block;height:100%;border-radius:inherit;background:var(--primary)}.status-meter i.pending{background:var(--warning)}.status-meter i.approved{background:#1879bd}.status-meter i.courier{background:#8561d8}.status-meter i.delivered{background:var(--success)}.status-meter i.returned{background:var(--danger)}.status-summary-row>b{font-size:11px}.branch-financial-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.branch-financial-grid>div{display:grid;gap:5px;padding:10px;border-radius:11px;background:var(--surface-2)}.branch-financial-grid>div.positive{background:var(--success-tint)}.branch-financial-grid>div.accent{background:var(--primary-tint)}.branch-financial-grid span{color:var(--ink-faint);font-size:9px;font-weight:800}.branch-financial-grid b{font-size:12px}.week-bars{display:flex;align-items:end;justify-content:space-between;gap:7px;height:125px;padding-top:4px}.week-bar{display:grid;grid-template-rows:auto 72px auto;align-items:end;gap:5px;min-width:0;flex:1;text-align:center}.week-bar>b{font-size:10px}.week-bar>span{display:flex;align-items:end;height:72px;border-radius:7px;background:var(--surface-2)}.week-bar i{display:block;width:100%;border-radius:7px;background:linear-gradient(180deg,var(--primary),var(--primary-strong))}.week-bar small{overflow:hidden;color:var(--ink-faint);font-size:9px;font-weight:800;text-overflow:ellipsis;white-space:nowrap}.top-merchant-list{display:grid;gap:7px}.top-merchant-list>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 9px;padding:9px 0;border-bottom:1px solid var(--border)}.top-merchant-list>div:last-child{border:0;padding-bottom:0}.top-merchant-list span{overflow:hidden;font-size:11px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}.top-merchant-list small{color:var(--ink-faint);font-size:9px;font-weight:800}.top-merchant-list b{grid-column:2;grid-row:1 / span 2;align-self:center;font-size:10px}.compact-empty{display:grid;place-items:center;min-height:104px;color:var(--ink-faint);font-size:11px;font-weight:800}
 @media(max-width:760px){.portal-tabs{margin-bottom:14px}.portal-tab{min-height:34px;padding:0 10px;font-size:10px}.operational-panel{padding:14px;border-radius:16px}.scoped-order-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.people-grid{grid-template-columns:1fr}.scoped-order-foot{align-items:flex-start;flex-direction:column;gap:5px}.location-overview-card{grid-template-columns:auto minmax(0,1fr);padding:15px}.location-overview-action{grid-column:span 2;width:100%}}
+@media(max-width:760px){.branch-dashboard-details{grid-template-columns:1fr;gap:11px;margin-bottom:14px}.branch-detail-panel{padding:14px}.week-bars{height:110px}.week-bar{grid-template-rows:auto 62px auto}.week-bar>span{height:62px}.branch-financial-grid{gap:7px}}
 @media(max-width:440px){.portal-tab{padding:0 9px}.portal-tab b{display:none}.scoped-order-card,.person-card{padding:12px}.scoped-order-head{align-items:flex-start;flex-direction:column}.status-pill{align-self:flex-start}.sheet-data-grid,.edit-person-form{grid-template-columns:1fr}.sheet-data-grid .wide,.edit-person-form .wide{grid-column:span 1}.document-row{align-items:flex-start;flex-wrap:wrap}.document-actions{width:100%}}
 </style>

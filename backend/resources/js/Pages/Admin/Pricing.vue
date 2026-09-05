@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
+import BranchFilter from '../../Components/BranchFilter.vue'
 
 const props = defineProps({
     rules: { type: Array, default: () => [] },
@@ -12,6 +13,9 @@ const props = defineProps({
     canManagePricing: { type: Boolean, default: false },
     canCreatePricing: { type: Boolean, default: false },
     canUpdatePricing: { type: Boolean, default: false },
+    canEditPricing: { type: Boolean, default: false },
+    canChangePricingStatus: { type: Boolean, default: false },
+    branchFilter: { type: Object, default: () => ({}) },
 })
 
 const page = usePage()
@@ -64,7 +68,7 @@ function openCreate() {
     form.value = blank()
 }
 function openEdit(rule) {
-    if (!props.canUpdatePricing) return
+    if (!props.canEditPricing) return
     editor.value = rule.id
     form.value = {
         name_ar: rule.name_ar || '', name_en: rule.name_en || '', name_ku: rule.name_ku || '', merchant_id: rule.merchant_id || '',
@@ -73,7 +77,7 @@ function openEdit(rule) {
     }
 }
 function submit() {
-    if (editor.value === 'create' ? !props.canCreatePricing : !props.canUpdatePricing) return
+    if (editor.value === 'create' ? !props.canCreatePricing : !props.canEditPricing) return
     if (busy.value || !form.value.name_ar || form.value.base_fee === '') return
     busy.value = true
     const target = editor.value === 'create' ? route('admin.pricing.store') : route('admin.pricing.update', editor.value)
@@ -83,7 +87,7 @@ function submit() {
     else router.put(target, payload, callback)
 }
 function toggle(rule) {
-    if (!props.canUpdatePricing) return
+    if (!props.canChangePricingStatus) return
     router.patch(route('admin.pricing.status', rule.id), { is_active: !rule.is_active }, { preserveScroll: true })
 }
 function scope(rule) {
@@ -94,36 +98,44 @@ function scope(rule) {
     if (rule.vehicle) bits.push(labels.vehicleNames[locale.value]?.[rule.vehicle] || rule.vehicle)
     return bits.length ? bits.join(' · ') : l('allMerchants')
 }
+function changeBranchFilter(branchId) {
+    const query = Object.fromEntries(new URLSearchParams(window.location.search).entries())
+    if (branchId) query.branch_id = String(branchId)
+    else delete query.branch_id
+
+    router.get(route('admin.pricing'), query, { preserveScroll: true, preserveState: false, replace: true })
+}
 </script>
 
 <template>
     <AdminShell :title="l('title')">
         <header class="page-heading">
             <div><p>{{ l('eyebrow') }}</p><h2>{{ l('title') }}</h2><span>{{ l('subtitle') }}</span></div>
+            <BranchFilter v-if="branchFilter?.enabled" :filter="branchFilter" @change="changeBranchFilter" />
             <button v-if="canCreatePricing" class="primary" type="button" @click="openCreate">＋ {{ l('create') }}</button>
         </header>
 
         <section class="rule-grid">
             <article v-for="rule in rules" :key="rule.id" class="rule-card" :class="{ off: !rule.is_active }">
-                <header><span class="rule-badge">{{ rule.priority }}</span><div><h3>{{ localized(rule) }}</h3><p>{{ scope(rule) }}</p></div><button v-if="canUpdatePricing" class="toggle" type="button" :class="{ on: rule.is_active }" @click="toggle(rule)"><i></i><span>{{ rule.is_active ? l('active') : l('inactive') }}</span></button></header>
+                <header><span class="rule-badge">{{ rule.priority }}</span><div><h3>{{ localized(rule) }}</h3><p>{{ scope(rule) }}</p></div><button v-if="canChangePricingStatus" class="toggle" type="button" :class="{ on: rule.is_active }" @click="toggle(rule)"><i></i><span>{{ rule.is_active ? l('active') : l('inactive') }}</span></button></header>
                 <div class="rule-prices"><span><small>{{ l('fee') }}</small><b>{{ fmt(rule.base_fee) }} {{ t('IQD') }}</b></span><span><small>{{ l('returnFee') }}</small><b>{{ fmt(rule.return_fee) }} {{ t('IQD') }}</b></span></div>
-                <footer><span>{{ rule.min_weight_grams }}–{{ rule.max_weight_grams ?? '∞' }} g</span><button v-if="canUpdatePricing" type="button" @click="openEdit(rule)">{{ l('edit') }}</button></footer>
+                <footer><span>{{ rule.min_weight_grams }}–{{ rule.max_weight_grams ?? '∞' }} g</span><button v-if="canEditPricing" type="button" @click="openEdit(rule)">{{ l('edit') }}</button></footer>
             </article>
             <div v-if="!rules.length" class="empty">{{ l('noRules') }}</div>
         </section>
 
-        <div v-if="editor !== null && (editor === 'create' ? canCreatePricing : canUpdatePricing)" class="dialog-backdrop" @click.self="editor = null">
+        <div v-if="editor !== null && (editor === 'create' ? canCreatePricing : canEditPricing)" class="dialog-backdrop" @click.self="editor = null">
             <form class="dialog pricing-dialog" @submit.prevent="submit">
                 <header><div><h3>{{ editor === 'create' ? l('create') : l('edit') }}</h3><p>{{ l('automatic') }}</p></div><button type="button" @click="editor = null">×</button></header>
                 <div class="dialog-body form-grid">
                     <label><span>{{ l('nameAr') }}</span><input v-model.trim="form.name_ar" required></label>
                     <label><span>{{ l('nameEn') }}</span><input v-model.trim="form.name_en"></label>
                     <label class="wide"><span>{{ l('nameKu') }}</span><input v-model.trim="form.name_ku"></label>
-                    <label><span>{{ l('merchant') }}</span><select v-model="form.merchant_id"><option value="">{{ l('allMerchants') }}</option><option v-for="merchant in merchants" :key="merchant.id" :value="merchant.id">{{ merchant.shop_name || merchant.name }}</option></select></label>
-                    <label><span>{{ l('origin') }}</span><select v-model="form.origin_province_id"><option value="">{{ l('allProvinces') }}</option><option v-for="province in provinces" :key="province.id" :value="province.id">{{ provinceName(province) }}</option></select></label>
-                    <label><span>{{ l('destination') }}</span><select v-model="form.destination_province_id"><option value="">{{ l('allProvinces') }}</option><option v-for="province in provinces" :key="province.id" :value="province.id">{{ provinceName(province) }}</option></select></label>
+                    <label><span>{{ l('merchant') }}</span><PopupSelect v-model="form.merchant_id"><option value="">{{ l('allMerchants') }}</option><option v-for="merchant in merchants" :key="merchant.id" :value="merchant.id">{{ merchant.shop_name || merchant.name }}</option></PopupSelect></label>
+                    <label><span>{{ l('origin') }}</span><PopupSelect v-model="form.origin_province_id"><option value="">{{ l('allProvinces') }}</option><option v-for="province in provinces" :key="province.id" :value="province.id">{{ provinceName(province) }}</option></PopupSelect></label>
+                    <label><span>{{ l('destination') }}</span><PopupSelect v-model="form.destination_province_id"><option value="">{{ l('allProvinces') }}</option><option v-for="province in provinces" :key="province.id" :value="province.id">{{ provinceName(province) }}</option></PopupSelect></label>
                     <label><span>{{ l('service') }}</span><input v-model.trim="form.service" :placeholder="l('allServices')"></label>
-                    <label><span>{{ l('vehicle') }}</span><select v-model="form.vehicle"><option value="">{{ l('allVehicles') }}</option><option v-for="vehicle in vehicles" :key="vehicle" :value="vehicle">{{ labels.vehicleNames[locale]?.[vehicle] || vehicle }}</option></select></label>
+                    <label><span>{{ l('vehicle') }}</span><PopupSelect v-model="form.vehicle"><option value="">{{ l('allVehicles') }}</option><option v-for="vehicle in vehicles" :key="vehicle" :value="vehicle">{{ labels.vehicleNames[locale]?.[vehicle] || vehicle }}</option></PopupSelect></label>
                     <label><span>{{ l('minWeight') }}</span><input v-model.number="form.min_weight_grams" type="number" min="0" required></label>
                     <label><span>{{ l('maxWeight') }}</span><input v-model="form.max_weight_grams" type="number" min="0" placeholder="∞"></label>
                     <label><span>{{ l('fee') }} ({{ t('IQD') }})</span><input v-model.number="form.base_fee" type="number" min="0" required></label>

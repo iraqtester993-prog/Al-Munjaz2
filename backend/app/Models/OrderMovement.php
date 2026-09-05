@@ -22,8 +22,23 @@ class OrderMovement extends Model
         return ['meta' => 'array', 'occurred_at' => 'datetime'];
     }
 
-    public function order(): BelongsTo { return $this->belongsTo(Order::class); }
-    public function fromBranch(): BelongsTo { return $this->belongsTo(Branch::class, 'from_branch_id'); }
-    public function toBranch(): BelongsTo { return $this->belongsTo(Branch::class, 'to_branch_id'); }
-    public function actor(): BelongsTo { return $this->belongsTo(User::class, 'actor_id'); }
+    public function order(): BelongsTo
+    {
+        return $this->belongsTo(Order::class);
+    }
+
+    public function fromBranch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class, 'from_branch_id');
+    }
+
+    public function toBranch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class, 'to_branch_id');
+    }
+
+    public function actor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'actor_id');
+    }
 }

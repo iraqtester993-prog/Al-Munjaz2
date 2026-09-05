@@ -3,8 +3,9 @@ import { computed, ref } from 'vue'
 import { router, usePage } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
+import BranchFilter from '../../Components/BranchFilter.vue'
 
-const props = defineProps({ filters: { type: Object, default: () => ({}) }, kpis: { type: Object, default: () => ({}) }, statuses: { type: Array, default: () => [] }, branches: { type: Array, default: () => [] }, couriers: { type: Array, default: () => [] }, merchants: { type: Array, default: () => [] } })
+const props = defineProps({ filters: { type: Object, default: () => ({}) }, kpis: { type: Object, default: () => ({}) }, statuses: { type: Array, default: () => [] }, branches: { type: Array, default: () => [] }, couriers: { type: Array, default: () => [] }, merchants: { type: Array, default: () => [] }, canViewFinancialReports: { type: Boolean, default: false }, branchFilter: { type: Object, default: () => ({}) } })
 const page = usePage()
 const locale = computed(() => page.props.locale || 'ar')
 const dates = ref({ from: props.filters.from || '', to: props.filters.to || '' })
@@ -13,15 +14,38 @@ const labels = {
 }
 function l(key){return labels[key]?.[locale.value]||labels[key]?.ar||key} function branchName(row){return row?.[`name_${locale.value}`]||row?.name_ar||row?.name_en||'—'} function statusName(status){return labels.statusNames[locale.value]?.[status]||status} function roleName(role){return labels.roleNames[locale.value]?.[role]||role}
 const maxStatus=computed(()=>Math.max(1,...props.statuses.map(x=>x.count)))
-function apply(){router.get(route('admin.reports'),dates.value,{preserveState:true,preserveScroll:true,replace:true})}
+const kpiCards = computed(() => [
+    { k: 'orders', v: props.kpis.orders },
+    { k: 'delivered', v: props.kpis.delivered },
+    { k: 'returned', v: props.kpis.returned },
+    { k: 'rate', v: `${props.kpis.delivery_rate || 0}%` },
+    ...(props.canViewFinancialReports ? [
+        { k: 'value', v: fmt(props.kpis.delivered_value || 0), iqd: true },
+        { k: 'fees', v: fmt(props.kpis.fees || 0), iqd: true },
+        { k: 'cash', v: fmt(props.kpis.cash_collected || 0), iqd: true },
+        { k: 'pending', v: props.kpis.pending_settlements || 0 },
+    ] : []),
+])
+function reportQuery(branchId = props.branchFilter?.selected_id) {
+    const query = Object.fromEntries(new URLSearchParams(window.location.search).entries())
+    if (dates.value.from) query.from = dates.value.from
+    else delete query.from
+    if (dates.value.to) query.to = dates.value.to
+    else delete query.to
+    if (branchId) query.branch_id = String(branchId)
+    else delete query.branch_id
+    return query
+}
+function apply(){router.get(route('admin.reports'),reportQuery(),{preserveState:true,preserveScroll:true,replace:true})}
+function changeBranchFilter(branchId){router.get(route('admin.reports'),reportQuery(branchId),{preserveState:false,preserveScroll:true,replace:true})}
 </script>
 
 <template>
     <AdminShell :title="l('title')">
-        <header class="page-heading"><div><p>{{l('eyebrow')}}</p><h2>{{l('title')}}</h2><span>{{l('subtitle')}}</span></div><form class="date-filter" @submit.prevent="apply"><label>{{l('from')}}<input v-model="dates.from" type="date"></label><label>{{l('to')}}<input v-model="dates.to" type="date"></label><button class="primary">{{l('apply')}}</button></form></header>
-        <section class="kpis"><article v-for="card in [{k:'orders',v:kpis.orders},{k:'delivered',v:kpis.delivered},{k:'returned',v:kpis.returned},{k:'rate',v:`${kpis.delivery_rate||0}%`},{k:'value',v:fmt(kpis.delivered_value||0),iqd:true},{k:'fees',v:fmt(kpis.fees||0),iqd:true},{k:'cash',v:fmt(kpis.cash_collected||0),iqd:true},{k:'pending',v:kpis.pending_settlements||0}]" :key="card.k" class="kpi"><span class="dot"></span><span><strong class="mono">{{card.v}}</strong><small v-if="card.iqd">{{t('IQD')}}</small><b>{{l(card.k)}}</b></span></article></section>
-        <section class="analysis-grid"><article class="panel statuses"><header class="panel-head"><h3>{{l('statuses')}}</h3></header><div class="bars"><div v-for="item in statuses" :key="item.status" class="bar-row"><span>{{statusName(item.status)}}</span><div><i :style="{width:`${(item.count/maxStatus)*100}%`}"></i></div><b class="mono">{{item.count}}</b></div></div></article><article class="panel branches"><header class="panel-head"><h3>{{l('branches')}}</h3></header><div class="table-scroll"><table class="tbl"><thead><tr><th>{{l('branch')}}</th><th>{{l('city')}}</th><th>{{l('orders')}}</th><th>{{l('completed')}}</th><th>{{l('returns')}}</th><th>{{l('cashbox')}}</th></tr></thead><tbody><tr v-for="branch in branches" :key="branch.id"><td><b>{{branchName(branch)}}</b></td><td>{{branch.city}}</td><td class="mono">{{branch.orders}}</td><td class="mono positive">{{branch.delivered}}</td><td class="mono negative">{{branch.returned}}</td><td class="mono">{{fmt(branch.cash_balance)}}</td></tr></tbody></table></div></article></section>
-        <section class="two-tables"><article class="panel"><header class="panel-head"><h3>{{l('couriers')}}</h3></header><div class="table-scroll"><table class="tbl"><thead><tr><th>{{l('courier')}}</th><th>{{l('operation')}}</th><th>{{l('orders')}}</th><th>{{l('completed')}}</th><th>{{l('rate')}}</th></tr></thead><tbody><tr v-for="courier in couriers" :key="courier.id"><td><b>{{courier.name}}</b><small>{{courier.branch||'—'}}</small></td><td>{{roleName(courier.role)}}</td><td class="mono">{{courier.orders}}</td><td class="mono positive">{{courier.delivered}}</td><td><span class="rate"><i :style="{width:`${courier.rate}%`}"></i>{{courier.rate}}%</span></td></tr></tbody></table></div></article><article class="panel"><header class="panel-head"><h3>{{l('merchants')}}</h3></header><div class="table-scroll"><table class="tbl"><thead><tr><th>{{l('merchant')}}</th><th>{{l('orders')}}</th><th>{{l('completed')}}</th><th>{{l('value')}}</th></tr></thead><tbody><tr v-for="merchant in merchants" :key="merchant.id"><td><b>{{merchant.shop_name||merchant.name}}</b><small v-if="merchant.shop_name">{{merchant.name}}</small></td><td class="mono">{{merchant.orders}}</td><td class="mono positive">{{merchant.delivered}}</td><td class="mono">{{fmt(merchant.value)}}</td></tr></tbody></table></div></article></section>
+        <header class="page-heading"><div><p>{{l('eyebrow')}}</p><h2>{{l('title')}}</h2><span>{{l('subtitle')}}</span></div><BranchFilter v-if="branchFilter?.enabled" :filter="branchFilter" @change="changeBranchFilter" /><form class="date-filter" @submit.prevent="apply"><label>{{l('from')}}<input v-model="dates.from" type="date"></label><label>{{l('to')}}<input v-model="dates.to" type="date"></label><button class="primary">{{l('apply')}}</button></form></header>
+        <section class="kpis"><article v-for="card in kpiCards" :key="card.k" class="kpi"><span class="dot"></span><span><strong class="mono">{{card.v}}</strong><small v-if="card.iqd">{{t('IQD')}}</small><b>{{l(card.k)}}</b></span></article></section>
+        <section class="analysis-grid"><article class="panel statuses"><header class="panel-head"><h3>{{l('statuses')}}</h3></header><div class="bars"><div v-for="item in statuses" :key="item.status" class="bar-row"><span>{{statusName(item.status)}}</span><div><i :style="{width:`${(item.count/maxStatus)*100}%`}"></i></div><b class="mono">{{item.count}}</b></div></div></article><article class="panel branches"><header class="panel-head"><h3>{{l('branches')}}</h3></header><div class="table-scroll"><table class="tbl"><thead><tr><th>{{l('branch')}}</th><th>{{l('city')}}</th><th>{{l('orders')}}</th><th>{{l('completed')}}</th><th>{{l('returns')}}</th><th v-if="canViewFinancialReports">{{l('cashbox')}}</th></tr></thead><tbody><tr v-for="branch in branches" :key="branch.id"><td><b>{{branchName(branch)}}</b></td><td>{{branch.city}}</td><td class="mono">{{branch.orders}}</td><td class="mono positive">{{branch.delivered}}</td><td class="mono negative">{{branch.returned}}</td><td v-if="canViewFinancialReports" class="mono">{{fmt(branch.cash_balance)}}</td></tr></tbody></table></div></article></section>
+        <section class="two-tables"><article class="panel"><header class="panel-head"><h3>{{l('couriers')}}</h3></header><div class="table-scroll"><table class="tbl"><thead><tr><th>{{l('courier')}}</th><th>{{l('operation')}}</th><th>{{l('orders')}}</th><th>{{l('completed')}}</th><th>{{l('rate')}}</th></tr></thead><tbody><tr v-for="courier in couriers" :key="courier.id"><td><b>{{courier.name}}</b><small>{{courier.branch||'—'}}</small></td><td>{{roleName(courier.role)}}</td><td class="mono">{{courier.orders}}</td><td class="mono positive">{{courier.delivered}}</td><td><span class="rate"><i :style="{width:`${courier.rate}%`}"></i>{{courier.rate}}%</span></td></tr></tbody></table></div></article><article class="panel"><header class="panel-head"><h3>{{l('merchants')}}</h3></header><div class="table-scroll"><table class="tbl"><thead><tr><th>{{l('merchant')}}</th><th>{{l('orders')}}</th><th>{{l('completed')}}</th><th v-if="canViewFinancialReports">{{l('value')}}</th></tr></thead><tbody><tr v-for="merchant in merchants" :key="merchant.id"><td><b>{{merchant.shop_name||merchant.name}}</b><small v-if="merchant.shop_name">{{merchant.name}}</small></td><td class="mono">{{merchant.orders}}</td><td class="mono positive">{{merchant.delivered}}</td><td v-if="canViewFinancialReports" class="mono">{{fmt(merchant.value)}}</td></tr></tbody></table></div></article></section>
     </AdminShell>
 </template>
 

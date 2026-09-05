@@ -2,6 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\User;
+use App\Services\BranchDashboardAuthorization;
+use App\Services\BranchDashboardContext;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -13,10 +16,30 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class DashboardSuperAdminMiddleware
 {
+    public function __construct(
+        private readonly BranchDashboardContext $branchContext,
+        private readonly BranchDashboardAuthorization $branchAuthorization,
+    ) {
+    }
+
     public function handle(Request $request, Closure $next): Response
     {
-        abort_unless($request->user()?->isSuperAdmin() && $request->user()->isActiveUser(), 403);
+        $user = $request->user();
 
-        return $next($request);
+        if ($user instanceof User && $user->isActiveUser()) {
+            if ($user->isSuperAdmin()) {
+                return $next($request);
+            }
+
+            // The full dashboard landing page contains cross-module cards.
+            // It is available to the branch's principal manager only; a
+            // profile-based local employee starts at their granted module.
+            $scope = $this->branchContext->fromRequest($request);
+            if ($scope->hasBranchScope() && $this->branchAuthorization->isBranchManager($user)) {
+                return $next($request);
+            }
+        }
+
+        abort(403);
     }
 }

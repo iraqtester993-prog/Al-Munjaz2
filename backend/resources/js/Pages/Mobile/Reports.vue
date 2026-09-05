@@ -45,8 +45,8 @@ const statusMeta = computed(() => ({
     damaged: { title: t('Damaged'), icon: '!', color: 'var(--warning)', tint: 'var(--warning-tint)' },
 }))
 
-// The archive is intentionally a completed-work record, not a second copy
-// of active queues. Only delivered and returned orders belong here.
+// The archive contains only manually or nightly-archived final work. The
+// status cards below are therefore never a second active-order queue.
 const statusCards = computed(() => archivedStatuses
     .map((status) => ({
         status,
@@ -145,7 +145,7 @@ function orderPerson(order) {
 }
 
 function openOrder(order) {
-    router.get(route('app.orders'), { list: 1, open: order.id }, { preserveScroll: true })
+    router.get(route('app.orders'), { list: 1, open: order.id, archive: 1 }, { preserveScroll: true })
 }
 
 function closeDetails() {

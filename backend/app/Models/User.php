@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Models\Scopes\TenantScope;
+use App\Services\BranchDashboardContext;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -20,21 +22,23 @@ class User extends Authenticatable
 
     /**
      * Operational accounts are explicit rather than inferred from a vehicle
-     * type. A general courier can work both legs of a delivery while the
-     * specialised roles remain visible to the dashboard, API, and campaigns.
+     * type. A general courier now performs the whole direct-order journey.
+     * Specialist values remain only so legacy account/history data and the
+     * separate inter-branch transporter workflow can be retained safely.
      *
      * @var array<int, string>
      */
     public const COURIER_ROLES = ['courier', 'pickup_courier', 'delivery_courier', 'transporter'];
 
     /**
-     * Transporters work on an inter-branch transfer, never directly on one
-     * order. This list protects the direct-order assignment picker from
-     * presenting an unsafe, misleading option.
+     * A direct order has one accountable courier from pickup through delivery.
+     * The legacy pickup/delivery account roles remain in the system for
+     * historical records and non-order administration, but cannot be selected
+     * for a new direct-order assignment.
      *
      * @var array<int, string>
      */
-    public const DIRECT_ORDER_COURIER_ROLES = ['courier', 'pickup_courier', 'delivery_courier'];
+    public const DIRECT_ORDER_COURIER_ROLES = ['courier'];
 
     /** @var array<int, string> */
     public const NOTIFICATION_RECIPIENT_ROLES = ['merchant', ...self::COURIER_ROLES];
@@ -54,7 +58,6 @@ class User extends Authenticatable
         'merchants',
         'couriers',
         'courier_locations',
-        'content',
         'notifications',
         'finance',
         'settings',
@@ -63,7 +66,9 @@ class User extends Authenticatable
     protected $fillable = [
         'tenant_id', 'branch_id', 'name', 'username', 'email', 'phone', 'password',
         'role', 'status', 'vehicle', 'admin_deduction_per_order', 'shop_name', 'address', 'identity_number', 'theme', 'locale',
+        'merchant_pickup_latitude', 'merchant_pickup_longitude', 'merchant_pickup_location_label', 'merchant_pickup_location_updated_at',
         'merchant_verified_at', 'merchant_verified_by',
+        'courier_verified', 'courier_verified_at', 'courier_verified_by',
         'is_online', 'last_active_at',
         'current_latitude', 'current_longitude', 'location_accuracy_meters', 'location_updated_at',
         'dashboard_permissions',
@@ -81,7 +86,12 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'phone_verified_at' => 'datetime',
             'merchant_verified_at' => 'datetime',
+            'courier_verified' => 'boolean',
+            'courier_verified_at' => 'datetime',
             'last_active_at' => 'datetime',
+            'merchant_pickup_location_updated_at' => 'datetime',
+            'merchant_pickup_latitude' => 'decimal:7',
+            'merchant_pickup_longitude' => 'decimal:7',
             'location_updated_at' => 'datetime',
             'current_latitude' => 'decimal:7',
             'current_longitude' => 'decimal:7',
@@ -126,6 +136,15 @@ class User extends Authenticatable
     }
 
     /**
+     * The administrator who granted the courier's operational approval.
+     * This is intentionally distinct from the merchant's public badge.
+     */
+    public function courierVerifiedBy(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'courier_verified_by')->withTrashed();
+    }
+
+    /**
      * The operational branches this dashboard account may open.  This is
      * deliberately a separate relation from the historical `branch_id`
      * column: an owner can be responsible for several branches without
@@ -134,8 +153,8 @@ class User extends Authenticatable
     public function managedBranches(): BelongsToMany
     {
         return $this->belongsToMany(Branch::class, 'branch_memberships')
-            ->withoutGlobalScope(\App\Models\Scopes\TenantScope::class)
-            ->withPivot('access_role')
+            ->withoutGlobalScope(TenantScope::class)
+            ->withPivot('access_role', 'is_primary')
             ->withTimestamps();
     }
 
@@ -147,6 +166,17 @@ class User extends Authenticatable
     public function branchMemberships(): HasMany
     {
         return $this->hasMany(BranchMembership::class);
+    }
+
+    /**
+     * The durable primary membership used by the full branch dashboard.
+     * The relationship is separate from legacy branch_id so a stale profile
+     * field cannot widen the author's server-side scope.
+     */
+    public function primaryBranchMembership(): HasOne
+    {
+        return $this->hasOne(BranchMembership::class)
+            ->primary();
     }
 
     public function wallet(): HasOne
@@ -208,6 +238,28 @@ class User extends Authenticatable
     }
 
     /**
+     * A direct courier can receive a new order only after an administrator
+     * has reviewed and explicitly approved the account. Existing courier
+     * records are grandfathered by the migration default; registration sets
+     * this flag to false for every newly created courier.
+     */
+    public function isCourierVerified(): bool
+    {
+        return $this->role === 'courier' && (bool) $this->courier_verified;
+    }
+
+    /**
+     * A branch dashboard profile is usable only while it still has an
+     * explicit membership in at least one active platform branch. This is
+     * intentionally independent from the legacy `branch_id` field so a
+     * bookmarked portal URL cannot outlive a deactivated membership.
+     */
+    public function hasActiveBranchPortalAccess(): bool
+    {
+        return app(BranchDashboardContext::class)->hasActiveBranchAccess($this);
+    }
+
+    /**
      * Platform administrators are the system owners and never receive a
      * mutable per-screen restriction.  Branch accounts are restricted to an
      * explicit allow-list so an account created for one function cannot gain
@@ -223,21 +275,42 @@ class User extends Authenticatable
     }
 
     /**
-     * Checks a platform dashboard profile. This intentionally does not
-     * inspect the legacy branch `dashboard_permissions` column: a branch
-     * manager must never turn a branch grant into a platform-wide grant.
+     * Checks the effective dashboard profile. Branch accounts deliberately
+     * never inherit a platform profile: a branch manager without a profile
+     * is the principal manager for their one scoped branch, while a manager
+     * with a branch-owned profile is a restricted local system employee.
+     * Route middleware still rejects non-local modules (platform, provinces,
+     * and structural controls) even when this helper is used for UI flags.
      */
     public function canUseAdminPermission(string $module, string $action): bool
     {
-        if (! $this->isAdmin()) {
+        if ($this->isAdmin()) {
+            if ($this->isSuperAdmin()) {
+                return true;
+            }
+
+            return $this->permissionProfile?->allows($module, $action) ?? false;
+        }
+
+        if ($this->role !== 'branch_manager') {
             return false;
         }
 
-        if ($this->isSuperAdmin()) {
+        $scope = app(BranchDashboardContext::class)->scopeFor($this);
+        if (! $scope->hasBranchScope()) {
+            return false;
+        }
+
+        // The original branch manager has no mutable profile. A profile is
+        // required for every local employee and must belong to this exact
+        // branch; a global profile is never a valid branch grant.
+        if ($this->permission_profile_id === null) {
             return true;
         }
 
-        return $this->permissionProfile?->allows($module, $action) ?? false;
+        return $this->permissionProfile
+            && (int) $this->permissionProfile->branch_id === (int) $scope->branchId()
+            && $this->permissionProfile->allows($module, $action);
     }
 
     /**
@@ -247,12 +320,21 @@ class User extends Authenticatable
      */
     public function firstAdminDashboardPath(): ?string
     {
-        if (! $this->isAdmin()) {
-            return null;
-        }
+        if ($this->isAdmin()) {
+            if ($this->isSuperAdmin()) {
+                return '/dashboard';
+            }
+        } elseif ($this->role === 'branch_manager') {
+            $scope = app(BranchDashboardContext::class)->scopeFor($this);
+            if (! $scope->hasBranchScope()) {
+                return null;
+            }
 
-        if ($this->isSuperAdmin()) {
-            return '/dashboard';
+            if ($this->permission_profile_id === null) {
+                return '/dashboard';
+            }
+        } else {
+            return null;
         }
 
         foreach ([
@@ -266,7 +348,8 @@ class User extends Authenticatable
             ['pricing', '/dashboard/pricing'],
             ['reports', '/dashboard/reports'],
             ['notifications', '/dashboard/notifications'],
-            ['content', '/dashboard/content'],
+            ['provinces', '/dashboard/settings?tab=provinces'],
+            ['content', '/dashboard/settings?tab=slider'],
             ['loyalty', '/dashboard/loyalty'],
             ['chat', '/dashboard/chat'],
             ['transfers', '/dashboard/transfers'],

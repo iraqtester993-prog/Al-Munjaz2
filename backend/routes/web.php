@@ -6,10 +6,8 @@ use App\Http\Controllers\Admin\AdminCourierLocationController;
 use App\Http\Controllers\Admin\AdminDashboardController;
 use App\Http\Controllers\Admin\AdminEmployeeController;
 use App\Http\Controllers\Admin\AdminFinanceController;
-use App\Http\Controllers\Admin\AdminMobileContentController;
 use App\Http\Controllers\Admin\AdminLoyaltyController;
-use App\Http\Controllers\Admin\BranchPortalController;
-use App\Http\Controllers\Admin\BranchMobileContentController;
+use App\Http\Controllers\Admin\AdminMobileContentController;
 use App\Http\Controllers\Admin\AdminNotificationController;
 use App\Http\Controllers\Admin\AdminOrderController;
 use App\Http\Controllers\Admin\AdminPermissionProfileController;
@@ -21,6 +19,7 @@ use App\Http\Controllers\Admin\AdminReportsController;
 use App\Http\Controllers\Admin\AdminSettingsController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\BranchController;
+use App\Http\Controllers\Admin\BranchPortalController;
 use App\Http\Controllers\App\AppOrderController;
 use App\Http\Controllers\App\AppProfileController;
 use App\Http\Controllers\App\AppReportController;
@@ -30,13 +29,15 @@ use App\Http\Controllers\App\CourierLocationController;
 use App\Http\Controllers\App\DashboardController;
 use App\Http\Controllers\App\NotificationController;
 use App\Http\Controllers\App\PushSubscriptionController;
+use App\Http\Controllers\App\PusherChatAuthorizationController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\LocaleController;
 use App\Models\Order;
-use App\Models\Setting;
 use App\Models\Scopes\TenantScope;
+use App\Models\Setting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 
 /*
@@ -62,9 +63,13 @@ $pwaWorker = function () {
     // The Blade page and this dynamic worker obtain their version from the
     // same config value. This prevents an installed PWA from receiving a
     // page that points at one release while the worker advertises another.
+    $manifestPath = public_path('build/manifest.json');
+    $buildHash = is_file($manifestPath) ? substr(sha1_file($manifestPath), 0, 10) : 'dev';
+    $pwaVersion = (string) config('app.pwa_version').'-'.$buildHash;
+
     $worker = str_replace(
         '__PWA_VERSION__',
-        (string) config('app.pwa_version'),
+        $pwaVersion,
         file_get_contents(resource_path('pwa/worker.js')),
     );
 
@@ -80,6 +85,20 @@ Route::get('/manifest.json', $pwaManifest); // Compatibility alias for the old i
 Route::get('/pwa/offline', $pwaOffline);
 Route::get('/pwa/worker', $pwaWorker);
 Route::get('/sw.js', $pwaWorker); // Compatibility alias for the old installed PWA.
+
+// cPanel does not follow the release-to-shared-storage symbolic link for
+// public files. Serve the small, public slider images through Laravel so the
+// dashboard and the installed app receive the exact same reliable URL.
+Route::get('/media/mobile-slides/{filename}', function (string $filename) {
+    abort_unless(preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]*$/', $filename) === 1, 404);
+
+    $path = 'mobile-slides/'.$filename;
+    abort_unless(Storage::disk('public')->exists($path), 404);
+
+    return Storage::disk('public')->response($path, null, [
+        'Cache-Control' => 'public, max-age=86400',
+    ]);
+})->name('media.mobile-slide');
 
 /*
 |--------------------------------------------------------------------------
@@ -100,6 +119,7 @@ Route::get('/', function (Request $request) {
 Route::bind('order', fn (string $value) => Order::withoutGlobalScope(TenantScope::class)->findOrFail($value));
 
 Route::post('/locale', [LocaleController::class, 'update'])->name('locale.set');
+Route::post('/chat/pusher-auth', PusherChatAuthorizationController::class)->middleware(['auth', 'active']);
 
 // Public legal pages remain readable before and after sign-in. The legal body
 // is only sent when a visitor opens one of these pages, not with every app
@@ -142,36 +162,39 @@ Route::middleware('guest')->group(function () {
 Route::middleware(['auth', 'active'])->group(function () {
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 
-    Route::get('/app', [DashboardController::class, 'app'])->name('app')->middleware('role:merchant,courier,pickup_courier,delivery_courier,transporter');
+    // A direct order has one accountable courier from pickup through
+    // delivery. Retired specialist/transporter accounts stay outside this
+    // customer-facing application surface.
+    Route::get('/app', [DashboardController::class, 'app'])->name('app')->middleware('role:merchant,courier');
 
-    Route::get('/app/profile', [AppProfileController::class, 'index'])->name('app.profile')->middleware('role:merchant,courier,pickup_courier,delivery_courier,transporter');
-    Route::post('/profile/update', [AppProfileController::class, 'update'])->name('profile.update');
-    Route::post('/profile/theme', [AppProfileController::class, 'theme'])->name('profile.theme');
-    Route::post('/profile/locale', [AppProfileController::class, 'locale'])->name('profile.locale');
-    Route::get('/profile/documents/{document}', [AppProfileController::class, 'showDocument'])->name('profile.documents.show');
+    Route::get('/app/profile', [AppProfileController::class, 'index'])->name('app.profile')->middleware('role:merchant,courier');
+    Route::post('/profile/update', [AppProfileController::class, 'update'])->middleware('role:merchant,courier')->name('profile.update');
+    Route::post('/profile/theme', [AppProfileController::class, 'theme'])->middleware('role:merchant,courier')->name('profile.theme');
+    Route::post('/profile/locale', [AppProfileController::class, 'locale'])->middleware('role:merchant,courier')->name('profile.locale');
+    Route::get('/profile/documents/{document}', [AppProfileController::class, 'showDocument'])->middleware('role:merchant,courier')->name('profile.documents.show');
     Route::post('/profile/documents/{document}', [AppProfileController::class, 'replaceDocument'])
-        ->middleware('role:courier,pickup_courier,delivery_courier,transporter')
+        ->middleware('role:courier')
         ->name('profile.documents.replace');
-    Route::post('/profile/verification', [AppProfileController::class, 'verification'])->name('profile.verification')->middleware('role:merchant');
+    Route::post('/profile/verification', [AppProfileController::class, 'verification'])->middleware('role:merchant')->name('profile.verification');
 
     /*
     |--------------------------------------------------------------------------
     | Merchant & courier shared resources
     |--------------------------------------------------------------------------
     */
-    Route::prefix('app')->middleware('role:merchant,courier,pickup_courier,delivery_courier,transporter')->group(function () {
+    Route::prefix('app')->middleware('role:merchant,courier')->group(function () {
         Route::post('duty', [DashboardController::class, 'duty'])->name('app.duty');
         // The phone asks the operating system for location permission. This
         // endpoint only receives the current, consented position and replaces
         // the prior one; it never stores a courier route history.
         Route::post('location', [CourierLocationController::class, 'store'])
-            ->middleware(['role:courier,pickup_courier,delivery_courier,transporter', 'throttle:120,1'])
+            ->middleware(['role:courier', 'throttle:120,1'])
             ->name('app.location.update');
         Route::delete('location', [CourierLocationController::class, 'destroy'])
-            ->middleware('role:courier,pickup_courier,delivery_courier,transporter')
+            ->middleware('role:courier')
             ->name('app.location.clear');
         Route::get('orders', [AppOrderController::class, 'index'])->name('app.orders');
-        Route::get('reports', [AppReportController::class, 'index'])->name('app.reports')->middleware('role:merchant,courier,pickup_courier,delivery_courier,transporter');
+        Route::get('reports', [AppReportController::class, 'index'])->name('app.reports')->middleware('role:merchant,courier');
         Route::post('orders', [AppOrderController::class, 'store'])->name('app.orders.store');
         Route::post('orders/{order}/update', [AppOrderController::class, 'update'])->name('app.orders.update');
         Route::delete('orders/{order}', [AppOrderController::class, 'destroy'])->name('app.orders.destroy');
@@ -180,15 +203,19 @@ Route::middleware(['auth', 'active'])->group(function () {
         Route::post('orders/{order}/return-to-merchant', [AppOrderController::class, 'confirmReturnToMerchant'])->name('app.orders.return-to-merchant');
         Route::post('orders/{order}/recreate', [AppOrderController::class, 'recreate'])->name('app.orders.recreate');
         Route::post('orders/{order}/republish', [AppOrderController::class, 'republish'])->name('app.orders.republish');
+        Route::post('orders/{order}/archive', [AppOrderController::class, 'archive'])->name('app.orders.archive');
         Route::post('orders/{order}/claim', [AppOrderController::class, 'claim'])->name('app.orders.claim');
         Route::get('wallet', [AppWalletController::class, 'index'])->name('app.wallet');
         Route::post('wallet/withdraw', [AppWalletController::class, 'withdraw'])->name('app.wallet.withdraw');
         Route::post('wallet/handover', [AppWalletController::class, 'handover'])->name('app.wallet.handover');
         Route::post('wallet/recharge', [AppWalletController::class, 'recharge'])->name('app.wallet.recharge');
         Route::post('wallet/budget', [AppWalletController::class, 'budget'])->name('app.wallet.budget');
+        Route::post('wallet/budget/reduce', [AppWalletController::class, 'reduceBudget'])->name('app.wallet.budget.reduce');
         Route::get('chats', [ChatController::class, 'index'])->name('app.chats');
+        Route::get('chats/unread', [ChatController::class, 'unread'])->name('app.chats.unread');
         Route::get('chats/{chat}', [ChatController::class, 'show'])->name('app.chats.show');
         Route::get('chats/{chat}/messages', [ChatController::class, 'messages'])->name('app.chats.messages');
+        Route::post('chats/{chat}/presence', [ChatController::class, 'presence'])->name('app.chats.presence');
         Route::post('chats/{chat}/send', [ChatController::class, 'send'])->name('app.chats.send');
         Route::post('chats/open', [ChatController::class, 'open'])->name('app.chats.open');
         Route::get('notifications', [NotificationController::class, 'index'])->name('app.notifications');
@@ -207,7 +234,7 @@ Route::middleware(['auth', 'active'])->group(function () {
 | Admin dashboard
 |--------------------------------------------------------------------------
 */
-Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'role:admin'])->group(function () {
+Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'role:admin,branch_manager', 'branch.dashboard.scope'])->group(function () {
     // This terminal route intentionally carries no dashboard data. It is the
     // safe landing state for a newly invited operator before a super admin
     // assigns a named permission profile.
@@ -216,147 +243,133 @@ Route::prefix('dashboard')->middleware(['dashboard.host', 'auth', 'active', 'rol
     // it remains super-admin-only until it has a separately filtered shape.
     Route::get('/', [AdminDashboardController::class, 'index'])->middleware('dashboard.super-admin')->name('admin.dashboard');
     Route::get('orders', [AdminOrderController::class, 'index'])->middleware('dashboard.permission:orders.view')->name('admin.orders');
+    Route::put('orders/{order}', [AdminOrderController::class, 'update'])->middleware('dashboard.permission:orders.edit')->name('admin.orders.update');
+    Route::delete('orders/{order}', [AdminOrderController::class, 'destroy'])->middleware('dashboard.permission:orders.delete')->name('admin.orders.destroy');
     Route::get('branches', [BranchController::class, 'index'])->middleware('dashboard.permission:branches.view')->name('admin.branches');
     Route::post('branches', [BranchController::class, 'store'])->middleware('dashboard.permission:branches.create')->name('admin.branches.store');
-    Route::put('branches/{branch}', [BranchController::class, 'update'])->middleware('dashboard.permission:branches.update')->name('admin.branches.update');
-    Route::patch('branches/{branch}/status', [BranchController::class, 'status'])->middleware('dashboard.permission:branches.update')->name('admin.branches.status');
-    Route::post('branches/{branch}/access', [BranchController::class, 'storeAccess'])->middleware('dashboard.permission:branches.update')->name('admin.branches.access.store');
-    Route::post('orders/{order}/status', [AdminOrderController::class, 'status'])->middleware('dashboard.permission:orders.update')->name('admin.orders.status');
-    Route::post('orders/{order}/courier', [AdminOrderController::class, 'assignCourier'])->middleware('dashboard.permission:orders.update')->name('admin.orders.courier');
-    Route::post('orders/{order}/reoffer-overdue-pickup', [AdminOrderController::class, 'reofferOverduePickup'])->middleware('dashboard.permission:orders.update')->name('admin.orders.reoffer-overdue-pickup');
-    Route::post('orders/{order}/branches', [AdminOrderController::class, 'assignBranches'])->middleware('dashboard.permission:orders.update')->name('admin.orders.branches');
-    Route::post('orders/{orderId}/restore', [AdminOrderController::class, 'restore'])->middleware('dashboard.permission:orders.update')->name('admin.orders.restore');
+    Route::put('branches/{branch}', [BranchController::class, 'update'])->middleware('dashboard.permission:branches.edit')->name('admin.branches.update');
+    Route::delete('branches/{branch}', [BranchController::class, 'destroy'])->middleware('dashboard.permission:branches.delete')->name('admin.branches.destroy');
+    Route::patch('branches/{branch}/status', [BranchController::class, 'status'])->middleware('dashboard.permission:branches.change_status')->name('admin.branches.status');
+    Route::post('branches/{branch}/access', [BranchController::class, 'storeAccess'])->middleware('dashboard.permission:branches.manage_access')->name('admin.branches.access.store');
+    Route::put('branches/{branch}/access/{account}', [BranchController::class, 'updateAccess'])->middleware('dashboard.permission:branches.manage_access')->name('admin.branches.access.update');
+    Route::post('orders/{order}/status', [AdminOrderController::class, 'status'])->middleware('dashboard.permission:orders.change_status')->name('admin.orders.status');
+    Route::post('orders/{order}/courier', [AdminOrderController::class, 'assignCourier'])->middleware('dashboard.permission:orders.assign_courier')->name('admin.orders.courier');
+    Route::post('orders/{order}/reoffer-overdue-pickup', [AdminOrderController::class, 'reofferOverduePickup'])->middleware('dashboard.permission:orders.reoffer_overdue_pickup')->name('admin.orders.reoffer-overdue-pickup');
+    Route::post('orders/{order}/branches', [AdminOrderController::class, 'assignBranches'])->middleware('dashboard.permission:orders.assign_branches')->name('admin.orders.branches');
+    Route::post('orders/{orderId}/restore', [AdminOrderController::class, 'restore'])->middleware('dashboard.permission:orders.restore')->name('admin.orders.restore');
     Route::get('merchants', [AdminUserController::class, 'merchants'])->middleware('dashboard.permission:merchants.view')->name('admin.merchants');
     Route::get('couriers', [AdminUserController::class, 'couriers'])->middleware('dashboard.permission:couriers.view')->name('admin.couriers');
     Route::get('couriers/locations', [AdminCourierLocationController::class, 'index'])->middleware('dashboard.permission:courier_locations.view')->name('admin.couriers.locations');
-    Route::put('users/{user}', [AdminUserController::class, 'update'])->middleware('dashboard.user-permission:update')->name('admin.users.update');
-    Route::post('users/{user}/status', [AdminUserController::class, 'status'])->middleware('dashboard.user-permission:update')->name('admin.users.status');
-    Route::post('users/{user}/merchant-verification', [AdminUserController::class, 'merchantVerification'])->middleware('dashboard.user-permission:update')->name('admin.users.merchant-verification');
+    Route::put('users/{user}', [AdminUserController::class, 'update'])->middleware('dashboard.user-permission:edit')->name('admin.users.update');
+    Route::patch('users/{user}/courier-deduction', [AdminUserController::class, 'updateCourierDeduction'])->middleware('dashboard.user-permission:update_deduction')->name('admin.users.courier-deduction.update');
+    Route::post('users/{user}/status', [AdminUserController::class, 'status'])->middleware('dashboard.user-permission:change_status')->name('admin.users.status');
+    Route::post('users/{user}/merchant-verification', [AdminUserController::class, 'merchantVerification'])->middleware('dashboard.user-permission:verify')->name('admin.users.merchant-verification');
+    Route::post('users/{user}/courier-verification', [AdminUserController::class, 'courierVerification'])->middleware('dashboard.user-permission:verify')->name('admin.users.courier-verification');
     Route::delete('users/{user}', [AdminUserController::class, 'destroy'])->middleware('dashboard.user-permission:delete')->name('admin.users.destroy');
-    Route::get('users/{user}/documents/{document}', [AdminUserController::class, 'showDocument'])->middleware('dashboard.user-permission:view')->name('admin.users.documents.show');
-    Route::post('users/{user}/documents/{document}/review', [AdminUserController::class, 'reviewDocument'])->middleware('dashboard.user-permission:update')->name('admin.users.documents.review');
+    Route::get('users/{user}/documents/{document}', [AdminUserController::class, 'showDocument'])->middleware('dashboard.user-permission:documents_view')->name('admin.users.documents.show');
+    Route::post('users/{user}/documents/{document}/review', [AdminUserController::class, 'reviewDocument'])->middleware('dashboard.user-permission:documents_review')->name('admin.users.documents.review');
     Route::get('finance', [AdminFinanceController::class, 'index'])->middleware('dashboard.permission:finance.view')->name('admin.finance');
-    Route::post('finance/requests/{financeRequest}/approve', [AdminFinanceController::class, 'approve'])->middleware('dashboard.permission:finance.update')->name('admin.finance.approve');
-    Route::post('finance/requests/{financeRequest}/reject', [AdminFinanceController::class, 'reject'])->middleware('dashboard.permission:finance.update')->name('admin.finance.reject');
-    Route::post('finance/settlements', [AdminFinanceController::class, 'recordSettlement'])->middleware('dashboard.permission:finance.update')->name('admin.finance.settlements.store');
+    Route::post('finance/requests/{financeRequest}/approve', [AdminFinanceController::class, 'approve'])->middleware('dashboard.permission:finance.approve')->name('admin.finance.approve');
+    Route::post('finance/requests/{financeRequest}/reject', [AdminFinanceController::class, 'reject'])->middleware('dashboard.permission:finance.reject')->name('admin.finance.reject');
+    Route::post('finance/settlements', [AdminFinanceController::class, 'recordSettlement'])->middleware('dashboard.permission:finance.record_settlement')->name('admin.finance.settlements.store');
     Route::get('cashboxes', [AdminCashboxController::class, 'index'])->middleware('dashboard.permission:cashboxes.view')->name('admin.cashboxes');
     Route::post('cashboxes', [AdminCashboxController::class, 'store'])->middleware('dashboard.permission:cashboxes.create')->name('admin.cashboxes.store');
-    Route::post('cashboxes/voucher', [AdminCashboxController::class, 'voucher'])->middleware('dashboard.permission:cashboxes.update')->name('admin.cashboxes.voucher');
-    Route::post('cashboxes/transfer', [AdminCashboxController::class, 'transfer'])->middleware('dashboard.permission:cashboxes.update')->name('admin.cashboxes.transfer');
-    Route::patch('cashboxes/{cashbox}/status', [AdminCashboxController::class, 'status'])->middleware('dashboard.permission:cashboxes.update')->name('admin.cashboxes.status');
+    Route::post('cashboxes/voucher', [AdminCashboxController::class, 'voucher'])->middleware('dashboard.permission:cashboxes.transfer')->name('admin.cashboxes.voucher');
+    Route::post('cashboxes/transfer', [AdminCashboxController::class, 'transfer'])->middleware('dashboard.permission:cashboxes.transfer')->name('admin.cashboxes.transfer');
+    Route::patch('cashboxes/{cashbox}/status', [AdminCashboxController::class, 'status'])->middleware('dashboard.permission:cashboxes.change_status')->name('admin.cashboxes.status');
     Route::get('pricing', [AdminPricingController::class, 'index'])->middleware('dashboard.permission:pricing.view')->name('admin.pricing');
     Route::post('pricing', [AdminPricingController::class, 'store'])->middleware('dashboard.permission:pricing.create')->name('admin.pricing.store');
-    Route::put('pricing/{pricingRule}', [AdminPricingController::class, 'update'])->middleware('dashboard.permission:pricing.update')->name('admin.pricing.update');
-    Route::patch('pricing/{pricingRule}/status', [AdminPricingController::class, 'status'])->middleware('dashboard.permission:pricing.update')->name('admin.pricing.status');
+    Route::put('pricing/{pricingRule}', [AdminPricingController::class, 'update'])->middleware('dashboard.permission:pricing.edit')->name('admin.pricing.update');
+    Route::patch('pricing/{pricingRule}/status', [AdminPricingController::class, 'status'])->middleware('dashboard.permission:pricing.change_status')->name('admin.pricing.status');
     Route::get('reports', [AdminReportsController::class, 'index'])->middleware('dashboard.permission:reports.view')->name('admin.reports');
     Route::get('platform', [AdminPlatformController::class, 'index'])->middleware('dashboard.permission:platform.view')->name('admin.platform');
-    Route::post('platform/companies', [AdminPlatformController::class, 'storeCompany'])->middleware('dashboard.permission:platform.create')->name('admin.platform.companies.store');
-    Route::put('platform/companies/{tenant}', [AdminPlatformController::class, 'updateCompany'])->middleware('dashboard.permission:platform.update')->name('admin.platform.companies.update');
-    Route::post('platform/plans', [AdminPlatformController::class, 'storePlan'])->middleware('dashboard.permission:platform.create')->name('admin.platform.plans.store');
-    Route::put('platform/plans/{plan}', [AdminPlatformController::class, 'updatePlan'])->middleware('dashboard.permission:platform.update')->name('admin.platform.plans.update');
-    Route::post('platform/subscriptions', [AdminPlatformController::class, 'storeSubscription'])->middleware('dashboard.permission:platform.create')->name('admin.platform.subscriptions.store');
-    Route::patch('platform/subscriptions/{subscription}', [AdminPlatformController::class, 'updateSubscriptionStatus'])->middleware('dashboard.permission:platform.update')->name('admin.platform.subscriptions.status');
-    Route::post('platform/invoices', [AdminPlatformController::class, 'storeInvoice'])->middleware('dashboard.permission:platform.create')->name('admin.platform.invoices.store');
-    Route::patch('platform/invoices/{invoice}', [AdminPlatformController::class, 'updateInvoiceStatus'])->middleware('dashboard.permission:platform.update')->name('admin.platform.invoices.status');
+    Route::post('platform/companies', [AdminPlatformController::class, 'storeCompany'])->middleware('dashboard.permission:platform.companies_create')->name('admin.platform.companies.store');
+    Route::put('platform/companies/{tenant}', [AdminPlatformController::class, 'updateCompany'])->middleware('dashboard.permission:platform.companies_edit')->name('admin.platform.companies.update');
+    Route::post('platform/plans', [AdminPlatformController::class, 'storePlan'])->middleware('dashboard.permission:platform.plans_create')->name('admin.platform.plans.store');
+    Route::put('platform/plans/{plan}', [AdminPlatformController::class, 'updatePlan'])->middleware('dashboard.permission:platform.plans_edit')->name('admin.platform.plans.update');
+    Route::post('platform/subscriptions', [AdminPlatformController::class, 'storeSubscription'])->middleware('dashboard.permission:platform.subscriptions_create')->name('admin.platform.subscriptions.store');
+    Route::patch('platform/subscriptions/{subscription}', [AdminPlatformController::class, 'updateSubscriptionStatus'])->middleware('dashboard.permission:platform.subscriptions_change_status')->name('admin.platform.subscriptions.status');
+    Route::post('platform/invoices', [AdminPlatformController::class, 'storeInvoice'])->middleware('dashboard.permission:platform.invoices_create')->name('admin.platform.invoices.store');
+    Route::patch('platform/invoices/{invoice}', [AdminPlatformController::class, 'updateInvoiceStatus'])->middleware('dashboard.permission:platform.invoices_change_status')->name('admin.platform.invoices.status');
     Route::post('platform/invitations', [AdminPlatformController::class, 'invite'])->middleware('dashboard.super-admin')->name('admin.platform.invitations.store');
     Route::get('notifications', [AdminNotificationController::class, 'index'])->middleware('dashboard.permission:notifications.view')->name('admin.notifications');
-    Route::post('notifications', [AdminNotificationController::class, 'store'])->middleware('dashboard.permission:notifications.create')->name('admin.notifications.store');
-    Route::get('settings', [AdminSettingsController::class, 'index'])->middleware('dashboard.permission:settings.view')->name('admin.settings');
+    Route::post('notifications', [AdminNotificationController::class, 'store'])->middleware('dashboard.permission:notifications.send')->name('admin.notifications.store');
+    Route::get('settings', [AdminSettingsController::class, 'index'])->middleware('dashboard.settings-access')->name('admin.settings');
+    // Keep this endpoint for older compiled browsers. Only a legacy profile
+    // carrying settings.update can call it; new pages use the scoped routes.
     Route::post('settings', [AdminSettingsController::class, 'update'])->middleware('dashboard.permission:settings.update')->name('admin.settings.update');
-    Route::post('settings/provinces', [AdminProvinceController::class, 'store'])->middleware('dashboard.permission:settings.update')->name('admin.provinces.store');
-    Route::put('settings/provinces/{province}', [AdminProvinceController::class, 'update'])->middleware('dashboard.permission:settings.update')->name('admin.provinces.update');
-    Route::patch('settings/provinces/{province}/status', [AdminProvinceController::class, 'status'])->middleware('dashboard.permission:settings.update')->name('admin.provinces.status');
-    Route::get('content', [AdminMobileContentController::class, 'index'])->middleware('dashboard.permission:content.view')->name('admin.content');
-    Route::post('content', [AdminMobileContentController::class, 'store'])->middleware('dashboard.permission:content.create')->name('admin.content.store');
-    Route::put('content/{mobileSlide}', [AdminMobileContentController::class, 'update'])->middleware('dashboard.permission:content.update')->name('admin.content.update');
-    Route::delete('content/{mobileSlide}', [AdminMobileContentController::class, 'destroy'])->middleware('dashboard.permission:content.delete')->name('admin.content.destroy');
+    Route::post('settings/branding', [AdminSettingsController::class, 'updateBranding'])->middleware('dashboard.permission:settings.update_branding')->name('admin.settings.branding.update');
+    Route::post('settings/support', [AdminSettingsController::class, 'updateSupport'])->middleware('dashboard.permission:settings.update_support')->name('admin.settings.support.update');
+    Route::post('settings/financial-defaults', [AdminSettingsController::class, 'updateFinancialDefaults'])->middleware('dashboard.permission:settings.update_financial_defaults')->name('admin.settings.financial-defaults.update');
+    Route::post('settings/courier-deduction-default', [AdminSettingsController::class, 'updateCourierDeductionDefault'])->middleware('dashboard.permission:settings.update_courier_deduction_default')->name('admin.settings.courier-deduction-default.update');
+    Route::post('settings/timing', [AdminSettingsController::class, 'updateTiming'])->middleware('dashboard.permission:settings.update_timing')->name('admin.settings.timing.update');
+    Route::post('settings/public-content', [AdminSettingsController::class, 'updatePublicContent'])->middleware('dashboard.permission:settings.update_public_content')->name('admin.settings.public-content.update');
+    Route::post('settings/provinces', [AdminProvinceController::class, 'store'])->middleware('dashboard.permission:provinces.create')->name('admin.provinces.store');
+    Route::put('settings/provinces/{province}', [AdminProvinceController::class, 'update'])->middleware('dashboard.permission:provinces.edit')->name('admin.provinces.update');
+    Route::patch('settings/provinces/{province}/status', [AdminProvinceController::class, 'status'])->middleware('dashboard.permission:provinces.change_status')->name('admin.provinces.status');
+    // Slider content is managed inside Settings; keep its existing, granular
+    // content permissions for mutations rather than creating a second page.
+    Route::post('settings/slides', [AdminMobileContentController::class, 'store'])->middleware('dashboard.permission:content.create')->name('admin.settings.slides.store');
+    Route::put('settings/slides/{mobileSlide}', [AdminMobileContentController::class, 'update'])->middleware('dashboard.permission:content.edit')->name('admin.settings.slides.update');
+    Route::delete('settings/slides/{mobileSlide}', [AdminMobileContentController::class, 'destroy'])->middleware('dashboard.permission:content.delete')->name('admin.settings.slides.destroy');
     Route::get('loyalty', [AdminLoyaltyController::class, 'index'])->middleware('dashboard.permission:loyalty.view')->name('admin.loyalty');
-    Route::post('loyalty/settings', [AdminLoyaltyController::class, 'store'])->middleware('dashboard.permission:loyalty.update')->name('admin.loyalty.settings');
-    Route::post('loyalty/adjust', [AdminLoyaltyController::class, 'adjust'])->middleware('dashboard.permission:loyalty.update')->name('admin.loyalty.adjust');
+    Route::post('loyalty/settings', [AdminLoyaltyController::class, 'store'])->middleware('dashboard.permission:loyalty.update_reward_setting')->name('admin.loyalty.settings');
+    Route::post('loyalty/adjust', [AdminLoyaltyController::class, 'adjust'])->middleware('dashboard.permission:loyalty.adjust_points')->name('admin.loyalty.adjust');
     Route::get('chat', [ChatController::class, 'adminIndex'])->middleware('dashboard.permission:chat.view')->name('admin.chat');
     Route::get('chat/{chat}', [ChatController::class, 'adminShow'])->middleware('dashboard.permission:chat.view')->name('admin.chat.show');
     Route::get('chat/{chat}/messages', [ChatController::class, 'adminMessages'])->middleware('dashboard.permission:chat.view')->name('admin.chat.messages');
-    Route::post('chat/{chat}/send', [ChatController::class, 'adminSend'])->middleware('dashboard.permission:chat.create')->name('admin.chat.send');
+    Route::post('chat/{chat}/send', [ChatController::class, 'adminSend'])->middleware('dashboard.permission:chat.reply')->name('admin.chat.send');
     Route::post('preferences/theme', [AdminPreferencesController::class, 'theme'])->name('admin.preferences.theme');
     Route::post('preferences/locale', [AdminPreferencesController::class, 'locale'])->name('admin.preferences.locale');
 
-    // Staff accounts are a platform security boundary, not a permission
-    // profile module. Only an explicit super administrator may view or
-    // mutate them; lower-profile operators cannot invite or upgrade staff.
-    Route::get('employees', [AdminEmployeeController::class, 'index'])->middleware('dashboard.super-admin')->name('admin.employees');
-    Route::post('employees/invitations', [AdminEmployeeController::class, 'invite'])->middleware('dashboard.super-admin')->name('admin.employees.invitations.store');
-    Route::put('employees/{user}', [AdminEmployeeController::class, 'update'])->middleware('dashboard.super-admin')->name('admin.employees.update');
-    Route::patch('employees/{user}/status', [AdminEmployeeController::class, 'status'])->middleware('dashboard.super-admin')->name('admin.employees.status');
-    Route::delete('employees/{user}', [AdminEmployeeController::class, 'destroy'])->middleware('dashboard.super-admin')->name('admin.employees.destroy');
+    // Platform staff remains super-admin-only in its controller. The same
+    // screen is available to a branch principal manager through the local
+    // employee permission module, where every account/profile is branch
+    // scoped server-side.
+    Route::get('employees', [AdminEmployeeController::class, 'index'])->middleware('dashboard.permission:employees.view')->name('admin.employees');
+    Route::post('employees', [AdminEmployeeController::class, 'store'])->middleware('dashboard.permission:employees.create')->name('admin.employees.store');
+    Route::post('employees/invitations', [AdminEmployeeController::class, 'invite'])->middleware('dashboard.permission:employees.create')->name('admin.employees.invitations.store');
+    Route::put('employees/{user}', [AdminEmployeeController::class, 'update'])->middleware('dashboard.permission:employees.edit')->name('admin.employees.update');
+    Route::patch('employees/{user}/status', [AdminEmployeeController::class, 'status'])->middleware('dashboard.permission:employees.change_status')->name('admin.employees.status');
+    Route::delete('employees/{user}', [AdminEmployeeController::class, 'destroy'])->middleware('dashboard.permission:employees.delete')->name('admin.employees.destroy');
 
     // The transfer console is deliberately kept as its own operational page.
     // AdminShell navigation can expose it when the dashboard information
     // architecture is ready, without coupling transfer permissions to it.
     Route::get('transfers', [AdminBranchTransferController::class, 'index'])->middleware('dashboard.permission:transfers.view')->name('admin.transfers');
     Route::post('transfers', [AdminBranchTransferController::class, 'store'])->middleware('dashboard.permission:transfers.create')->name('admin.transfers.store');
-    Route::post('transfers/{transfer}/dispatch', [AdminBranchTransferController::class, 'dispatch'])->middleware('dashboard.permission:transfers.update')->name('admin.transfers.dispatch');
-    Route::post('transfers/{transfer}/receive', [AdminBranchTransferController::class, 'receive'])->middleware('dashboard.permission:transfers.update')->name('admin.transfers.receive');
+    Route::post('transfers/{transfer}/dispatch', [AdminBranchTransferController::class, 'dispatch'])->middleware('dashboard.permission:transfers.dispatch')->name('admin.transfers.dispatch');
+    Route::post('transfers/{transfer}/receive', [AdminBranchTransferController::class, 'receive'])->middleware('dashboard.permission:transfers.receive')->name('admin.transfers.receive');
 
-    // Permission-profile management cannot be delegated through a profile:
-    // otherwise an operator could create or assign themselves a stronger one.
-    Route::get('permissions', [AdminPermissionProfileController::class, 'index'])->middleware('dashboard.super-admin')->name('admin.permissions');
-    Route::post('permissions', [AdminPermissionProfileController::class, 'store'])->middleware('dashboard.super-admin')->name('admin.permissions.store');
-    Route::put('permissions/{permissionProfile}', [AdminPermissionProfileController::class, 'update'])->middleware('dashboard.super-admin')->name('admin.permissions.update');
-    Route::delete('permissions/{permissionProfile}', [AdminPermissionProfileController::class, 'destroy'])->middleware('dashboard.super-admin')->name('admin.permissions.destroy');
-    Route::put('permissions/users/{user}', [AdminPermissionProfileController::class, 'updateAssignment'])->middleware('dashboard.super-admin')->name('admin.permissions.assignments.update');
+    // A branch principal can maintain local profiles for its own employees;
+    // the controller rejects global profiles and self-escalation. Platform
+    // profiles remain restricted to the super administrator there.
+    Route::get('permissions', [AdminPermissionProfileController::class, 'index'])->middleware('dashboard.permission:permissions.view')->name('admin.permissions');
+    Route::post('permissions', [AdminPermissionProfileController::class, 'store'])->middleware('dashboard.permission:permissions.create')->name('admin.permissions.store');
+    Route::put('permissions/{permissionProfile}', [AdminPermissionProfileController::class, 'update'])->middleware('dashboard.permission:permissions.edit')->name('admin.permissions.update');
+    Route::delete('permissions/{permissionProfile}', [AdminPermissionProfileController::class, 'destroy'])->middleware('dashboard.permission:permissions.delete')->name('admin.permissions.destroy');
+    Route::put('permissions/users/{user}', [AdminPermissionProfileController::class, 'updateAssignment'])->middleware('dashboard.permission:permissions.assign')->name('admin.permissions.assignments.update');
 });
 
-// Branch owners and managers use the same secure dashboard host and sign-in
-// page, but never inherit the platform administrator navigation or data.
-Route::get('/dashboard/branch', [BranchPortalController::class, 'index'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.portal');
-Route::post('/dashboard/branch/orders/{order}/status', [BranchPortalController::class, 'statusOrder'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.orders.status');
-Route::post('/dashboard/branch/orders/{order}/courier', [BranchPortalController::class, 'assignCourier'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.orders.courier');
-Route::post('/dashboard/branch/orders/{order}/reoffer-overdue-pickup', [BranchPortalController::class, 'reofferOverduePickup'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.orders.reoffer-overdue-pickup');
-Route::put('/dashboard/branch/users/{user}', [BranchPortalController::class, 'updateUser'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.users.update');
-Route::post('/dashboard/branch/users/{user}/status', [BranchPortalController::class, 'statusUser'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.users.status');
-Route::post('/dashboard/branch/users/{user}/merchant-verification', [BranchPortalController::class, 'merchantVerification'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.users.merchant-verification');
-Route::get('/dashboard/branch/users/{user}/documents/{document}', [BranchPortalController::class, 'showDocument'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.users.documents.show');
-Route::post('/dashboard/branch/users/{user}/documents/{document}/review', [BranchPortalController::class, 'reviewDocument'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.users.documents.review');
-Route::delete('/dashboard/branch/users/{user}', [BranchPortalController::class, 'destroyUser'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.users.destroy');
-Route::post('/dashboard/branch/preferences/theme', [AdminPreferencesController::class, 'theme'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.preferences.theme');
-Route::post('/dashboard/branch/preferences/locale', [AdminPreferencesController::class, 'locale'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.preferences.locale');
-Route::get('/dashboard/branch/content', [BranchMobileContentController::class, 'index'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.content');
-Route::post('/dashboard/branch/content', [BranchMobileContentController::class, 'store'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.content.store');
-Route::put('/dashboard/branch/content/{mobileSlide}', [BranchMobileContentController::class, 'update'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.content.update');
-Route::delete('/dashboard/branch/content/{mobileSlide}', [BranchMobileContentController::class, 'destroy'])
-    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner,branch_manager'])
-    ->name('admin.branch.content.destroy');
+// The legacy portal remains for multi-branch owners. Branch managers use the
+// unified /dashboard and never bypass its one-branch scope.
+Route::prefix('dashboard/branch')
+    ->middleware(['dashboard.host', 'auth', 'active', 'role:owner', 'branch.portal.active'])
+    ->group(function (): void {
+        Route::get('/', [BranchPortalController::class, 'index'])->name('admin.branch.portal');
+        Route::post('orders/{order}/status', [BranchPortalController::class, 'statusOrder'])->name('admin.branch.orders.status');
+        Route::post('orders/{order}/courier', [BranchPortalController::class, 'assignCourier'])->name('admin.branch.orders.courier');
+        Route::post('orders/{order}/reoffer-overdue-pickup', [BranchPortalController::class, 'reofferOverduePickup'])->name('admin.branch.orders.reoffer-overdue-pickup');
+        Route::put('users/{user}', [BranchPortalController::class, 'updateUser'])->name('admin.branch.users.update');
+        Route::post('users/{user}/status', [BranchPortalController::class, 'statusUser'])->name('admin.branch.users.status');
+        Route::post('users/{user}/merchant-verification', [BranchPortalController::class, 'merchantVerification'])->name('admin.branch.users.merchant-verification');
+        Route::get('users/{user}/documents/{document}', [BranchPortalController::class, 'showDocument'])->name('admin.branch.users.documents.show');
+        Route::post('users/{user}/documents/{document}/review', [BranchPortalController::class, 'reviewDocument'])->name('admin.branch.users.documents.review');
+        Route::delete('users/{user}', [BranchPortalController::class, 'destroyUser'])->name('admin.branch.users.destroy');
+        Route::post('preferences/theme', [AdminPreferencesController::class, 'theme'])->name('admin.branch.preferences.theme');
+        Route::post('preferences/locale', [AdminPreferencesController::class, 'locale'])->name('admin.branch.preferences.locale');
+    });
 
 Route::get('/admin', fn (Request $request) => redirect()->to(
     $request->user()->firstAdminDashboardPath() ?? '/dashboard/access-denied'
-))->middleware(['dashboard.host', 'auth', 'active', 'role:admin']);
+))->middleware(['dashboard.host', 'auth', 'active', 'role:admin,branch_manager', 'branch.dashboard.scope']);

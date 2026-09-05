@@ -280,6 +280,10 @@ function loadLeaflet() {
             stylesheet.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
             stylesheet.integrity = 'sha256-p4NxAoJBhIINfQHzt98hYfNfBihKHwhp1Z3KpFx3D9k='
             stylesheet.crossOrigin = ''
+            stylesheet.onerror = () => {
+                stylesheet.onerror = null
+                stylesheet.href = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css'
+            }
             document.head.appendChild(stylesheet)
         }
 
@@ -316,7 +320,20 @@ function loadLeaflet() {
         script.crossOrigin = ''
         script.async = true
         script.onload = () => resolveWhenAvailable() || reject(new Error('Leaflet unavailable'))
-        script.onerror = () => reject(new Error('Leaflet failed to load'))
+        script.onerror = () => {
+            // Some mobile networks and hosting CSPs intermittently block
+            // unpkg. Retry from an independent CDN before showing fallback.
+            script.remove()
+            const backup = document.createElement('script')
+            backup.id = scriptId
+            backup.src = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js'
+            backup.integrity = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo='
+            backup.crossOrigin = ''
+            backup.async = true
+            backup.onload = () => resolveWhenAvailable() || reject(new Error('Leaflet unavailable'))
+            backup.onerror = () => reject(new Error('Leaflet failed to load'))
+            document.head.appendChild(backup)
+        }
         document.head.appendChild(script)
     })
 

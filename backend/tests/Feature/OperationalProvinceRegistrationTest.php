@@ -52,11 +52,46 @@ class OperationalProvinceRegistrationTest extends TestCase
             'shop' => 'متجر بلا فرع',
             'address' => 'بغداد',
             'province_id' => $province->id,
-            'phone' => '07900004567',
+            'phone' => '07700004567',
             'password' => 'temporary-pass-123',
             'password_confirmation' => 'temporary-pass-123',
         ])->assertSessionHasErrors('province_id');
 
-        $this->assertDatabaseMissing('users', ['phone' => '07900004567']);
+        $this->assertDatabaseMissing('users', ['phone' => '07700004567']);
+    }
+
+    public function test_registration_requires_an_eleven_digit_077_or_078_phone_number(): void
+    {
+        $province = Province::query()->whereNull('tenant_id')->firstOrFail();
+
+        foreach (['0771234567', '077123456789', '07912345678', '07712A45678'] as $phone) {
+            $this->post('/register', [
+                'role' => 'merchant',
+                'name' => 'تاجر رقم هاتف',
+                'shop' => 'متجر رقم هاتف',
+                'address' => 'بغداد',
+                'province_id' => $province->id,
+                'phone' => $phone,
+                'password' => 'temporary-pass-123',
+                'password_confirmation' => 'temporary-pass-123',
+            ])->assertSessionHasErrors('phone');
+
+            $this->assertDatabaseMissing('users', ['phone' => $phone]);
+        }
+
+        foreach (['07712345678', '07812345678'] as $phone) {
+            $this->post('/register', [
+                'role' => 'merchant',
+                'name' => 'تاجر رقم هاتف '.$phone,
+                'shop' => 'متجر رقم هاتف '.$phone,
+                'address' => 'بغداد',
+                'province_id' => $province->id,
+                'phone' => $phone,
+                'password' => 'temporary-pass-123',
+                'password_confirmation' => 'temporary-pass-123',
+            ])->assertRedirect('/verify-otp');
+
+            $this->assertDatabaseHas('users', ['phone' => $phone]);
+        }
     }
 }

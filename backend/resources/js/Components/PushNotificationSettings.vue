@@ -1,119 +1,40 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import { route } from 'ziggy-js'
+import { onMounted, ref } from 'vue'
+import {
+    disableBrowserPushNotifications,
+    enableBrowserPushNotifications,
+    loadBrowserPushNotificationStatus,
+} from '../Utils/browserPushNotifications'
 
 const status = ref('loading')
 const message = ref('')
 const config = ref(null)
 
-const notificationSupported = computed(() => typeof window !== 'undefined' && 'Notification' in window)
-const pushSupported = computed(() => notificationSupported.value
-    && 'serviceWorker' in navigator
-    && 'PushManager' in window)
-const permission = computed(() => notificationSupported.value ? Notification.permission : 'unsupported')
-
-function base64UrlToUint8Array(value) {
-    const padding = '='.repeat((4 - (value.length % 4)) % 4)
-    const normalized = (value + padding).replace(/-/g, '+').replace(/_/g, '/')
-    const raw = atob(normalized)
-    return Uint8Array.from(raw, (character) => character.charCodeAt(0))
-}
-
 async function load() {
-    if (!notificationSupported.value) {
-        status.value = 'unsupported'
-        return
-    }
-
-    if (permission.value === 'denied') {
-        status.value = 'denied'
-        return
-    }
-
-    // Permission belongs to the device and can be granted even while the
-    // optional push delivery service is still being configured.
-    if (!pushSupported.value) {
-        status.value = permission.value === 'granted' ? 'permission-granted' : 'idle'
-        return
-    }
-
-    try {
-        const response = await window.axios.get(route('app.push.config'))
-        config.value = response.data
-
-        if (!config.value?.enabled || !config.value.publicKey) {
-            status.value = permission.value === 'granted' ? 'permission-granted' : 'idle'
-            return
-        }
-
-        const registration = await navigator.serviceWorker.ready
-        const subscription = await registration.pushManager.getSubscription()
-        status.value = subscription && permission.value === 'granted' ? 'enabled' : (permission.value === 'granted' ? 'permission-granted' : 'idle')
-    } catch (_) {
-        status.value = permission.value === 'granted' ? 'permission-granted' : 'idle'
-    }
+    const result = await loadBrowserPushNotificationStatus()
+    status.value = result.status
+    config.value = result.config
 }
 
 async function enable() {
     message.value = ''
-    if (!notificationSupported.value) {
-        status.value = 'unsupported'
-        return
-    }
+    status.value = 'saving'
 
-    try {
-        const grant = await Notification.requestPermission()
-        if (grant !== 'granted') {
-            status.value = 'denied'
-            return
-        }
+    const result = await enableBrowserPushNotifications({ config: config.value })
+    status.value = result.status
+    config.value = result.config
 
-        if (!pushSupported.value) {
-            status.value = 'permission-granted'
-            return
-        }
-
-        status.value = 'saving'
-        if (!config.value?.enabled || !config.value.publicKey) await load()
-        if (!config.value?.enabled || !config.value.publicKey) {
-            status.value = 'permission-granted'
-            return
-        }
-
-        const registration = await navigator.serviceWorker.ready
-        let subscription = await registration.pushManager.getSubscription()
-        if (!subscription) {
-            subscription = await registration.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: base64UrlToUint8Array(config.value.publicKey),
-            })
-        }
-
-        const serialized = subscription.toJSON()
-        await window.axios.post(route('app.push.subscribe'), {
-            endpoint: serialized.endpoint,
-            keys: serialized.keys,
-            locale: document.documentElement.lang || 'ar',
-        })
-        status.value = 'enabled'
-    } catch (_) {
-        status.value = 'error'
+    if (result.status === 'error') {
         message.value = window.t?.('Could not enable notifications. Please try again.')
             || 'Could not enable notifications. Please try again.'
     }
 }
 
 async function disable() {
-    try {
-        const registration = await navigator.serviceWorker.ready
-        const subscription = await registration.pushManager.getSubscription()
-        if (subscription) {
-            await window.axios.delete(route('app.push.unsubscribe'), { data: { endpoint: subscription.endpoint } })
-            await subscription.unsubscribe()
-        }
-        status.value = 'idle'
-    } catch (_) {
-        status.value = 'error'
+    const result = await disableBrowserPushNotifications()
+    status.value = result.status
+
+    if (result.status === 'error') {
         message.value = window.t?.('Could not change notification settings. Please try again.')
             || 'Could not change notification settings. Please try again.'
     }

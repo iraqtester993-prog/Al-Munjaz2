@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Order;
 use App\Models\Province;
 use App\Models\Setting;
+use App\Models\Transaction;
 use App\Models\User;
 use App\Tenancy\TenantContext;
 use Database\Seeders\DemoSeeder;
@@ -157,8 +158,26 @@ class ApiOrderSecurityTest extends TestCase
         $merchant = User::where('username', 'تاجر')->firstOrFail();
         $courier = User::where('username', 'مندوب')->firstOrFail();
         $province = $merchant->provinces()->firstOrFail();
+        $legacyAdministrativeDeduction = 1750;
+        $courier->update(['admin_deduction_per_order' => $legacyAdministrativeDeduction]);
         $order = $this->makeOrder($merchant, $province, $courier, 'ALM-API-RETURN', 'courier');
-        $order->update(['workflow_stage' => 'out_for_delivery', 'return_fee' => 3500]);
+        $order->update([
+            'workflow_stage' => 'out_for_delivery',
+            'return_fee' => 3500,
+            'admin_deduction_applied' => $legacyAdministrativeDeduction,
+        ]);
+        $courier->wallet->decrement('balance', $legacyAdministrativeDeduction);
+        Transaction::withoutGlobalScopes()->create([
+            'tenant_id' => $courier->tenant_id,
+            'user_id' => $courier->id,
+            'type' => 'commission',
+            'amount' => $legacyAdministrativeDeduction,
+            'direction' => -1,
+            'ref' => $order->track_no,
+            'order_id' => $order->id,
+            'date' => today(),
+            'note' => 'استقطاع القبول للاختبار',
+        ]);
         $courier->update([
             'current_latitude' => 33.3152412,
             'current_longitude' => 44.3660731,
@@ -169,13 +188,23 @@ class ApiOrderSecurityTest extends TestCase
 
         $this->postJson("/api/v1/orders/{$order->id}/return", [
             'fee_mode' => 'fee',
-            'return_fee_applied' => 2000,
-            'note' => 'تعذر الوصول إلى العميل.',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('return_reason');
+
+        $this->postJson("/api/v1/orders/{$order->id}/return", [
+            'fee_mode' => 'fee',
+            // The retired browser input must be ignored. The API always uses
+            // the immutable return quote stored on the order instead.
+            'return_fee_applied' => 1,
+            'return_reason' => 'تعذر الوصول إلى العميل.',
         ])
             ->assertOk()
             ->assertJsonPath('data.status', 'returned')
             ->assertJsonPath('data.workflow_stage', 'return_pending_merchant')
-            ->assertJsonPath('data.return_fee_applied', 2000);
+            ->assertJsonPath('data.return_fee_applied', 3500)
+            ->assertJsonPath('data.return_fee_mode', 'fee')
+            ->assertJsonPath('data.return_reason', 'تعذر الوصول إلى العميل.');
 
         $this->postJson("/api/v1/orders/{$order->id}/return-to-merchant", [
             'note' => 'تم التسليم للتاجر.',
@@ -186,9 +215,27 @@ class ApiOrderSecurityTest extends TestCase
         $this->assertDatabaseHas('transactions', [
             'order_id' => $order->id,
             'user_id' => $courier->id,
-            'type' => 'delivery_fee',
-            'amount' => 2000,
+            'type' => 'commission',
+            // The fixed amount was charged at acceptance. Selecting a return
+            // fee must not charge the Qi wallet a second time.
+            'amount' => $legacyAdministrativeDeduction,
             'direction' => -1,
+        ]);
+        $this->assertSame(1, Transaction::withoutGlobalScopes()
+            ->where('order_id', $order->id)
+            ->where('user_id', $courier->id)
+            ->where('type', 'commission')
+            ->where('direction', -1)
+            ->count());
+        $this->assertDatabaseMissing('transactions', [
+            'order_id' => $order->id,
+            'user_id' => $courier->id,
+            'type' => 'delivery_fee',
+        ]);
+        $this->assertDatabaseMissing('transactions', [
+            'order_id' => $order->id,
+            'user_id' => $courier->id,
+            'type' => 'commission_refund',
         ]);
     }
 

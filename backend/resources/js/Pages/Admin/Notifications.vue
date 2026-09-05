@@ -1,15 +1,16 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { useForm } from '@inertiajs/vue3'
+import { router, useForm } from '@inertiajs/vue3'
 import { route } from 'ziggy-js'
 import AdminShell from '../../Components/AdminShell.vue'
+import BranchFilter from '../../Components/BranchFilter.vue'
 
 const props = defineProps({
-    campaigns: { type: Array, default: () => [] },
-    deliveries: { type: Array, default: () => [] },
+    recentOperations: { type: Array, default: () => [] },
     recipients: { type: Array, default: () => [] },
     counts: { type: Object, default: () => ({}) },
     canCreateNotifications: { type: Boolean, default: false },
+    branchFilter: { type: Object, default: () => ({}) },
 })
 
 const showTranslations = ref(false)
@@ -143,6 +144,13 @@ function submit() {
         },
     })
 }
+
+function changeBranchFilter(branchId) {
+    router.get(route('admin.notifications'), { branch_id: branchId || undefined }, {
+        preserveState: true,
+        replace: true,
+    })
+}
 </script>
 
 <template>
@@ -151,14 +159,16 @@ function submit() {
             <div>
                 <p class="eyebrow">{{ t('Communication Center') }}</p>
                 <h2>{{ t('Notifications') }}</h2>
-                <p>{{ t('Create general or targeted in-app notifications and keep a clear delivery record for each campaign.') }}</p>
+                <p>أرسل إشعاراً عند الحاجة، وراجع إشعارات النظام والحركات المحفوظة في سجل واحد واضح.</p>
             </div>
             <div class="notification-totals" aria-label="Notification totals">
-                <span><b>{{ counts.campaigns || 0 }}</b>{{ t('Campaigns') }}</span>
-                <span><b>{{ counts.deliveries || 0 }}</b>{{ t('Deliveries') }}</span>
-                <span class="unread-total"><b>{{ counts.unread || 0 }}</b>{{ t('Unread') }}</span>
+                <span><b>{{ counts.system || 0 }}</b>إشعارات النظام</span>
+                <span class="unread-total"><b>{{ counts.operations || 0 }}</b>آخر العمليات</span>
             </div>
         </section>
+        <div class="notification-branch-filter">
+            <BranchFilter :filter="branchFilter" @change="changeBranchFilter" />
+        </div>
 
         <div class="notification-grid" :class="{ 'history-only': !canCreateNotifications }">
             <form v-if="canCreateNotifications" class="panel composer-panel" @submit.prevent="submit">
@@ -171,16 +181,16 @@ function submit() {
                     <div class="form-row">
                         <label class="field">
                             <span>{{ t('Audience') }}</span>
-                            <select :value="form.audience" @change="setAudience($event.target.value)">
+                            <PopupSelect :model-value="form.audience" @change="setAudience($event.target.value)">
                                 <option v-for="option in audienceOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-                            </select>
+                            </PopupSelect>
                             <small v-if="form.errors.audience" class="field-error">{{ form.errors.audience }}</small>
                         </label>
                         <label class="field">
                             <span>{{ t('Notification Type') }}</span>
-                            <select v-model="form.type">
+                            <PopupSelect v-model="form.type">
                                 <option v-for="option in typeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-                            </select>
+                            </PopupSelect>
                             <small v-if="form.errors.type" class="field-error">{{ form.errors.type }}</small>
                         </label>
                     </div>
@@ -188,10 +198,10 @@ function submit() {
                     <label v-if="individualAudiences.includes(form.audience)" class="field">
                         <span>{{ form.audience === 'merchant' ? t('Merchant') : t('Courier') }}</span>
                         <input v-model="recipientQuery" type="search" :placeholder="recipientSearchPlaceholder" autocomplete="off" />
-                        <select v-model="form.target_user_id" required>
+                        <PopupSelect v-model="form.target_user_id" required>
                             <option disabled value="">{{ t('Choose active user') }}</option>
                             <option v-for="recipient in filteredRecipients" :key="recipient.id" :value="recipient.id">{{ recipientLabel(recipient) }}</option>
-                        </select>
+                        </PopupSelect>
                         <small v-if="form.errors.target_user_id" class="field-error">{{ form.errors.target_user_id }}</small>
                     </label>
 
@@ -237,39 +247,23 @@ function submit() {
                         <span v-if="form.processing" class="send-spinner" aria-hidden="true" />
                         {{ form.processing ? t('Sending...') : t('Send Notification') }}
                     </button>
-                    <p class="dispatch-note">{{ t('Every campaign creates an in-app delivery record for its selected recipients. Device push is handled separately when permission is available.') }}</p>
+                    <p class="dispatch-note">يحفظ النظام الإشعارات التشغيلية والحركات المهمة في سجل آخر العمليات.</p>
                 </div>
             </form>
 
             <section class="history-stack">
-                <article class="panel history-panel">
-                    <header class="panel-head"><div><h3>{{ t('Campaign History') }}</h3><p>{{ t('A campaign groups the delivery records created by one dashboard send.') }}</p></div></header>
-                    <div class="campaign-list">
-                        <article v-for="campaign in campaigns" :key="campaign.id" class="campaign-row">
-                            <div class="campaign-main">
-                                <div class="campaign-meta"><span :class="['type-chip', typeClass(campaign.type)]">{{ typeLabel(campaign.type) }}</span><span>{{ audienceLabel(campaign) }}</span></div>
-                                <b>{{ campaign.title }}</b>
-                                <p v-if="campaign.body">{{ campaign.body }}</p>
-                                <small>{{ campaign.sent_at }} <span v-if="campaign.created_by">· {{ t('Sent by') }} {{ campaign.created_by }}</span></small>
-                            </div>
-                            <div class="campaign-counts">
-                                <span><b>{{ campaign.delivery_count || campaign.recipient_count }}</b>{{ t('Delivered') }}</span>
-                                <span><b>{{ campaign.read_count }}</b>{{ t('Read') }}</span>
+                <article class="panel history-panel system-operations-panel">
+                    <header class="panel-head"><div><h3>إشعارات النظام وآخر العمليات</h3><p>سجل موحّد للرسائل التي ينشئها النظام وللحركات التشغيلية المهمة.</p></div></header>
+                    <div class="system-operation-list">
+                        <article v-for="operation in recentOperations" :key="operation.id" class="system-operation-row">
+                            <span class="system-operation-icon" :class="operation.kind">{{ operation.kind === 'notification' ? '🔔' : '◈' }}</span>
+                            <div>
+                                <b>{{ operation.title }}</b>
+                                <p v-if="operation.detail">{{ operation.detail }}</p>
+                                <small><span v-if="operation.actor">{{ operation.actor }} · </span>{{ operation.created_at }}</small>
                             </div>
                         </article>
-                        <div v-if="!campaigns.length" class="empty-state">{{ t('No notification campaigns have been sent yet.') }}</div>
-                    </div>
-                </article>
-
-                <article class="panel delivery-panel">
-                    <header class="panel-head"><div><h3>{{ t('In-app Delivery Records') }}</h3><p>{{ t('The latest individual inbox records created from dashboard campaigns.') }}</p></div></header>
-                    <div class="delivery-list">
-                        <div v-for="delivery in deliveries" :key="delivery.id" class="delivery-row">
-                            <span class="delivery-state" :class="{ read: delivery.read }" :title="delivery.read ? t('Read') : t('Not read')" />
-                            <div><b>{{ delivery.recipient?.name || t('Unknown User') }}</b><span>{{ delivery.title }} · {{ delivery.created_at }}</span></div>
-                            <small>{{ roleLabel(delivery.recipient?.role) }}</small>
-                        </div>
-                        <div v-if="!deliveries.length" class="empty-state">{{ t('No delivery records yet.') }}</div>
+                        <div v-if="!recentOperations.length" class="empty-state">لا توجد إشعارات أو حركات محفوظة حالياً.</div>
                     </div>
                 </article>
             </section>
@@ -278,5 +272,6 @@ function submit() {
 </template>
 
 <style scoped>
-.notification-heading{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:21px}.eyebrow{margin:0 0 3px;color:var(--primary);font-size:10px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.notification-heading h2{margin:0;color:var(--ink);font-size:23px;font-weight:900;line-height:1.35}.notification-heading>div>p:last-child{max-width:650px;margin:5px 0 0;color:var(--ink-faint);font-size:12px;font-weight:650;line-height:1.75}.notification-totals{display:flex;align-items:center;gap:8px;flex:none}.notification-totals span{display:grid;gap:0;min-width:70px;padding:7px 10px;border:1px solid var(--border);border-radius:10px;color:var(--ink-faint);background:var(--surface);font-size:8.5px;font-weight:800;text-align:center}.notification-totals b{color:var(--ink);font-size:14px;font-weight:900;line-height:1.35}.notification-totals .unread-total b{color:var(--accent)}.notification-grid{display:grid;grid-template-columns:minmax(330px,.88fr) minmax(0,1.12fr);gap:18px;align-items:start}.notification-grid.history-only{grid-template-columns:minmax(0,1fr)}.composer-panel,.history-panel,.delivery-panel{margin:0}.composer-head{align-items:flex-start}.composer-head>div:last-child{flex:1}.panel-head h3{margin:0}.panel-head p{margin:3px 0 0;color:var(--ink-faint);font-size:10.5px;font-weight:650;line-height:1.65}.compose-icon{width:36px;height:36px;display:grid;place-items:center;flex:none;border-radius:11px;color:var(--primary-strong);background:var(--primary-tint);font-size:17px;font-weight:900}.composer-body{display:grid;gap:14px}.form-row{display:grid;grid-template-columns:1fr 1fr;gap:11px}.field{display:grid;gap:6px;color:var(--ink-soft);font-size:10.5px;font-weight:850}.field input,.field textarea,.field select{width:100%;border:1px solid var(--border);border-radius:10px;outline:none;color:var(--ink);background:var(--surface-2);font:inherit;font-size:11.5px;font-weight:700;transition:border-color .15s,box-shadow .15s}.field input,.field select{min-height:41px;padding:9px 10px}.field textarea{min-height:80px;padding:9px 10px;line-height:1.65;resize:vertical}.field input:focus,.field textarea:focus,.field select:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-tint)}.field-error{color:var(--danger);font-size:9.5px;font-weight:780;line-height:1.5}.recipient-strip{display:flex;align-items:center;gap:7px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;color:var(--ink-soft);background:var(--surface-2);font-size:10px;font-weight:800}.recipient-strip b{margin-inline-start:auto;color:var(--ink);font-size:13px;font-weight:900}.recipient-dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 4px var(--success-tint)}.language-block{min-width:0;margin:0;padding:12px;border:1px solid var(--border);border-radius:12px}.language-block legend{padding:0 5px;color:var(--primary-strong);font-size:10px;font-weight:900}.language-block .field+.field{margin-top:10px}.translations-toggle{display:inline-flex;align-items:center;justify-content:flex-start;gap:7px;width:max-content;padding:5px 0;border:0;color:var(--primary-strong);font:inherit;font-size:10.5px;font-weight:850}.translations-toggle span{width:17px;height:17px;display:grid;place-items:center;border-radius:5px;color:#062033;background:var(--primary);font-size:14px;line-height:1}.translation-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.language-block.compact{padding:10px}.send-button{min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;border:0;border-radius:11px;color:#062033;background:linear-gradient(135deg,var(--primary),#0ea5e9);font:inherit;font-size:12px;font-weight:900;transition:filter .15s,opacity .15s}.send-button:hover:not(:disabled){filter:brightness(1.08)}.send-button:disabled{cursor:not-allowed;opacity:.6}.send-spinner{width:14px;height:14px;border:2px solid rgba(6,32,51,.25);border-top-color:#062033;border-radius:50%;animation:spin .65s linear infinite}.dispatch-note{margin:-5px 0 0;color:var(--ink-faint);font-size:9.5px;font-weight:650;line-height:1.65}.form-error{margin-top:-4px}.history-stack{display:grid;gap:18px}.campaign-list{display:grid}.campaign-row{display:flex;gap:14px;padding:14px 17px;border-bottom:1px solid var(--border)}.campaign-row:last-child{border-bottom:0}.campaign-main{min-width:0;flex:1}.campaign-meta{display:flex;align-items:center;gap:6px;margin-bottom:5px;color:var(--ink-faint);font-size:9.5px;font-weight:800}.type-chip{display:inline-flex;padding:3px 7px;border-radius:20px;font-size:8.5px;font-weight:900}.type-announcement{color:var(--primary-strong);background:var(--primary-tint)}.type-system{color:var(--st-approved);background:var(--st-approved-tint)}.type-account{color:var(--warning);background:var(--warning-tint)}.type-finance{color:var(--success);background:var(--success-tint)}.type-order{color:var(--st-courier);background:var(--st-courier-tint)}.campaign-main>b{display:block;overflow:hidden;color:var(--ink);font-size:12px;font-weight:900;line-height:1.55;text-overflow:ellipsis;white-space:nowrap}.campaign-main p{display:-webkit-box;overflow:hidden;margin:2px 0 0;color:var(--ink-soft);font-size:10.5px;font-weight:650;line-height:1.6;-webkit-box-orient:vertical;-webkit-line-clamp:2}.campaign-main small{display:block;margin-top:5px;color:var(--ink-faint);font-size:9px;font-weight:700}.campaign-counts{display:grid;align-content:start;gap:5px;min-width:56px}.campaign-counts span{display:grid;padding:4px 6px;border-radius:7px;color:var(--ink-faint);background:var(--surface-2);font-size:8px;font-weight:800;text-align:center}.campaign-counts b{color:var(--ink);font-size:11px;font-weight:900}.delivery-list{display:grid}.delivery-row{display:flex;align-items:center;gap:9px;padding:10px 17px;border-bottom:1px solid var(--border)}.delivery-row:last-child{border-bottom:0}.delivery-state{width:8px;height:8px;flex:none;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-tint)}.delivery-state.read{background:var(--success);box-shadow:0 0 0 3px var(--success-tint)}.delivery-row>div{min-width:0;flex:1}.delivery-row b,.delivery-row span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.delivery-row b{color:var(--ink);font-size:10.5px;font-weight:900}.delivery-row span{color:var(--ink-faint);font-size:9px;font-weight:700}.delivery-row small{padding:3px 6px;border-radius:6px;color:var(--ink-soft);background:var(--surface-2);font-size:8px;font-weight:850}.empty-state{padding:27px 16px;color:var(--ink-faint);font-size:10.5px;font-weight:750;text-align:center}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:1080px){.notification-grid{grid-template-columns:1fr}.history-stack{grid-template-columns:1.15fr .85fr;align-items:start}.delivery-panel{height:max-content}}@media(max-width:680px){.notification-heading{align-items:flex-start;flex-direction:column}.notification-heading h2{font-size:20px}.notification-totals{width:100%}.notification-totals span{flex:1}.form-row,.translation-grid,.history-stack{grid-template-columns:1fr}.campaign-row{padding:13px}.delivery-row{padding:10px 13px}.campaign-counts{min-width:48px}.panel-head{padding:14px}.panel-body{padding:14px}}@media(max-width:390px){.campaign-row{gap:8px}.campaign-counts{display:none}.notification-totals span{min-width:0}}
+.notification-heading{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:21px}.eyebrow{margin:0 0 3px;color:var(--primary);font-size:10px;font-weight:900}.notification-heading h2{margin:0;color:var(--ink);font-size:23px;font-weight:900}.notification-heading>div>p:last-child,.panel-head p{margin:5px 0 0;color:var(--ink-faint);font-size:11px;font-weight:650;line-height:1.65}.notification-totals{display:flex;gap:8px}.notification-totals span{display:grid;min-width:92px;padding:7px 10px;border:1px solid var(--border);border-radius:10px;color:var(--ink-faint);background:var(--surface);font-size:8.5px;font-weight:800;text-align:center}.notification-totals b{color:var(--ink);font-size:14px}.notification-grid{display:grid;grid-template-columns:minmax(330px,.88fr) minmax(0,1.12fr);gap:18px;align-items:start}.composer-panel,.history-panel{margin:0}.composer-head{align-items:flex-start}.composer-head>div:last-child{flex:1}.panel-head h3{margin:0}.compose-icon{width:36px;height:36px;display:grid;place-items:center;flex:none;border-radius:11px;color:var(--primary-strong);background:var(--primary-tint);font-size:17px}.composer-body{display:grid;gap:14px}.form-row,.translation-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px}.field{display:grid;gap:6px;color:var(--ink-soft);font-size:10.5px;font-weight:850}.field input,.field textarea,.field select{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:10px;padding:9px 10px;color:var(--ink);background:var(--surface-2);font:700 11.5px var(--font)}.field input,.field select{min-height:41px}.field textarea{min-height:80px;resize:vertical}.language-block{min-width:0;margin:0;padding:12px;border:1px solid var(--border);border-radius:12px}.language-block legend{color:var(--primary-strong);font-size:10px;font-weight:900}.language-block .field+.field{margin-top:10px}.send-button{min-height:44px;width:100%;border:0;border-radius:11px;color:#062033;background:linear-gradient(135deg,var(--primary),#0ea5e9);font:900 12px var(--font)}.dispatch-note,.field-error{margin:0;color:var(--ink-faint);font-size:9.5px}.history-stack{display:grid;gap:18px}.system-operation-row{display:grid;grid-template-columns:34px minmax(0,1fr);gap:10px;margin:4px 7px;padding:11px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}.system-operation-icon{width:30px;height:30px;display:grid;place-items:center;border-radius:9px;color:var(--primary-strong);background:var(--primary-tint)}.system-operation-icon.activity{color:var(--warning);background:var(--warning-tint)}.system-operation-row>div{min-width:0}.system-operation-row b,.system-operation-row p,.system-operation-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.system-operation-row b{color:var(--ink);font-size:11px;font-weight:900}.system-operation-row p{margin:2px 0;color:var(--ink-soft);font-size:9.5px}.system-operation-row small{color:var(--ink-faint);font-size:8.5px}.empty-state{padding:27px 16px;color:var(--ink-faint);text-align:center}@media(max-width:1080px){.notification-grid{grid-template-columns:1fr}}@media(max-width:680px){.notification-heading{align-items:flex-start;flex-direction:column}.notification-totals{width:100%}.notification-totals span{flex:1}.form-row,.translation-grid{grid-template-columns:1fr}}
+.system-operations-panel{display:flex;min-height:0;flex-direction:column}.system-operations-panel .panel-head{flex:none}.system-operation-list{display:grid;max-height:420px;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding-inline-end:3px}.system-operation-list::-webkit-scrollbar{width:7px}.system-operation-list::-webkit-scrollbar-thumb{border-radius:999px;background:color-mix(in srgb,var(--primary) 34%,transparent)}@media(max-width:680px){.system-operation-list{max-height:48vh}}
 </style>

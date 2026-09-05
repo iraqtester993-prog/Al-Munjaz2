@@ -2,8 +2,8 @@
 
 namespace Tests\Feature;
 
-use App\Models\Setting;
 use App\Models\MobileSlide;
+use App\Models\Setting;
 use App\Models\User;
 use App\Services\LoyaltyPointService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
