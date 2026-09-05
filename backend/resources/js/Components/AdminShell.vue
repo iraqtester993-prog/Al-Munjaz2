@@ -594,6 +594,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .dashboard-shell {
+    /* One desktop-wide display scale. Keeping it in a variable makes a
+       rollback to the original density a one-value change. */
+    --dashboard-ui-scale: 1.15;
     --bg: #0f172a;
     --surface: #16213a;
     --surface-2: #1d2a47;
@@ -624,14 +627,15 @@ onBeforeUnmount(() => {
     --st-returned: #f87171;
     --st-returned-tint: rgba(248, 113, 113, .13);
     --shadow: 0 18px 48px rgba(0, 0, 0, .18);
-    width: 100%;
-    height: 100dvh;
-    min-height: 100vh;
+    width: calc(100% / var(--dashboard-ui-scale));
+    height: calc(100dvh / var(--dashboard-ui-scale));
+    min-height: calc(100vh / var(--dashboard-ui-scale));
     display: grid;
     grid-template-columns: 242px minmax(0, 1fr);
     overflow: hidden;
     color: var(--ink);
     background: var(--bg);
+    zoom: var(--dashboard-ui-scale);
     transition: grid-template-columns .22s ease;
 }
 
@@ -1052,6 +1056,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 980px) {
     .dashboard-shell {
+        --dashboard-ui-scale: 1;
         grid-template-columns: minmax(0, 1fr);
     }
 
