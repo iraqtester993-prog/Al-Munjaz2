@@ -627,9 +627,9 @@ onBeforeUnmount(() => {
     --st-returned: #f87171;
     --st-returned-tint: rgba(248, 113, 113, .13);
     --shadow: 0 18px 48px rgba(0, 0, 0, .18);
-    width: calc(100% / var(--dashboard-ui-scale));
-    height: calc(100dvh / var(--dashboard-ui-scale));
-    min-height: calc(100vh / var(--dashboard-ui-scale));
+    width: 100%;
+    height: 100dvh;
+    min-height: 100vh;
     display: grid;
     grid-template-columns: 242px minmax(0, 1fr);
     overflow: hidden;
