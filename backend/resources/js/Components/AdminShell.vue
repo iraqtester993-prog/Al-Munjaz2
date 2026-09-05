@@ -212,7 +212,6 @@ const nav = computed(() => {
         { label: localized('Courier Points'), branchLabel: localized('Branch courier points'), icon: 'award', route: 'admin.loyalty', module: 'loyalty' },
         { label: localized('Courier locations'), branchLabel: localized('Branch courier locations'), icon: 'pin', route: 'admin.couriers.locations', module: 'courier_locations' },
         { label: t('Finance'), branchLabel: localized('Branch finance'), icon: 'card', route: 'admin.finance', module: 'finance', badge: adminBadges.value.finance },
-        { label: localized('Pricing'), branchLabel: localized('Branch pricing'), icon: 'chart', route: 'admin.pricing', module: 'pricing' },
         { label: localized('Reports'), branchLabel: localized('Branch reports'), icon: 'chart', route: 'admin.reports', module: 'reports' },
         { label: t('Chat'), branchLabel: localized('Branch chat'), icon: 'chat', route: 'admin.chat', module: 'chat', badge: adminBadges.value.chat },
         { label: t('Notifications'), branchLabel: localized('Branch notifications'), icon: 'bell', route: 'admin.notifications', module: 'notifications', badge: adminBadges.value.notifications },
