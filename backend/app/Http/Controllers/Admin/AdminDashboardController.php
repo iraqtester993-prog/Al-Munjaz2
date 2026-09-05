@@ -66,17 +66,15 @@ class AdminDashboardController extends Controller
         $merchantCount = $this->usersFor($scope, User::query(), $selectedBranchId, $branchFilter)
             ->where('role', 'merchant')
             ->count();
-        $courierRoles = User::COURIER_ROLES;
-        $courierRolePlaceholders = implode(', ', array_fill(0, count($courierRoles), '?'));
         $userStats = $this->usersFor($scope, User::query(), $selectedBranchId, $branchFilter)
             ->selectRaw('COUNT(*) as users_count')
             ->selectRaw(
-                "COALESCE(SUM(CASE WHEN role IN ({$courierRolePlaceholders}) THEN 1 ELSE 0 END), 0) as couriers_count",
-                $courierRoles,
+                'COALESCE(SUM(CASE WHEN role = ? THEN 1 ELSE 0 END), 0) as couriers_count',
+                ['courier'],
             )
             ->selectRaw(
-                "COALESCE(SUM(CASE WHEN role IN ({$courierRolePlaceholders}) AND status = ? AND is_online = ? THEN 1 ELSE 0 END), 0) as online_couriers_count",
-                [...$courierRoles, 'active', true],
+                'COALESCE(SUM(CASE WHEN role = ? AND status = ? AND is_online = ? THEN 1 ELSE 0 END), 0) as online_couriers_count',
+                ['courier', 'active', true],
             )
             ->toBase()
             ->first();
