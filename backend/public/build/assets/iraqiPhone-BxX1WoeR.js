@@ -1,0 +1,1 @@
+const n="٠١٢٣٤٥٦٧٨٩",r="۰۱۲۳۴۵۶۷۸۹";function t(i){return String(i??"").replace(/[٠-٩]/g,e=>String(n.indexOf(e))).replace(/[۰-۹]/g,e=>String(r.indexOf(e))).replace(/\D/g,"").slice(0,11)}function a(i){return/^(?:077|078)\d{8}$/.test(t(i))}export{a as i,t as n};
