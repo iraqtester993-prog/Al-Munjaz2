@@ -73,6 +73,28 @@ class DashboardPermissionProfileTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_complete_named_profile_receives_the_complete_dashboard_like_a_super_administrator(): void
+    {
+        $permissions = collect(DashboardPermissionProfile::MODULES)
+            ->mapWithKeys(fn (array $module, string $key): array => [$key => array_keys($module['actions'])])
+            ->all();
+        $profile = DashboardPermissionProfile::create([
+            'name' => 'وصول كامل',
+            'permissions' => $permissions,
+        ]);
+        $operator = $this->operator($profile);
+
+        $this->assertTrue($operator->isSuperAdmin());
+        $this->actingAs($operator)
+            ->get('/dashboard')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->component('Admin/Dashboard'));
+        $this->actingAs($operator)
+            ->get('/dashboard/loyalty')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->component('Admin/Loyalty'));
+    }
+
     public function test_orders_view_profile_can_open_orders_but_cannot_change_an_order_until_the_legacy_grant_is_expanded(): void
     {
         $profile = DashboardPermissionProfile::create([

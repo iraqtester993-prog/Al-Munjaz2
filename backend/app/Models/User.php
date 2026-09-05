@@ -219,7 +219,23 @@ class User extends Authenticatable
      */
     public function isSuperAdmin(): bool
     {
-        return $this->isAdmin() && (bool) $this->is_super_admin;
+        return $this->hasFullDashboardAccess();
+    }
+
+    /**
+     * A platform administrator has unrestricted dashboard access either
+     * through the audited owner flag or a named profile containing every
+     * server-defined action. This lets the "full access" option behave like
+     * the super-admin dashboard without introducing a second, incomplete UI.
+     */
+    public function hasFullDashboardAccess(): bool
+    {
+        if (! $this->isAdmin()) {
+            return false;
+        }
+
+        return (bool) $this->is_super_admin
+            || $this->permissionProfile?->grantsFullDashboardAccess() === true;
     }
 
     public function isCourierRole(): bool

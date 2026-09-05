@@ -462,6 +462,28 @@ class DashboardPermissionProfile extends Model
             && in_array($action, $permissions[$module] ?? [], true);
     }
 
+    /**
+     * A profile which contains every current dashboard action is an explicit
+     * delegated full-access profile.  Keeping this derived from the server
+     * catalogue means that a newly added action is never silently granted to
+     * old profiles: it must be selected and saved again by an administrator.
+     */
+    public function grantsFullDashboardAccess(): bool
+    {
+        $permissions = is_array($this->permissions) ? $this->permissions : [];
+
+        foreach (self::MODULES as $module => $definition) {
+            $granted = $permissions[$module] ?? [];
+
+            if (! is_array($granted)
+                || array_diff(array_keys($definition['actions']), $granted) !== []) {
+                return false;
+            }
+        }
+
+        return self::MODULES !== [];
+    }
+
     /** @return array<string, array<int, string>> */
     private static function legacyExpansionFor(string $module, string $action): array
     {
